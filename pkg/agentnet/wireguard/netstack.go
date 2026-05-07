@@ -50,13 +50,24 @@ func (d *netstackDevice) PeerStates() []PeerState {
 	return parseUAPIPeerStates(buf.String())
 }
 
-// EnableNetstackBackend installs the netstack-backed start function
-// on u, replacing the default ErrNotWired path. Call this from the
-// production main wiring (or a test-driver init).
+// EnableNetstackBackend explicitly installs the netstack-backed
+// start function on u. With the wgnetstack build tag, NewUserspace
+// Device already does this automatically via package init() —
+// EnableNetstackBackend is retained for callers that construct a
+// device some other way.
 func EnableNetstackBackend(u *UserspaceDevice) {
 	u.WithStartFn(func(ctx context.Context, cfg Config) (statefulDevice, error) {
 		return startNetstack(ctx, cfg)
 	})
+}
+
+// init wires the package-level defaultStartFn so any UserspaceDevice
+// created when this package is built with -tags=wgnetstack will have
+// the netstack backend without explicit setup.
+func init() {
+	defaultStartFn = func(ctx context.Context, cfg Config) (statefulDevice, error) {
+		return startNetstack(ctx, cfg)
+	}
 }
 
 func startNetstack(_ context.Context, cfg Config) (statefulDevice, error) {

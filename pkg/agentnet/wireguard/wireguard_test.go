@@ -159,7 +159,15 @@ func TestFakeAdapter_DoubleStartErrors(t *testing.T) {
 	}
 }
 
+// TestUserspaceDevice_NoStartFn_ReturnsErrNotWired only runs without
+// the wgnetstack tag — under that tag the package init() installs a
+// real startFn, so ErrNotWired isn't reachable from NewUserspaceDevice.
+// The complementary path (auto-installed netstack) is covered by
+// TestNetstack_DeviceBootsAndAcceptsConfig.
 func TestUserspaceDevice_NoStartFn_ReturnsErrNotWired(t *testing.T) {
+	if defaultStartFn != nil {
+		t.Skip("wgnetstack tag installs a default startFn; ErrNotWired path is unreachable")
+	}
 	d := NewUserspaceDevice()
 	err := d.Start(context.Background(), Config{Mode: "client", PrivateKey: mk32(1)})
 	if !errors.Is(err, ErrNotWired) {

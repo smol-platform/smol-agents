@@ -42,9 +42,20 @@ type statefulDevice interface {
 // will boot a real userspace WireGuard device IF a startFn was
 // installed (production wiring). Otherwise returns ErrNotWired so the
 // operator can fall back to FakeAdapter in test environments.
+//
+// When the package is built with -tags=wgnetstack, defaultStartFn is
+// populated by netstack.go's init() and installed automatically.
 func NewUserspaceDevice() *UserspaceDevice {
-	return &UserspaceDevice{state: map[string]PeerState{}}
+	d := &UserspaceDevice{state: map[string]PeerState{}}
+	if defaultStartFn != nil {
+		d.startFn = defaultStartFn
+	}
+	return d
 }
+
+// defaultStartFn is populated by netstack.go's init() under the
+// wgnetstack build tag; nil otherwise.
+var defaultStartFn func(ctx context.Context, cfg Config) (statefulDevice, error)
 
 // ErrNotWired indicates the netstack-backed implementation isn't
 // linked in this build. Production builds use the netstack tag.
