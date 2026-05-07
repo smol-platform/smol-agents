@@ -1,0 +1,13 @@
+# Local Terraform state + cached providers
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+crash.log
+
+# Lambda binaries (built via make build-lambdas)
+sweeper/bootstrap
+budget/bootstrap
+sweeper/sweeper.zip
+budget/nuke.zip

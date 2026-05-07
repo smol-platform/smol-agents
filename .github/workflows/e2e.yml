@@ -1,0 +1,96 @@
+# Fullstack e2e workflows.
+#
+# - e2e-l0: docker-compose ring (~1 min). Runs on every PR.
+# - e2e-l1: kind-on-Linux ring (~5 min including cluster bring-up).
+#           Runs on every PR.
+# - e2e-l2: AWS Spot bare-metal + k0s + Kata-FC (~12 min, ~$0.22).
+#           Gated: triggered by `/test-l2` PR comment, push to main,
+#           or nightly cron at 02:00 UTC.
+#
+# Implements R-E2E-VRF-2 + R-E2E-VRF-4.
+
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly L2 at 02:00 UTC.
+    - cron: "0 2 * * *"
+  issue_comment:
+    types: [created]
+
+jobs:
+  l0:
+    if: github.event_name != 'issue_comment' && github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: build fake images
+        run: |
+          docker build -f deploy/docker/fake-llm.Dockerfile -t knative-agents/fake-llm:dev .
+          docker build -f deploy/docker/fake-gateway.Dockerfile -t knative-agents/fake-gateway:dev .
+          docker build -f scripts/e2e/spire/Dockerfile.spire-shell -t knative-agents/spire-shell:dev scripts/e2e/spire
+      - name: make e2e-l0
+        run: make e2e-l0
+
+  l1:
+    if: github.event_name != 'issue_comment' && github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - name: make e2e-l1
+        run: make e2e-l1
+
+  l2:
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/test-l2'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      id-token: write   # OIDC for AWS assume-role
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/knative-agents-e2e-runner
+          aws-region: us-east-2
+      - name: make e2e-l2
+        env:
+          AWS_PROFILE: stigen
+          AWS_REGION: us-east-2
+        run: make e2e-l2
+
+  coverage-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: enforce R-E2E-* coverage map
+        run: go test -count=1 -run=TestCoverageGate ./test/e2e/fullstack/
