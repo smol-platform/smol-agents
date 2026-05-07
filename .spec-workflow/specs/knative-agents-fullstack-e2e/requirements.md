@@ -108,6 +108,8 @@ every ring that has the required capability.
 
 **R-E2E-SCN-KATA** (L2 only) — When an AgentRun Pod runs with `runtimeClass: kata-fc`, `uname -r` inside the container **shall** report the Kata-shipped kernel, distinct from the host kernel reported by `uname -r` on the EC2 instance.
 
+**R-E2E-SCN-KA-PHASE** (L1+) — When the operator reconciles a minimal `KnativeAgent` CR (e.g. `tenant-a/hello` from kind-verify), the CR's `Status.Phase` **shall** transition to `Ready` within 60 s. Verifies the operator's status reconciliation path works end-to-end against a live apiserver (CRDs admitted, conditions populated, aggregate Ready computed).
+
 ## Verification (R-E2E-VRF-*)
 
 **R-E2E-VRF-1** — Every requirement in this document **shall** map to at least one Go test in `test/e2e/fullstack/`. CI **shall** fail if any R-E2E-* ID is unreferenced by tests (a `coverage.go` file maintains the mapping and the CI check parses it).

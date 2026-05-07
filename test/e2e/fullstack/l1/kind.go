@@ -5,7 +5,6 @@ package l1
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -235,17 +234,22 @@ func (e *kindEnv) Apply(ctx context.Context, manifest []byte) error {
 	return nil
 }
 
-// Exec runs a command in a Pod via kubectl exec.
+// Exec runs a command. With target.Pod empty, runs kubectl directly
+// (e.g. `Exec(ctx, ExecTarget{}, "get", "ns")` → `kubectl get ns`).
+// With target.Pod set, runs `kubectl exec -n <ns> [-c <ctr>] <pod>
+// -- <cmd>` to execute inside that Pod.
 func (e *kindEnv) Exec(ctx context.Context, target shared.ExecTarget, cmd ...string) ([]byte, error) {
+	args := []string{"--context", e.context}
 	if target.Pod == "" {
-		return nil, errors.New("l1.Exec: target.Pod is required")
+		args = append(args, cmd...)
+	} else {
+		args = append(args, "exec", "-n", target.Namespace)
+		if target.Container != "" {
+			args = append(args, "-c", target.Container)
+		}
+		args = append(args, target.Pod, "--")
+		args = append(args, cmd...)
 	}
-	args := []string{"--context", e.context, "exec", "-n", target.Namespace}
-	if target.Container != "" {
-		args = append(args, "-c", target.Container)
-	}
-	args = append(args, target.Pod, "--")
-	args = append(args, cmd...)
 	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
 	return out, err
 }

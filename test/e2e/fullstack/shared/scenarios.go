@@ -43,6 +43,7 @@ func All() []Scenario {
 		cancel,
 		webhook,
 		kataIsolation,
+		knativeAgentPhase,
 	}
 }
 
@@ -550,6 +551,43 @@ var kataIsolation = Scenario{
 	Name:     "kata-microvm-runs",
 	Requires: CapKubernetes | CapKata,
 	Run:      todo("Kata kernel != host body lands in T-5.4 (L2 only)"),
+}
+
+var knativeAgentPhase = Scenario{
+	ID:       "R-E2E-SCN-KA-PHASE",
+	Name:     "knativeagent-status-phase-ready",
+	Requires: CapKubernetes,
+	Run:      runKnativeAgentPhase,
+}
+
+// runKnativeAgentPhase asserts that a KnativeAgent CR reconciled by
+// the operator reaches phase=Ready in-cluster. Uses the existing
+// `tenant-a/hello` CR brought up by scripts/kind-verify.sh — the
+// L1 driver hooks into that path. Doesn't apply a new CR; the point
+// is to verify the operator's status reconciliation path works
+// end-to-end against a live apiserver.
+func runKnativeAgentPhase(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	err := env.WaitFor(ctx, "knativeagent-phase-ready", 60*time.Second, func(ctx context.Context) bool {
+		out, err := env.Exec(ctx, ExecTarget{},
+			"get", "-n", "tenant-a", "knativeagent", "hello",
+			"-o", "jsonpath={.status.phase}")
+		if err != nil {
+			return false
+		}
+		return strings.TrimSpace(string(out)) == "Ready"
+	})
+	if err != nil {
+		// Fetch the current state for the failure log.
+		out, _ := env.Exec(ctx, ExecTarget{},
+			"get", "-n", "tenant-a", "knativeagent", "hello",
+			"-o", "jsonpath={.status}")
+		t.Fatalf("KnativeAgent hello never reached phase=Ready: %v\nstatus: %s", err, out)
+	}
+	t.Log("KnativeAgent tenant-a/hello reconciled to phase=Ready")
 }
 
 // todo returns a Run that fails-loudly with a useful message until

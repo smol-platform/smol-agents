@@ -22,6 +22,7 @@ var Coverage = map[string]string{
 	"R-E2E-SCN-CANCEL":     "shared.cancel",
 	"R-E2E-SCN-WEBHOOK":    "shared.webhook",
 	"R-E2E-SCN-KATA":       "shared.kataIsolation",
+	"R-E2E-SCN-KA-PHASE":   "shared.knativeAgentPhase",
 
 	// Driver / ring orchestration: validated by the existence + green
 	// pass of each ring's TestLn root test. Each entry below names
