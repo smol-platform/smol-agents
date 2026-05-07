@@ -82,7 +82,7 @@ test-e2e:
 
 .PHONY: e2e-l0
 e2e-l0:
-	$(GO) test -tags=e2e_l0 -timeout 10m ./test/e2e/fullstack/l0/...
+	$(GO) test -tags='e2e_l0 wgnetstack' -timeout 10m ./test/e2e/fullstack/l0/...
 
 .PHONY: e2e-l1
 e2e-l1:

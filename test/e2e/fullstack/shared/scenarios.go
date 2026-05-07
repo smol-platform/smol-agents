@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,7 @@ import (
 
 	rt "github.com/stigen/knative-agents/pkg/agentmodel/runtime"
 	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	"github.com/stigen/knative-agents/pkg/agentnet/wireguard"
 	"github.com/stigen/knative-agents/pkg/agentruntime"
 	"github.com/stigen/knative-agents/pkg/agentruntime/fakellm"
 )
@@ -307,20 +309,75 @@ func runWGClient(t *testing.T, env Env) {
 	if !ok {
 		t.Skip("env has no wg-hub endpoint")
 	}
-	// Smoke: hub UDP port answers (we don't have a deployed peer
-	// keypair here; the full handshake is exercised once we run the
-	// userspace device against pre-shared keys configured in the
-	// L0 stack — wg-hub config has the test-driver pubkey baked in).
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
-	d := net.Dialer{Timeout: 2 * time.Second}
-	c, err := d.DialContext(ctx, "udp", hub)
-	if err != nil {
-		t.Fatalf("dial wg-hub udp: %v", err)
+	// Connectivity smoke first — bail with a clearer error if wg-hub
+	// isn't even listening.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "udp", hub)
+		if err != nil {
+			t.Fatalf("dial wg-hub udp %s: %v", hub, err)
+		}
+		_ = c.Close()
 	}
-	_ = c.Close()
-	t.Logf("wg-hub %s reachable; full handshake test pending T-1.6", hub)
+
+	// Full handshake requires the netstack-backed userspace adapter,
+	// which only links under -tags=wgnetstack. Without the tag, the
+	// device's startFn is nil and we can't drive a real test — skip
+	// with a clear message.
+	dev := wireguard.NewUserspaceDevice()
+	driverPriv, _ := base64.StdEncoding.DecodeString(wireguard.TestDriverPrivKey)
+	hubPub, _ := base64.StdEncoding.DecodeString(wireguard.TestHubPubKey)
+
+	cfg := wireguard.Config{
+		Mode:       wireguard.ModeClient,
+		PrivateKey: driverPriv,
+		Addresses:  []string{"10.99.0.5/32"},
+		MTU:        1420,
+		Peers: []wireguard.Peer{{
+			Name:                       "hub",
+			PublicKey:                  hubPub,
+			Endpoint:                   hub,
+			AllowedIPs:                 []string{"10.99.0.0/24"},
+			PersistentKeepaliveSeconds: 1,
+		}},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := dev.Start(ctx, cfg); err != nil {
+		if errors.Is(err, wireguard.ErrNotWired) {
+			t.Skipf("wgnetstack tag not built; UDP smoke OK at %s", hub)
+		}
+		t.Fatalf("Start: %v", err)
+	}
+	defer dev.Stop()
+
+	// Poll for handshake completion (peer.State flips to "connected"
+	// once wg-hub responds). Allow up to 10s.
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var connected bool
+		for _, p := range dev.Peers() {
+			if p.State == "connected" {
+				connected = true
+				break
+			}
+		}
+		if connected {
+			t.Logf("wg-hub handshake completed; userspace tunnel up at %s", hub)
+			return
+		}
+		select {
+		case <-deadline:
+			t.Errorf("WireGuard handshake never completed; peers=%v", dev.Peers())
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 var agentRun = Scenario{
