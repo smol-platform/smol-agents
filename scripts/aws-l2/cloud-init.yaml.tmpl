@@ -128,5 +128,39 @@ runcmd:
   # 7. Start spot-interruption watcher (Spot reclaim signal listener).
   - systemctl enable --now spot-interruption-watch
 
-  # 8. Sentinel — the L2 driver polls SSM until this file exists.
-  - touch /var/log/l2-bootstrap.READY
+  # 8. Install cert-manager (the operator's webhook requires Issuer
+  #    + Certificate CRDs from cert-manager). Pinned 1.16.x to match
+  #    the L1 ring's overlay. Drop into the manifest watcher dir so
+  #    k0s applies it alongside spire/operator/samples.
+  - mkdir -p /var/lib/k0s/manifests/cert-manager
+  - |
+    curl -sSL \
+      https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml \
+      > /var/lib/k0s/manifests/cert-manager/00-cert-manager.yaml
+
+  # 9. Wait for the bootstrap to actually be healthy. The READY
+  #    sentinel exists ONLY when scenarios can run; if anything
+  #    times out, the FAILED sentinel is written instead so the
+  #    L2 driver fails fast with a useful error rather than waiting
+  #    out the full 8-minute deadline on a broken cluster.
+  - |
+    set +e
+    log=/var/log/l2-bootstrap.log
+    fail() { echo "BOOTSTRAP FAILED: $*" >>"$log"; touch /var/log/l2-bootstrap.FAILED; exit 0; }
+    KCTL="k0s kubectl"
+    {
+      echo "=== bootstrap health gate $(date -u) ==="
+      $KCTL wait --for=condition=Available --timeout=180s \
+        deployment -n cert-manager --all || fail "cert-manager deploys"
+      $KCTL wait --for=condition=Ready --timeout=180s \
+        pod -n spire -l app=spire-server || fail "spire-server pod"
+      $KCTL wait --for=condition=Ready --timeout=180s \
+        pod -n spire -l app=spire-agent || fail "spire-agent pods"
+      $KCTL wait --for=condition=Available --timeout=180s \
+        deployment -n knative-agents-system --all || fail "operator deploy"
+      $KCTL wait --for=condition=Established --timeout=60s \
+        crd/knativeagents.agents.stigen.ai \
+        crd/agentnetworks.runtime-agents.stigen.ai \
+        crd/agentruns.runtime-agents.stigen.ai || fail "CRDs established"
+    } >>"$log" 2>&1
+    touch /var/log/l2-bootstrap.READY

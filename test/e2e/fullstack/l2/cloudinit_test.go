@@ -25,6 +25,15 @@ func TestRenderCloudInit_FullTemplate(t *testing.T) {
 		"deadbeef",
 		"123.dkr.ecr.us-east-2.amazonaws.com",
 		"l2-bootstrap.READY",
+		// Health-gate sentinels — READY only after pods are Ready,
+		// FAILED on any timeout so the L2 driver fails fast rather
+		// than waiting out the full 8-minute deadline.
+		"cert-manager.yaml",
+		"l2-bootstrap.FAILED",
+		"--for=condition=Ready",
+		"app=spire-server",
+		"app=spire-agent",
+		"crd/knativeagents.agents.stigen.ai",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered template missing %q", want)

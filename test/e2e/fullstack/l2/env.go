@@ -25,13 +25,43 @@ import (
 // per-call latency (round-trip through AWS API), so scenario time
 // dominates by SSM throughput rather than test logic. Acceptable
 // for the smaller L2 scenario set.
+// ssmAPI is the subset of *ssm.Client that l2Env uses. Captured as
+// an interface so tests can plug a fake without standing up AWS.
+type ssmAPI interface {
+	SendCommand(context.Context, *ssm.SendCommandInput, ...func(*ssm.Options)) (*ssm.SendCommandOutput, error)
+	GetCommandInvocation(context.Context, *ssm.GetCommandInvocationInput, ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error)
+}
+
 type l2Env struct {
 	cluster *Cluster
+	// ssm overrides cluster.ssmc when non-nil. Production code
+	// leaves this nil; tests inject a fakeSSM. The accessor below
+	// resolves which to use.
+	ssm ssmAPI
 }
 
 // AsEnv wraps a Cluster as an Env. Used by TestL2 to call
 // shared.RunAll(t, env, shared.All()) once the instance is up.
 func (c *Cluster) AsEnv() shared.Env { return &l2Env{cluster: c} }
+
+// ssmClient resolves the SSM client to use — the test override if
+// set, otherwise the cluster's real client.
+func (e *l2Env) ssmClient() ssmAPI {
+	if e.ssm != nil {
+		return e.ssm
+	}
+	return e.cluster.ssmc
+}
+
+// instanceID resolves the instance to target. cluster may be nil in
+// unit tests; in that case the test must set ssm + a fixed ID via
+// the testing-only newTestEnv helper.
+func (e *l2Env) instanceID() string {
+	if e.cluster != nil {
+		return e.cluster.InstanceID
+	}
+	return "i-test"
+}
 
 func (e *l2Env) Capabilities() shared.Caps {
 	return shared.CapKubernetes | shared.CapNetworkEgress |
@@ -175,8 +205,8 @@ func (e *l2Env) runSSM(ctx context.Context, command string, deadline time.Durati
 	dctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
-	send, err := e.cluster.ssmc.SendCommand(dctx, &ssm.SendCommandInput{
-		InstanceIds:  []string{e.cluster.InstanceID},
+	send, err := e.ssmClient().SendCommand(dctx, &ssm.SendCommandInput{
+		InstanceIds:  []string{e.instanceID()},
 		DocumentName: aws.String("AWS-RunShellScript"),
 		Parameters: map[string][]string{
 			"commands": {command},
@@ -191,9 +221,9 @@ func (e *l2Env) runSSM(ctx context.Context, command string, deadline time.Durati
 	tick := time.NewTicker(1 * time.Second)
 	defer tick.Stop()
 	for {
-		inv, err := e.cluster.ssmc.GetCommandInvocation(dctx, &ssm.GetCommandInvocationInput{
+		inv, err := e.ssmClient().GetCommandInvocation(dctx, &ssm.GetCommandInvocationInput{
 			CommandId:  aws.String(cmdID),
-			InstanceId: aws.String(e.cluster.InstanceID),
+			InstanceId: aws.String(e.instanceID()),
 		})
 		if err == nil && inv.Status != ssmtypes.CommandInvocationStatusInProgress &&
 			inv.Status != ssmtypes.CommandInvocationStatusPending {

@@ -43,17 +43,31 @@ func TestL2(t *testing.T) {
 	t.Logf("L2 cluster up: instance=%s public_dns=%s run_id=%s",
 		cluster.InstanceID, cluster.PublicDNS, cluster.RunID)
 
-	// Wait for the cloud-init sentinel (set by the bootstrap script
-	// after k0s + Kata + manifests are applied).
+	// Wait for the cloud-init health gate. Sentinel is binary:
+	//   /var/log/l2-bootstrap.READY  → cluster ready, scenarios can run
+	//   /var/log/l2-bootstrap.FAILED → bootstrap aborted, fetch the log
+	// We poll for either; if FAILED appears we abort early instead
+	// of waiting out the 8-minute deadline.
 	env := &l2Env{cluster: cluster}
-	err = env.WaitFor(ctx, "l2-bootstrap.READY", 8*time.Minute,
+	err = env.WaitFor(ctx, "l2-bootstrap.{READY,FAILED}", 8*time.Minute,
 		func(ctx context.Context) bool {
-			out, err := env.runSSM(ctx, "test -f /var/log/l2-bootstrap.READY && echo READY",
+			out, err := env.runSSM(ctx,
+				"test -f /var/log/l2-bootstrap.READY  && echo READY ; "+
+					"test -f /var/log/l2-bootstrap.FAILED && echo FAILED ; true",
 				15*time.Second)
-			return err == nil && bytes.Contains(out, []byte("READY"))
+			return err == nil &&
+				(bytes.Contains(out, []byte("READY")) ||
+					bytes.Contains(out, []byte("FAILED")))
 		})
 	if err != nil {
 		t.Fatalf("bootstrap sentinel never appeared: %v", err)
+	}
+	failed, _ := env.runSSM(ctx, "test -f /var/log/l2-bootstrap.FAILED && echo yes",
+		15*time.Second)
+	if bytes.Contains(failed, []byte("yes")) {
+		log, _ := env.runSSM(ctx, "cat /var/log/l2-bootstrap.log 2>/dev/null || true",
+			30*time.Second)
+		t.Fatalf("bootstrap reported FAILED; log:\n%s", log)
 	}
 	t.Log("L2 bootstrap sentinel observed; running scenarios")
 
