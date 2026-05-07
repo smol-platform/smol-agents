@@ -93,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Admission webhooks. R-OP-WH-1, R-OP-WH-2.
+	// Admission webhooks. R-OP-WH-1, R-OP-WH-2, R-AN-API-1.
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err := webhooks.SetupAgentWebhook(mgr, "default"); err != nil {
 			setupLog.Error(err, "unable to register KnativeAgent webhook")
@@ -101,6 +101,10 @@ func main() {
 		}
 		if err := webhooks.SetupPlatformWebhook(mgr, "default"); err != nil {
 			setupLog.Error(err, "unable to register KnativeAgentPlatform webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupAgentNetworkWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentNetwork webhook")
 			os.Exit(1)
 		}
 	}

@@ -77,3 +77,30 @@ webhooks:
         apiVersions: [v1]
         resources: [knativeagents]
         operations: [CREATE, UPDATE]
+---
+# AgentNetwork validating webhook — enforces the transport-mutex
+# at admission time. Same rules as ValidateAgentNetwork() in
+# pkg/agentmodel/v1; the reconciler also runs them at Reconcile,
+# but the webhook makes failures surface in `kubectl apply` rather
+# than as Status.Phase=Failed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: knative-agents-operator-validating-agentnetwork
+  annotations:
+    cert-manager.io/inject-ca-from: knative-agents-system/knative-agents-operator-serving-cert
+webhooks:
+  - name: validate.agentnetwork.runtime.agents.stigen.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: knative-agents-operator-webhook
+        namespace: knative-agents-system
+        path: /validate-runtime-agents-stigen-ai-v1-agentnetwork
+    rules:
+      - apiGroups: [runtime.agents.stigen.ai]
+        apiVersions: [v1]
+        resources: [agentnetworks]
+        operations: [CREATE, UPDATE]

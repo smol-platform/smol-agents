@@ -541,45 +541,81 @@ func (s slowLLM) Chat(ctx context.Context, _ agentruntime.ChatRequest) (rt.LLMDe
 
 var webhook = Scenario{
 	ID:       "R-E2E-SCN-WEBHOOK",
-	Name:     "webhook-rejects-bad-knativeagent",
+	Name:     "webhook-rejects-bad-specs",
 	Requires: CapKubernetes | CapWebhook,
 	Run:      runWebhook,
 }
 
-// runWebhook applies a KnativeAgent with mode=insecure and no
-// allow-insecure annotation, asserts the apiserver rejects it via
-// the validating webhook (R-OP-WH-1).
+// runWebhook exercises both validating webhooks the operator ships:
 //
-// The original requirement named this "rejects-bad-agentnetwork"
-// but AgentNetwork has no validating webhook today (its admission
-// rules are enforced by the reconciler). This variant exercises
-// the existing KnativeAgent webhook end-to-end.
+//  1. KnativeAgent: mode=insecure without the allow-insecure
+//     annotation must be rejected (R-OP-WH-1).
+//  2. AgentNetwork: setting both `identityProxy` and `wireguardMesh`
+//     simultaneously must be rejected by the transport-mutex
+//     validation (R-AN-API-1).
+//
+// Each rejection's error message is sniffed for the corresponding
+// validation reason so a regression in one webhook fails this
+// scenario with a precise pointer.
 func runWebhook(t *testing.T, env Env) {
 	t.Helper()
-	manifest := []byte(`apiVersion: agents.stigen.ai/v1
-kind: KnativeAgent
-metadata:
-  name: webhook-bad-mode
-  namespace: tenant-a
-spec:
-  trustDomain: stigen.ai
-  mode: insecure
-`)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	err := env.Apply(ctx, manifest)
-	if err == nil {
-		_, _ = env.Exec(ctx, ExecTarget{}, "delete", "knativeagent",
-			"webhook-bad-mode", "-n", "tenant-a")
-		t.Fatal("expected apiserver to reject bad KnativeAgent; admission accepted")
+	cases := []struct {
+		name    string
+		yaml    string
+		matches []string
+		cleanup []string
+	}{
+		{
+			name: "knativeagent-insecure-no-annotation",
+			yaml: `apiVersion: agents.stigen.ai/v1
+kind: KnativeAgent
+metadata: {name: webhook-bad-mode, namespace: tenant-a}
+spec:
+  trustDomain: stigen.ai
+  mode: insecure
+`,
+			matches: []string{"denied", "allow-insecure"},
+			cleanup: []string{"delete", "knativeagent", "webhook-bad-mode", "-n", "tenant-a"},
+		},
+		{
+			name: "agentnetwork-both-transports",
+			yaml: `apiVersion: runtime.agents.stigen.ai/v1
+kind: AgentNetwork
+metadata: {name: webhook-bad-anet, namespace: tenant-a}
+spec:
+  kind: identityProxy
+  identityProxy:
+    resources:
+      - {name: x, kind: tcp, localAddr: "127.0.0.1:5432", gateway: g.svc:8443, authorize: ["spiffe://x"]}
+  wireguardMesh:
+    mode: client
+    privateKeyRef: {secretName: x}
+`,
+			matches: []string{"denied", "wireguardMesh must be nil"},
+			cleanup: []string{"delete", "agentnetwork", "webhook-bad-anet", "-n", "tenant-a"},
+		},
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "denied") || !strings.Contains(msg, "allow-insecure") {
-		t.Errorf("rejection error doesn't look like the expected webhook denial: %v", err)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := env.Apply(ctx, []byte(tc.yaml))
+			if err == nil {
+				_, _ = env.Exec(ctx, ExecTarget{}, tc.cleanup...)
+				t.Fatalf("expected apiserver to reject %s; admission accepted", tc.name)
+			}
+			msg := err.Error()
+			for _, want := range tc.matches {
+				if !strings.Contains(msg, want) {
+					t.Errorf("rejection message missing %q: %v", want, err)
+				}
+			}
+			t.Logf("rejected as expected: %s",
+				strings.SplitN(msg, "\n", 2)[0])
+		})
 	}
-	t.Logf("webhook rejected bad spec as expected: %s",
-		strings.SplitN(msg, "\n", 2)[0])
 }
 
 var kataIsolation = Scenario{
