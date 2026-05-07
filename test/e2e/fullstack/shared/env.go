@@ -62,6 +62,24 @@ type Env interface {
 	// string means "no SPIRE in this ring" (scenarios should gate
 	// on CapSPIRE).
 	SPIFFEWorkloadAPI() string
+
+	// RunSpiffeProbe launches an in-cluster Pod running
+	// cmd/spiffe-probe with the requested scenarios, captures its
+	// log output, and returns the parsed lines. Lets SPIFFE
+	// scenarios bypass the macOS-OrbStack in-VM-socket limitation
+	// by running assertions inside the cluster's kernel.
+	//
+	// Rings that don't have a cluster (L0) return an error; SPIFFE
+	// scenarios that depend on this self-skip via Capability gating
+	// before getting here.
+	RunSpiffeProbe(ctx context.Context, scenarios []string, args ...string) ([]ProbeLine, error)
+}
+
+// ProbeLine is one parsed result line from cmd/spiffe-probe's stdout.
+type ProbeLine struct {
+	OK       bool
+	Scenario string
+	Detail   string
 }
 
 // ExecTarget identifies a process to exec into. Different rings map

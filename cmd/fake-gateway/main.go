@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -30,7 +31,6 @@ import (
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
-	"github.com/spiffe/go-spiffe/v2/spiffetls"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
@@ -96,12 +96,17 @@ func runTCP(ctx context.Context, addr, socketPath, authorizePrefix string, obs *
 	}
 	defer src.Close()
 
-	ln, err := spiffetls.ListenWithMode(ctx, "tcp", addr,
-		spiffetls.MTLSServerWithSource(tlsconfig.AuthorizeAny(), src))
+	// Plain tls.NewListener so accepted conns are *tls.Conn — that
+	// type exposes ConnectionState() so peerID can pull the SPIFFE
+	// ID out of the URI SAN. tlsconfig.MTLSServerConfig handles
+	// the mTLS verification against the trust bundle.
+	tlsCfg := tlsconfig.MTLSServerConfig(src, src, tlsconfig.AuthorizeAny())
+	rawLn, err := net.Listen("tcp", addr)
 	if err != nil {
 		logger.Error("tcp listen", "err", err)
 		return
 	}
+	ln := tls.NewListener(rawLn, tlsCfg)
 	defer ln.Close()
 	logger.Info("tcp echo", "addr", addr, "authorizePrefix", authorizePrefix)
 
@@ -122,6 +127,18 @@ func runTCP(ctx context.Context, addr, socketPath, authorizePrefix string, obs *
 
 func handleTCP(c net.Conn, authorizePrefix string, obs *observed, logger *slog.Logger) {
 	defer c.Close()
+	// Explicitly handshake — peerID needs PeerCertificates which
+	// only populate after the TLS handshake completes. Read/Write
+	// would auto-handshake, but we read peer state BEFORE either,
+	// so without this the cert chain is empty.
+	if tc, ok := c.(*tls.Conn); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tc.HandshakeContext(ctx); err != nil {
+			logger.Warn("tcp handshake", "err", err)
+			return
+		}
+	}
 	id, ok := peerID(c)
 	if !ok {
 		logger.Warn("no peer SVID")
@@ -136,13 +153,29 @@ func handleTCP(c net.Conn, authorizePrefix string, obs *observed, logger *slog.L
 	_, _ = io.Copy(c, c)
 }
 
-// peerID extracts the SPIFFE ID from a connection that came in via
-// spiffetls. The library wraps the conn so type assertion works.
+// peerID extracts the peer SPIFFE ID. spiffetls returns its own
+// connection wrapper exposing PeerID(); the standard *tls.Conn
+// fallback parses the URI SAN. We try several known shapes since
+// spiffetls' wrapper isn't exported as a public interface in 2.x.
 type peerIDer interface{ PeerID() spiffeid.ID }
+
+type connectionStater interface {
+	ConnectionState() tls.ConnectionState
+}
 
 func peerID(c net.Conn) (spiffeid.ID, bool) {
 	if p, ok := c.(peerIDer); ok {
 		return p.PeerID(), true
+	}
+	if cs, ok := c.(connectionStater); ok {
+		state := cs.ConnectionState()
+		if len(state.PeerCertificates) > 0 {
+			for _, u := range state.PeerCertificates[0].URIs {
+				if id, err := spiffeid.FromString(u.String()); err == nil {
+					return id, true
+				}
+			}
+		}
 	}
 	return spiffeid.ID{}, false
 }

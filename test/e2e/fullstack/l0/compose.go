@@ -151,6 +151,14 @@ func (e *composeEnv) SPIFFEWorkloadAPI() string {
 	return "unix://" + filepath.Join(e.socketDir, "api.sock")
 }
 
+// RunSpiffeProbe is unsupported at L0 (no Kubernetes cluster).
+// SPIFFE scenarios at L0 use the host workload-API directly via
+// SPIFFEWorkloadAPI() — gated by CapSPIRE which only flips when the
+// host kernel can dial the bind-mounted socket.
+func (e *composeEnv) RunSpiffeProbe(_ context.Context, _ []string, _ ...string) ([]shared.ProbeLine, error) {
+	return nil, errors.New("l0: in-cluster probe unavailable")
+}
+
 // run executes a command, streaming output to stderr on failure.
 func run(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)

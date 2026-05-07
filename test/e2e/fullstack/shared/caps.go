@@ -38,16 +38,22 @@ const (
 	// is reachable (for the "1.1.1.1 is dropped by eBPF" test).
 	// L1 + L2.
 	CapNetworkEgress
+
+	// CapInClusterProbe — the env can launch one-shot Pods running
+	// cmd/spiffe-probe and parse their logs. L1 + L2 (anything
+	// with kubectl + a working node).
+	CapInClusterProbe
 )
 
 var capNames = map[Caps]string{
-	CapKubernetes:    "kubernetes",
-	CapEBPF:          "ebpf",
-	CapKata:          "kata",
-	CapWebhook:       "webhook",
-	CapWireGuard:     "wireguard",
-	CapSPIRE:         "spire",
-	CapNetworkEgress: "network-egress",
+	CapKubernetes:     "kubernetes",
+	CapEBPF:           "ebpf",
+	CapKata:           "kata",
+	CapWebhook:        "webhook",
+	CapWireGuard:      "wireguard",
+	CapSPIRE:          "spire",
+	CapNetworkEgress:  "network-egress",
+	CapInClusterProbe: "in-cluster-probe",
 }
 
 // Has reports whether `c` covers every capability in `need`.

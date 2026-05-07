@@ -55,6 +55,21 @@ var identityRotation = Scenario{
 
 func runIdentityRotation(t *testing.T, env Env) {
 	t.Helper()
+
+	// L1+ rings: route through the in-cluster probe Pod.
+	if env.Capabilities().Has(CapInClusterProbe) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		lines, err := env.RunSpiffeProbe(ctx, []string{"ident"})
+		if err != nil {
+			t.Fatalf("RunSpiffeProbe: %v", err)
+		}
+		assertProbeOK(t, lines, "ident")
+		return
+	}
+
+	// L0 (Linux dev only): in-process direct dial. macOS-OrbStack
+	// gates CapSPIRE off so this path doesn't run where it can't.
 	socket := env.SPIFFEWorkloadAPI()
 	if socket == "" {
 		t.Skip("env exposes no SPIFFE socket")
@@ -73,21 +88,33 @@ func runIdentityRotation(t *testing.T, env Env) {
 	if err != nil {
 		t.Fatalf("GetX509SVID: %v", err)
 	}
-	if svid.ID.IsZero() {
-		t.Error("SVID has empty SPIFFE ID")
+	if svid.ID.IsZero() || len(svid.Certificates) == 0 {
+		t.Errorf("empty SVID: id=%s certs=%d", svid.ID, len(svid.Certificates))
 	}
-	if len(svid.Certificates) == 0 {
-		t.Error("SVID has no certificates")
-	}
-	t.Logf("got SVID id=%s, cert subject=%s",
-		svid.ID, svid.Certificates[0].Subject)
-
-	// Rotation: TTLs in the L0 SPIRE config are 1h for X509-SVID, so
-	// we don't actually wait for a rotation here — we just confirm
-	// the source can refresh on demand. The full rotation invariant
-	// is exercised by `pkg/identity` unit + integration tests.
 	if _, err := src.GetX509SVID(); err != nil {
 		t.Errorf("re-fetch SVID failed: %v", err)
+	}
+}
+
+// assertProbeOK fails the test if any of the named scenarios is
+// missing or returned FAIL.
+func assertProbeOK(t *testing.T, lines []ProbeLine, want ...string) {
+	t.Helper()
+	got := map[string]ProbeLine{}
+	for _, l := range lines {
+		got[l.Scenario] = l
+	}
+	for _, name := range want {
+		l, ok := got[name]
+		if !ok {
+			t.Errorf("probe missing scenario %q in output", name)
+			continue
+		}
+		if !l.OK {
+			t.Errorf("probe scenario %q FAIL: %s", name, l.Detail)
+			continue
+		}
+		t.Logf("probe %q OK: %s", name, l.Detail)
 	}
 }
 
@@ -104,6 +131,20 @@ func runProxyTCP(t *testing.T, env Env) {
 	if !ok {
 		t.Skip("env has no fake-gateway-tcp endpoint")
 	}
+
+	if env.Capabilities().Has(CapInClusterProbe) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		lines, err := env.RunSpiffeProbe(ctx,
+			[]string{"proxy-tcp"},
+			"--tcp-addr=fake-gateway.tenant-a.svc.cluster.local:8443")
+		if err != nil {
+			t.Fatalf("RunSpiffeProbe: %v", err)
+		}
+		assertProbeOK(t, lines, "proxy-tcp")
+		return
+	}
+
 	socket := env.SPIFFEWorkloadAPI()
 	if socket == "" {
 		t.Skip("env exposes no SPIFFE socket")
@@ -158,6 +199,22 @@ func runProxyHTTP(t *testing.T, env Env) {
 	if !ok {
 		t.Skip("env has no fake-gateway-http endpoint")
 	}
+
+	if env.Capabilities().Has(CapInClusterProbe) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		audience := "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway"
+		lines, err := env.RunSpiffeProbe(ctx,
+			[]string{"proxy-http"},
+			"--http-url=http://fake-gateway.tenant-a.svc.cluster.local:8080",
+			"--http-audience="+audience)
+		if err != nil {
+			t.Fatalf("RunSpiffeProbe: %v", err)
+		}
+		assertProbeOK(t, lines, "proxy-http")
+		return
+	}
+
 	socket := env.SPIFFEWorkloadAPI()
 	if socket == "" {
 		t.Skip("env exposes no SPIFFE socket")

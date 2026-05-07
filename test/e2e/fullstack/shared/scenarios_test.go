@@ -69,3 +69,6 @@ func (f *fakeEnv) WaitFor(_ context.Context, _ string, _ time.Duration, _ func(c
 func (f *fakeEnv) Cleanup(_ context.Context) error  { return nil }
 func (f *fakeEnv) Endpoint(_ string) (string, bool) { return "", false }
 func (f *fakeEnv) SPIFFEWorkloadAPI() string        { return "" }
+func (f *fakeEnv) RunSpiffeProbe(_ context.Context, _ []string, _ ...string) ([]ProbeLine, error) {
+	return nil, nil
+}

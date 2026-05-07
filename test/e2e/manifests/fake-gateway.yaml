@@ -1,10 +1,6 @@
-# fake-gateway Deployment + Service for L1.
-# This variant skips SPIFFE for now (L1's CapSPIRE is false until
-# SPIRE is deployed in cluster); uses plain HTTP+TCP echo so
-# scenarios that just need an upstream can hit it.
-#
-# When SPIRE lands in kind (T-2.x), this manifest gets a SPIRE socket
-# mount + the production fake-gateway args.
+# fake-gateway Deployment + Service for L1, running the real
+# SVID-aware cmd/fake-gateway binary. Mounts the SPIRE workload-API
+# socket so it can fetch its own SVID and validate clients'.
 apiVersion: v1
 kind: Service
 metadata:
@@ -39,27 +35,26 @@ spec:
         app.kubernetes.io/name: fake-gateway
     spec:
       containers:
-        # NOTE: cmd/fake-gateway requires a SPIRE socket — at L1 we
-        # don't yet run SPIRE, so we use socat as a temporary stand-in
-        # echo. Full fake-gateway (SVID-aware) lights up when T-2.x
-        # deploys SPIRE in kind.
-        - name: echo
-          image: alpine/socat:1.8.0.0
-          imagePullPolicy: IfNotPresent
-          command: ["socat", "TCP-LISTEN:8080,fork,reuseaddr", "EXEC:/bin/cat"]
+        - name: fake-gateway
+          image: knative-agents/fake-gateway:dev
+          imagePullPolicy: Never
+          args:
+            - "-tcp-addr=:8443"
+            - "-http-addr=:8080"
+            - "-jwt-audience=spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway"
+            - "-authorize-tcp=spiffe://stigen.ai/ns/tenant-a"
           ports:
-            - name: http
-              containerPort: 8080
+            - { name: http, containerPort: 8080 }
+            - { name: tcp,  containerPort: 8443 }
+          volumeMounts:
+            - name: sockets
+              mountPath: /run/spire/agent-sockets
+              readOnly: true
           resources:
-            requests: { cpu: "10m", memory: "16Mi" }
-            limits:   { cpu: "200m", memory: "64Mi" }
-        - name: tcp-echo
-          image: alpine/socat:1.8.0.0
-          imagePullPolicy: IfNotPresent
-          command: ["socat", "TCP-LISTEN:8443,fork,reuseaddr", "EXEC:/bin/cat"]
-          ports:
-            - name: tcp
-              containerPort: 8443
-          resources:
-            requests: { cpu: "10m", memory: "16Mi" }
-            limits:   { cpu: "200m", memory: "64Mi" }
+            requests: { cpu: "10m", memory: "32Mi" }
+            limits:   { cpu: "200m", memory: "128Mi" }
+      volumes:
+        - name: sockets
+          hostPath:
+            path: /run/spire/agent-sockets
+            type: DirectoryOrCreate

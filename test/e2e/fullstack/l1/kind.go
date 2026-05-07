@@ -153,14 +153,15 @@ func (e *kindEnv) stopPortForwards() {
 	e.portForwards = nil
 }
 
-// deployFakes builds the fake-llm + spire-shell images, loads them
-// into the kind cluster, and kubectl-applies all e2e manifests
-// (fakes + SPIRE). Idempotent.
+// deployFakes builds the fake-llm + spire-shell + spiffe-probe
+// images, loads them into the kind cluster, and kubectl-applies all
+// e2e manifests (fakes + SPIRE). Idempotent.
 func (e *kindEnv) deployFakes(ctx context.Context) error {
 	root := repoFile("")
 	// 1. Build images we ship locally.
 	for _, img := range []struct{ tag, dockerfile, ctx string }{
 		{"knative-agents/fake-llm:dev", "deploy/docker/fake-llm.Dockerfile", root},
+		{"knative-agents/spiffe-probe:dev", "deploy/docker/spiffe-probe.Dockerfile", root},
 		{"knative-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
 	} {
 		if err := runCmd(ctx, "docker", "build",
@@ -213,16 +214,8 @@ func runCmd(ctx context.Context, name string, args ...string) error {
 }
 
 func (e *kindEnv) Capabilities() shared.Caps {
-	caps := shared.CapKubernetes | shared.CapNetworkEgress
-	// CapEBPF advertised when the kind nodes expose bpf() — they do
-	// on Linux + OrbStack VMs. We can probe by listing the
-	// ebpf-loader DaemonSet's Pod logs but that adds setup; for now
-	// trust the kind-on-Linux invariant and advertise.
+	caps := shared.CapKubernetes | shared.CapNetworkEgress | shared.CapInClusterProbe
 	caps |= shared.CapEBPF
-	// CapSPIRE only when an in-cluster test runner can reach the
-	// workload-API socket. Like L0 on macOS, the host can't dial
-	// sockets in the Linux VM; defer SPIRE-requiring tests to a
-	// future in-cluster test-driver Pod (T-2.x follow-up).
 	if e.canReachSPIREInCluster() {
 		caps |= shared.CapSPIRE
 	}
@@ -303,18 +296,109 @@ func (e *kindEnv) SPIFFEWorkloadAPI() string {
 	return "unix:///run/spire/agent-sockets/api.sock"
 }
 
-// canReachSPIREInCluster probes whether SPIRE is even installed in
-// the cluster. The current scripts/kind-verify.sh doesn't deploy
-// SPIRE — that's a separate enhancement (T-2.x). For now we conclude
-// CapSPIRE is unavailable at L1.
+// canReachSPIREInCluster probes whether SPIRE is installed AND the
+// spire-server StatefulSet is ready. We require both because just
+// having the namespace isn't sufficient — workload entries must be
+// registered (which the bootstrap sidecar does) for any probe to
+// fetch an SVID.
 func (e *kindEnv) canReachSPIREInCluster() bool {
-	cmd := exec.Command("kubectl", "--context", e.context, "get", "namespace", "spire-system",
-		"--ignore-not-found", "-o", "name")
-	out, err := cmd.Output()
+	out, err := exec.Command("kubectl", "--context", e.context,
+		"-n", "spire-system", "get", "pod", "spire-server-0",
+		"-o", "jsonpath={.status.phase}").Output()
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(out)) != ""
+	return strings.TrimSpace(string(out)) == "Running"
+}
+
+// RunSpiffeProbe applies a one-shot Pod running cmd/spiffe-probe
+// with the given scenario list, waits for completion, and returns
+// the parsed lines. Used by SPIFFE-requiring scenarios at L1
+// because the host can't dial the in-Pod workload-API socket.
+func (e *kindEnv) RunSpiffeProbe(ctx context.Context, scenarios []string, args ...string) ([]shared.ProbeLine, error) {
+	pod := "spiffe-probe-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	probeArgs := append([]string{"--scenarios=" + strings.Join(scenarios, ",")}, args...)
+
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata: { name: %s, namespace: tenant-a }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: knative-agents/spiffe-probe:dev
+      imagePullPolicy: Never
+      args: %s
+      volumeMounts:
+        - { name: sockets, mountPath: /run/spire/agent-sockets }
+  volumes:
+    - name: sockets
+      hostPath: { path: /run/spire/agent-sockets, type: DirectoryOrCreate }
+`, pod, jsonStringList(probeArgs))
+
+	if err := e.Apply(ctx, []byte(manifest)); err != nil {
+		return nil, fmt.Errorf("apply probe pod: %w", err)
+	}
+	defer func() {
+		_ = exec.Command("kubectl", "--context", e.context,
+			"-n", "tenant-a", "delete", "pod", pod, "--ignore-not-found").Run()
+	}()
+
+	// Wait for completion.
+	wait := exec.CommandContext(ctx, "kubectl", "--context", e.context,
+		"-n", "tenant-a", "wait", "--for=jsonpath={.status.phase}=Succeeded",
+		"pod/"+pod, "--timeout=30s")
+	if err := wait.Run(); err != nil {
+		// Probe failed; still grab logs to surface why.
+		out, _ := exec.Command("kubectl", "--context", e.context,
+			"-n", "tenant-a", "logs", pod).CombinedOutput()
+		return parseProbeLines(string(out)), fmt.Errorf("probe pod did not succeed: %w\nlogs:\n%s", err, out)
+	}
+
+	out, err := exec.Command("kubectl", "--context", e.context,
+		"-n", "tenant-a", "logs", pod).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("kubectl logs: %w", err)
+	}
+	return parseProbeLines(string(out)), nil
+}
+
+// jsonStringList renders ["a","b"] for embedding into the YAML's
+// args field — kubectl applies as a JSON list inside YAML.
+func jsonStringList(items []string) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, s := range items {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('"')
+		b.WriteString(strings.ReplaceAll(s, `"`, `\"`))
+		b.WriteByte('"')
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func parseProbeLines(s string) []shared.ProbeLine {
+	var out []shared.ProbeLine
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "OK "):
+			rest := strings.TrimPrefix(line, "OK ")
+			scen, detail, _ := strings.Cut(rest, " ")
+			out = append(out, shared.ProbeLine{OK: true, Scenario: scen, Detail: detail})
+		case strings.HasPrefix(line, "FAIL "):
+			rest := strings.TrimPrefix(line, "FAIL ")
+			scen, detail, _ := strings.Cut(rest, " ")
+			out = append(out, shared.ProbeLine{OK: false, Scenario: scen, Detail: detail})
+		}
+	}
+	return out
 }
 
 // ----------------------------- helpers -----------------------------
