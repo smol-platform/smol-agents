@@ -105,6 +105,30 @@ e2e-clean-aws:
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	bash scripts/aws-l2/sweep.sh
 
+# L2 bundle: produce the manifest tarball + push images to ECR that
+# the cloud-init template pulls from at instance-start. The L2
+# driver populates these env vars before invoking; standalone runs
+# can also use them. Tag defaults to short git SHA.
+#
+# Implements T-4.2 (manifest bundle) + T-4.3 (image push).
+
+L2_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+
+.PHONY: l2-bundle
+l2-bundle: l2-manifests l2-images
+
+.PHONY: l2-manifests
+l2-manifests:
+	@: $${L2_ARTIFACT_BUCKET:?must be set (S3 bucket from terraform output)}
+	@: $${AWS_PROFILE:?must be set, expected stigen}
+	bash scripts/aws-l2/build-manifests.sh $(L2_IMAGE_TAG)
+
+.PHONY: l2-images
+l2-images:
+	@: $${L2_ECR_REGISTRY:?must be set (e.g. 123.dkr.ecr.us-east-2.amazonaws.com)}
+	@: $${AWS_PROFILE:?must be set, expected stigen}
+	bash scripts/aws-l2/build-images.sh $(L2_IMAGE_TAG)
+
 .PHONY: verify-formal
 verify-formal:
 	@command -v quint >/dev/null || { echo "quint not installed"; exit 1; }
