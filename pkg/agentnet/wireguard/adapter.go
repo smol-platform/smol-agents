@@ -11,6 +11,12 @@ import (
 	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
 )
 
+// Mode constants for WireGuardSpec.Mode and Config.Mode.
+const (
+	ModeClient = "client"
+	ModeServer = "server"
+)
+
 // Adapter abstracts the WireGuard backend. Production = UserspaceDevice
 // (wireguard-go + netstack). Tests = FakeAdapter.
 type Adapter interface {
