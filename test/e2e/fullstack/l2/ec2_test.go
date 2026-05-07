@@ -3,10 +3,13 @@
 package l2
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
 )
 
 // TestL2 provisions a Spot c6gd.metal in us-east-2, waits for SSM,
@@ -40,8 +43,21 @@ func TestL2(t *testing.T) {
 	t.Logf("L2 cluster up: instance=%s public_dns=%s run_id=%s",
 		cluster.InstanceID, cluster.PublicDNS, cluster.RunID)
 
-	// Smoke: SSM was ready, instance is running. Full scenarios run
-	// once cloud-init wires k0s + Kata (T-4.*).
+	// Wait for the cloud-init sentinel (set by the bootstrap script
+	// after k0s + Kata + manifests are applied).
+	env := &l2Env{cluster: cluster}
+	err = env.WaitFor(ctx, "l2-bootstrap.READY", 8*time.Minute,
+		func(ctx context.Context) bool {
+			out, err := env.runSSM(ctx, "test -f /var/log/l2-bootstrap.READY && echo READY",
+				15*time.Second)
+			return err == nil && bytes.Contains(out, []byte("READY"))
+		})
+	if err != nil {
+		t.Fatalf("bootstrap sentinel never appeared: %v", err)
+	}
+	t.Log("L2 bootstrap sentinel observed; running scenarios")
+
+	shared.RunAll(t, env, shared.All())
 }
 
 // TestL2_RegionGate confirms the driver refuses non-us-east-2.
