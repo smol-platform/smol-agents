@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spire-system
+  labels:
+    # SPIRE agent DaemonSet needs hostPath + privileged for the
+    # workload-API socket and unix attestor; the server itself stays
+    # restricted-compliant via its SecurityContext.
+    pod-security.kubernetes.io/enforce: privileged

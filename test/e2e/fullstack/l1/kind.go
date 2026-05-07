@@ -153,35 +153,50 @@ func (e *kindEnv) stopPortForwards() {
 	e.portForwards = nil
 }
 
-// deployFakes builds the fake-llm + fake-gateway images, loads them
-// into the kind cluster, and kubectl-applies the manifests. Idempotent.
+// deployFakes builds the fake-llm + spire-shell images, loads them
+// into the kind cluster, and kubectl-applies all e2e manifests
+// (fakes + SPIRE). Idempotent.
 func (e *kindEnv) deployFakes(ctx context.Context) error {
 	root := repoFile("")
-	// 1. Build fake-llm image (fake-gateway uses an upstream socat
-	// image so no build needed for L1).
-	if err := runCmd(ctx, "docker", "build",
-		"-f", filepath.Join(root, "deploy/docker/fake-llm.Dockerfile"),
-		"-t", "knative-agents/fake-llm:dev", root); err != nil {
-		return fmt.Errorf("docker build fake-llm: %w", err)
+	// 1. Build images we ship locally.
+	for _, img := range []struct{ tag, dockerfile, ctx string }{
+		{"knative-agents/fake-llm:dev", "deploy/docker/fake-llm.Dockerfile", root},
+		{"knative-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
+	} {
+		if err := runCmd(ctx, "docker", "build",
+			"-f", filepath.Join(root, img.dockerfile),
+			"-t", img.tag, img.ctx); err != nil {
+			return fmt.Errorf("docker build %s: %w", img.tag, err)
+		}
+		if err := runCmd(ctx, "kind", "load", "docker-image",
+			img.tag, "--name", e.cluster); err != nil {
+			return fmt.Errorf("kind load %s: %w", img.tag, err)
+		}
 	}
-	// 2. kind-load it.
-	if err := runCmd(ctx, "kind", "load", "docker-image",
-		"knative-agents/fake-llm:dev", "--name", e.cluster); err != nil {
-		return fmt.Errorf("kind load fake-llm: %w", err)
-	}
-	// 3. Apply manifests.
+	// 2. Apply fake services.
 	manifests := filepath.Join(root, "test/e2e/manifests")
 	if err := runCmd(ctx, "kubectl", "--context", e.context,
 		"apply", "-k", manifests); err != nil {
-		return fmt.Errorf("kubectl apply manifests: %w", err)
+		return fmt.Errorf("kubectl apply fakes: %w", err)
 	}
-	// 4. Wait for fake-llm to be ready.
+	// 3. Apply SPIRE.
+	if err := runCmd(ctx, "kubectl", "--context", e.context,
+		"apply", "-k", filepath.Join(manifests, "spire")); err != nil {
+		return fmt.Errorf("kubectl apply spire: %w", err)
+	}
+	// 4. Wait for fakes ready.
 	if err := runCmd(ctx, "kubectl", "--context", e.context,
 		"-n", "tenant-a", "wait", "--for=condition=available",
 		"deployment/fake-llm", "deployment/fake-gateway",
 		"--timeout=120s"); err != nil {
 		return fmt.Errorf("wait fakes ready: %w", err)
 	}
+	// 5. Wait for SPIRE server (best-effort — agent + bootstrap job
+	// take longer; we don't block on them since CapSPIRE is checked
+	// dynamically via canReachSPIREInCluster).
+	_ = runCmd(ctx, "kubectl", "--context", e.context,
+		"-n", "spire-system", "wait", "--for=condition=ready", "pod",
+		"-l", "app=spire-server", "--timeout=60s")
 	return nil
 }
 

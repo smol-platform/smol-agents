@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: spire-system
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - server.yaml
+  - agent.yaml
+  # bootstrap-job.yaml retained but not referenced — entry
+  # registration moved into a sidecar in the spire-server
+  # StatefulSet (cleaner: shares the socket emptyDir).

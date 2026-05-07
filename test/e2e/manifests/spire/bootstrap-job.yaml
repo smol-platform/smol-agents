@@ -1,0 +1,64 @@
+# One-shot Job: register workload entries with SPIRE server. Runs
+# after the server StatefulSet is healthy. Idempotent — re-running
+# updates entries instead of duplicating.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spire-bootstrap
+  namespace: spire-system
+spec:
+  template:
+    spec:
+      serviceAccountName: spire-server
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: knative-agents/spire-shell:dev
+          imagePullPolicy: Never
+          # Connects to spire-server via in-cluster Service DNS, then
+          # registers entries for each workload that needs an SVID.
+          # Entries reference the agent's own SPIFFE ID as parent
+          # (spiffe://stigen.ai/spire/agent/k8s_psat/<cluster>/<node-uid>).
+          # We discover those at runtime by listing nodes.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # Wait for spire-server to accept connections.
+              for i in $(seq 1 30); do
+                if /opt/spire/bin/spire-server healthcheck \
+                     -shallow \
+                     -socketPath /tmp/spire-server/private/api.sock 2>/dev/null; then
+                  break
+                fi
+                # Use the gRPC API instead — server's UDS isn't
+                # exposed cluster-wide by default; we use the
+                # in-cluster Service.
+                if nc -z spire-server 8081 2>/dev/null; then
+                  break
+                fi
+                sleep 2
+              done
+
+              # Register fake-gateway workload entry. Selectors are
+              # K8s namespace + service account, matched by the
+              # in-cluster k8s WorkloadAttestor.
+              # Parent ID uses an agent attestation — we use the
+              # k8s_psat agent's SVID which is valid for any node in
+              # the cluster.
+              SERVER=spire-server:8081
+              # Use spire-server CLI with the gRPC server flag (1.10+).
+              for entry in \
+                "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway:k8s:ns:tenant-a:k8s:sa:default" \
+                "spiffe://stigen.ai/ns/tenant-a/sa/agent:k8s:ns:tenant-a:k8s:sa:default" ; do
+                spiffeID="${entry%%:*}"
+                rest="${entry#*:}"
+                /opt/spire/bin/spire-server entry create \
+                  -serverAddr "$SERVER" \
+                  -spiffeID "$spiffeID" \
+                  -parentID spiffe://stigen.ai/spire/agent/k8s_psat/knative-agents-kind/$(cat /etc/hostname || echo any) \
+                  -node \
+                  -selector "$rest" 2>&1 | tee -a /tmp/register.log || true
+              done
+
+              echo "spire bootstrap complete"

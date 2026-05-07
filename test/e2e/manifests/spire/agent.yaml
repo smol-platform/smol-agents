@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-agent-config
+  namespace: spire-system
+data:
+  agent.conf: |
+    agent {
+      data_dir = "/run/spire/data"
+      log_level = "INFO"
+      server_address = "spire-server"
+      server_port = "8081"
+      socket_path = "/run/spire/agent-sockets/api.sock"
+      trust_domain = "stigen.ai"
+      insecure_bootstrap = true
+    }
+    plugins {
+      KeyManager "memory" {}
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          cluster = "knative-agents-kind"
+        }
+      }
+      WorkloadAttestor "k8s" {
+        plugin_data {
+          # No kubelet TLS verification needed for the test rig.
+          skip_kubelet_verification = true
+        }
+      }
+      WorkloadAttestor "unix" {}
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spire-agent
+  namespace: spire-system
+spec:
+  selector:
+    matchLabels: { app: spire-agent }
+  template:
+    metadata:
+      labels: { app: spire-agent }
+    spec:
+      serviceAccountName: spire-agent
+      hostPID: true     # unix WorkloadAttestor: visibility into other process /proc
+      hostNetwork: true # k8s WorkloadAttestor: reach kubelet at 127.0.0.1:10250
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: spire-agent
+          image: ghcr.io/spiffe/spire-agent:1.10.0
+          args: ["-config", "/run/spire/conf/agent.conf"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - { name: agent-conf, mountPath: /run/spire/conf,    readOnly: true }
+            - { name: data,       mountPath: /run/spire/data }
+            - { name: sockets,    mountPath: /run/spire/agent-sockets }
+            - { name: token,      mountPath: /var/run/secrets/tokens }
+      volumes:
+        - name: agent-conf
+          configMap: { name: spire-agent-config }
+        - name: data
+          emptyDir: {}
+        # hostPath so workloads on the same node can mount the same
+        # socket and have the agent attest them.
+        - name: sockets
+          hostPath:
+            path: /run/spire/agent-sockets
+            type: DirectoryOrCreate
+        - name: token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: spire-agent
+                  expirationSeconds: 7200
+                  audience: spire-server

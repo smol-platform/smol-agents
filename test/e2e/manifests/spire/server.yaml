@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spire-server-config
+  namespace: spire-system
+data:
+  server.conf: |
+    server {
+      bind_address = "0.0.0.0"
+      bind_port = "8081"
+      socket_path = "/tmp/spire-server/private/api.sock"
+      trust_domain = "stigen.ai"
+      data_dir = "/run/spire/data"
+      log_level = "INFO"
+      ca_ttl = "24h"
+      default_x509_svid_ttl = "1h"
+      default_jwt_svid_ttl = "5m"
+    }
+    plugins {
+      DataStore "sql" {
+        plugin_data {
+          database_type = "sqlite3"
+          connection_string = "/run/spire/data/datastore.sqlite3"
+        }
+      }
+      KeyManager "memory" {}
+      NodeAttestor "k8s_psat" {
+        plugin_data {
+          clusters = {
+            "knative-agents-kind" = {
+              service_account_allow_list = ["spire-system:spire-agent"]
+            }
+          }
+        }
+      }
+    }
+    health_checks {
+      listener_enabled = true
+      bind_address = "0.0.0.0"
+      bind_port = "8082"
+      live_path = "/live"
+      ready_path = "/ready"
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spire-server
+  namespace: spire-system
+spec:
+  selector:
+    app: spire-server
+  ports:
+    - name: api
+      port: 8081
+      targetPort: 8081
+    - name: health
+      port: 8082
+      targetPort: 8082
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: spire-server
+  namespace: spire-system
+spec:
+  replicas: 1
+  serviceName: spire-server
+  selector:
+    matchLabels: { app: spire-server }
+  template:
+    metadata:
+      labels: { app: spire-server }
+    spec:
+      serviceAccountName: spire-server
+      containers:
+        - name: spire-server
+          image: ghcr.io/spiffe/spire-server:1.10.0
+          args: ["-config", "/run/spire/conf/server.conf"]
+          ports:
+            - containerPort: 8081
+            - containerPort: 8082
+          volumeMounts:
+            - { name: server-conf, mountPath: /run/spire/conf, readOnly: true }
+            - { name: data,        mountPath: /run/spire/data }
+            - { name: socket,      mountPath: /tmp/spire-server/private }
+          livenessProbe:
+            httpGet: { path: /live,  port: 8082 }
+          readinessProbe:
+            httpGet: { path: /ready, port: 8082 }
+        # Sidecar — polls for the server's UDS, registers workload
+        # entries via the local socket, then sleeps. Idempotent
+        # because `entry create` no-ops on duplicates (and we ||true).
+        - name: bootstrap
+          image: knative-agents/spire-shell:dev
+          imagePullPolicy: Never
+          volumeMounts:
+            - { name: socket, mountPath: /tmp/spire-server/private }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              SOCKET=/tmp/spire-server/private/api.sock
+              for i in $(seq 1 60); do
+                if [ -S "$SOCKET" ]; then break; fi
+                sleep 1
+              done
+
+              # k8s_psat-attested agents have parent IDs of the form:
+              #   spiffe://stigen.ai/spire/agent/k8s_psat/<cluster>/<node-uid>
+              # Use a node-alias entry that matches all such agents
+              # in our test cluster so workload entries don't have to
+              # know specific node UUIDs.
+              NODE_ID=spiffe://stigen.ai/agents/test
+              /opt/spire/bin/spire-server entry create \
+                -socketPath "$SOCKET" -node \
+                -spiffeID "$NODE_ID" \
+                -selector "k8s_psat:cluster:knative-agents-kind" || true
+
+              for entry in \
+                "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway|k8s:ns:tenant-a|k8s:sa:default" \
+                "spiffe://stigen.ai/ns/tenant-a/sa/agent|k8s:ns:tenant-a|k8s:sa:default" \
+                "spiffe://stigen.ai/ns/tenant-a/sa/probe|k8s:ns:tenant-a|k8s:sa:default" ; do
+                spiffeID=$(echo "$entry" | cut -d'|' -f1)
+                sel1=$(echo "$entry" | cut -d'|' -f2)
+                sel2=$(echo "$entry" | cut -d'|' -f3)
+                /opt/spire/bin/spire-server entry create \
+                  -socketPath "$SOCKET" \
+                  -spiffeID "$spiffeID" \
+                  -parentID "$NODE_ID" \
+                  -selector "$sel1" \
+                  -selector "$sel2" || true
+              done
+
+              echo "spire bootstrap complete"
+              # Sleep forever so the Pod stays Ready.
+              exec sleep infinity
+      volumes:
+        - name: server-conf
+          configMap: { name: spire-server-config }
+        - name: data
+          emptyDir: {}
+        - name: socket
+          emptyDir: {}
