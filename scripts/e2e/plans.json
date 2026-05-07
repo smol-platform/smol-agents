@@ -1,0 +1,24 @@
+{
+  "globalSequence": [
+    {
+      "toolCall": {
+        "tool": "echo",
+        "arguments": {"text": "hello"}
+      },
+      "tokensIn": 10,
+      "tokensOut": 5
+    },
+    {
+      "finalAnswer": {
+        "output": {"echoed": "hello"}
+      },
+      "tokensIn": 12,
+      "tokensOut": 8
+    }
+  ],
+  "fallback": {
+    "finalAnswer": {
+      "output": {"answer": "done"}
+    }
+  }
+}

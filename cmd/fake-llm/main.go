@@ -29,6 +29,7 @@ import (
 // PlanFile is the on-disk shape of a fake-llm script.
 //
 //	{
+//	  "globalSequence": [ <decision1>, <decision2>, ... ],
 //	  "plans": {
 //	    "<sha256-of-request-body>": { "finalAnswer": {"output": "..."} },
 //	    ...
@@ -36,13 +37,18 @@ import (
 //	  "fallback": { "finalAnswer": {"output": "..."} }
 //	}
 //
+// `globalSequence` (when set) wins over per-key matching: every
+// /v1/chat call advances the global cursor, regardless of body. Used
+// to script a deterministic plan→tool→observation cycle without
+// computing the request hash. When the sequence exhausts, the
+// per-key Plans map is consulted; if THAT misses, fallback.
+//
 // Multiple plans for the same request body are supported by listing
-// them in `sequence` instead of a single `plan`; each call advances
-// the cursor. Tests use the cursor mode for plan→tool→observation
-// flows.
+// them in `sequence` inside a per-key entry.
 type PlanFile struct {
-	Plans    map[string]ScriptedPlan `json:"plans"`
-	Fallback rt.LLMDecision          `json:"fallback"`
+	GlobalSequence []rt.LLMDecision        `json:"globalSequence"`
+	Plans          map[string]ScriptedPlan `json:"plans"`
+	Fallback       rt.LLMDecision          `json:"fallback"`
 }
 
 // ScriptedPlan is either a single decision or a sequence; on the wire
@@ -80,10 +86,12 @@ func main() {
 }
 
 type server struct {
-	plans    map[string]ScriptedPlan
-	fallback rt.LLMDecision
-	mu       sync.Mutex
-	cursors  map[string]int // key → seq index
+	plans          map[string]ScriptedPlan
+	globalSequence []rt.LLMDecision
+	globalCursor   int
+	fallback       rt.LLMDecision
+	mu             sync.Mutex
+	cursors        map[string]int // per-key seq index
 }
 
 func newServer(path string) (*server, error) {
@@ -106,6 +114,7 @@ func newServer(path string) (*server, error) {
 		return nil, fmt.Errorf("parse plans: %w", err)
 	}
 	s.plans = pf.Plans
+	s.globalSequence = pf.GlobalSequence
 	if pf.Fallback.IsTerminal() || pf.Fallback.ToolCall != nil {
 		s.fallback = pf.Fallback
 	}
@@ -135,6 +144,16 @@ func keyFor(body []byte) string {
 func (s *server) next(key string) rt.LLMDecision {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Global sequence wins over per-key plans when configured.
+	if len(s.globalSequence) > 0 {
+		if s.globalCursor < len(s.globalSequence) {
+			d := s.globalSequence[s.globalCursor]
+			s.globalCursor++
+			return d
+		}
+		return s.fallback
+	}
 
 	plan, ok := s.plans[key]
 	if !ok {

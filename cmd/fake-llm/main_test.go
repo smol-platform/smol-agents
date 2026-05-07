@@ -74,6 +74,44 @@ func TestServer_PlanFileSequence(t *testing.T) {
 	}
 }
 
+func TestServer_GlobalSequenceWinsOverPerKey(t *testing.T) {
+	dir := t.TempDir()
+	planFile := filepath.Join(dir, "plans.json")
+	pf := PlanFile{
+		GlobalSequence: []rt.LLMDecision{
+			{ToolCall: &rt.ToolCall{Tool: "echo", Arguments: json.RawMessage(`{"x":"hi"}`)}},
+			{FinalAnswer: &rt.FinalAnswer{Output: json.RawMessage(`{"echoed":"hi"}`)}},
+		},
+		Plans: map[string]ScriptedPlan{
+			"some-key": {Plan: &rt.LLMDecision{
+				FinalAnswer: &rt.FinalAnswer{Output: json.RawMessage(`{"per-key":"won"}`)},
+			}},
+		},
+	}
+	raw, _ := json.Marshal(pf)
+	_ = os.WriteFile(planFile, raw, 0o644)
+
+	s, err := newServer(planFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both calls should hit the global sequence regardless of key.
+	first := s.next("some-key")
+	if first.ToolCall == nil || first.ToolCall.Tool != "echo" {
+		t.Errorf("first global step lost: %+v", first)
+	}
+	second := s.next("a-different-key")
+	if second.FinalAnswer == nil || string(second.FinalAnswer.Output) != `{"echoed":"hi"}` {
+		t.Errorf("second global step lost: %+v", second)
+	}
+	// Sequence exhausted → fallback.
+	third := s.next("some-key")
+	if third.FinalAnswer == nil || string(third.FinalAnswer.Output) != `{"answer":"done"}` {
+		t.Errorf("post-sequence wasn't fallback: %+v", third)
+	}
+}
+
 func TestServer_HTTPChat(t *testing.T) {
 	dir := t.TempDir()
 	planFile := filepath.Join(dir, "plans.json")

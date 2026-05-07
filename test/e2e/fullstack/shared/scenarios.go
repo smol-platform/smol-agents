@@ -285,9 +285,32 @@ func runAgentRun(t *testing.T, env Env) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Register an "echo" tool so the LLM's first ToolCall in the
+	// scripted plans.json sequence has somewhere to land. The
+	// invoker just returns the args as the observation — that's
+	// enough to exercise plan→tool→observation→FinalAnswer.
+	echoTool := v1.Tool{
+		Name: "echo",
+		Spec: v1.ToolSpec{
+			Kind:         v1.ToolFunction,
+			Description:  "echo the args verbatim",
+			InputSchema:  json.RawMessage(`{"type":"object"}`),
+			OutputSchema: json.RawMessage(`{"type":"object"}`),
+			Function:     &v1.FunctionSpec{Name: "echo"},
+		},
+	}
 	executor := &agentruntime.Executor{
 		LLM:   fakellm.New(llmURL),
-		Tools: map[string]v1.Tool{},
+		Tools: map[string]v1.Tool{"echo": echoTool},
+		Invokers: map[v1.ToolKind]agentruntime.ToolInvoker{
+			v1.ToolFunction: &agentruntime.InProcessInvoker{
+				Handlers: map[string]func(json.RawMessage) (json.RawMessage, error){
+					"echo": func(args json.RawMessage) (json.RawMessage, error) {
+						return args, nil
+					},
+				},
+			},
+		},
 		Clock: agentruntime.SystemClock(),
 	}
 
@@ -296,6 +319,7 @@ func runAgentRun(t *testing.T, env Env) {
 			Mode:         v1.ModeLoop,
 			Model:        v1.ModelRef{ProviderRef: "fake", Name: "fake-1"},
 			Instructions: "Reply with the answer json.",
+			Tools:        []v1.ToolRef{{Name: "echo"}},
 			Budget: v1.Budget{
 				MaxSteps:            5,
 				MaxTokens:           1000,

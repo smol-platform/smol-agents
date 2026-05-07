@@ -88,6 +88,9 @@ services:
     image: knative-agents/fake-llm:dev
     networks: [e2e_l0]
     ports: ["18080:8080"] # exposed to host for direct test access
+    volumes:
+      - ./plans.json:/plans.json:ro
+    command: ["-addr=:8080", "-plans=/plans.json"]
     healthcheck:
       test: ["CMD", "/fake-llm", "-help"]
       interval: 2s
