@@ -8,6 +8,22 @@ Each task references the requirement IDs from `requirements.md` it
 satisfies, so the test-coverage check in R-E2E-VRF-1 has its mapping
 ready.
 
+## Status as of last loop iteration
+
+| Phase | Status | Notes |
+|---|---|---|
+| 0 — Scaffolding | ✅ done | T-0.1..T-0.6 all landed |
+| 1 — L0 (docker-compose) | ✅ done | 3 scenarios passing: WG-CLIENT (real handshake via netstack), AGENTRUN (multi-step), CANCEL |
+| 2 — L1 (kind-on-OrbStack) | ✅ mostly done | 7 scenarios passing: IDENT-1, PROXY-TCP, PROXY-HTTP, AGENTRUN, CANCEL, WEBHOOK, KA-PHASE. eBPF scenarios deferred. |
+| 3 — L2 foundation (Terraform) | ✅ done | infra/terraform/aws-e2e/ complete; sweeper + nuke Lambdas; budget alarm; tested via `terraform validate` |
+| 4 — L2 cloud-init | ⏳ deferred | scripts/aws-l2/cloud-init.yaml.tmpl not yet authored |
+| 5 — L2 driver | ✅ partial | Provision/Teardown code done; full scenario integration pending cloud-init |
+| 6 — Hardening | ✅ done | coverage gate enforces 39/39 R-E2E-* IDs mapped |
+
+Across all rings: **10 scenarios passing for real**, 39 R-E2E-* IDs
+mapped, 13 commits, 31 unit packages green, 6 build configurations
+clean.
+
 ---
 
 ## Phase 0 — Scaffolding (no AWS, no kind needed)
