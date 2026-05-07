@@ -1,0 +1,53 @@
+# Claude Code agent with AgentFS persistent storage backed by S3.
+# Demonstrates Mode=harness + AgentFS + S3 backup + WAL snapshotting.
+---
+apiVersion: runtime.agents.stigen.ai/v1
+kind: Agent
+metadata:
+  name: code-reviewer
+  namespace: tenant-a
+spec:
+  mode: harness
+  instructions: |
+    You are a senior code reviewer. Audit the code in your working
+    directory and produce structured feedback as JSON.
+  budget:
+    maxSteps: 1                     # harness is one shot
+    maxTokens: 200000
+    maxWallClockSeconds: 1800       # 30 min
+    maxToolCalls: 0
+  harness:
+    kind: claude-code
+    image: knative-agents/claude-code:0.1.0
+    sessionPolicy: persistent       # share state across runs
+    cli:
+      promptFlag: --print
+      workingDir: /var/agentfs/repo
+      maxOutputBytes: 1048576
+    env:
+      - name: ANTHROPIC_API_KEY
+        secretRef:
+          secretName: anthropic-prod
+  storage:
+    kind: agentfs
+    agentfs:
+      sizeGiB: 20
+      mountPath: /var/agentfs
+      backup:
+        s3:
+          bucket: stigen-agent-state
+          prefix: code-reviewer/
+          region: us-east-1
+          sseAlgorithm: aws:kms
+          kmsKeyARN: arn:aws:kms:us-east-1:111122223333:key/a1b2c3d4
+          versioning: true
+          credentialsRef:
+            secretName: aws-creds
+        schedule: "@hourly"
+        walSnapshotInterval: "30s"
+        retention:
+          maxVersions: 168          # 7 days at hourly
+          minAge: 1h
+      restore:
+        mode: latest
+        ifMissing: fresh

@@ -1,0 +1,26 @@
+# Inflection AI Pi — HTTP-based harness.
+---
+apiVersion: runtime.agents.stigen.ai/v1
+kind: Agent
+metadata:
+  name: pi-companion
+  namespace: tenant-a
+spec:
+  mode: harness
+  instructions: "Be a thoughtful, supportive companion."
+  budget:
+    maxSteps: 1
+    maxTokens: 50000
+    maxWallClockSeconds: 60
+    maxToolCalls: 0
+  harness:
+    kind: pi
+    sessionPolicy: ephemeral
+    http:
+      url: https://api.inflection.ai/external/api/inference
+      promptField: context
+      responseField: text
+    env:
+      - name: HEADER_Authorization
+        secretRef:
+          secretName: inflection-key

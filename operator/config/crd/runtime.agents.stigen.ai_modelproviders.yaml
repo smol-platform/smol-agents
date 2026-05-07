@@ -1,0 +1,39 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: modelproviders.runtime.agents.stigen.ai
+spec:
+  group: runtime.agents.stigen.ai
+  scope: Namespaced
+  names:
+    kind: ModelProvider
+    plural: modelproviders
+    singular: modelprovider
+    shortNames: [mp]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Kind
+          type: string
+          jsonPath: .spec.kind
+        - name: Endpoint
+          type: string
+          jsonPath: .spec.endpoint
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [kind, secretRef]
+              properties:
+                kind: { type: string, enum: [openai, anthropic, bedrock, vertex, local] }
+                endpoint: { type: string }
+                secretRef:
+                  type: object
+                  required: [secretName]
+                  properties:
+                    secretName: { type: string }

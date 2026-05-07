@@ -1,0 +1,9 @@
+# Minimal tenant agent — every feature on its default state.
+apiVersion: agents.stigen.ai/v1
+kind: KnativeAgent
+metadata:
+  name: hello
+  namespace: tenant-a
+spec:
+  trustDomain: stigen.ai
+  mode: strict

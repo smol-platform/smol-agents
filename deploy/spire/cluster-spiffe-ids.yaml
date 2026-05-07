@@ -1,0 +1,14 @@
+# Standalone ClusterSPIFFEID binding for tenants who manage SPIRE
+# resources outside the Helm chart (matches existing stigen-flux pattern).
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: knative-agents
+spec:
+  spiffeIDTemplate: "spiffe://stigen.ai/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: knative-agents
+  workloadSelectorTemplates:
+    - "k8s:ns:{{ .PodMeta.Namespace }}"
+    - "k8s:sa:{{ .PodSpec.ServiceAccountName }}"

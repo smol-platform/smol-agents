@@ -1,0 +1,125 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: go vet
+        run: go vet ./...
+      - name: go test (race + cover)
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: build binaries
+        run: |
+          mkdir -p bin
+          for cmd in agent secret-proxy agentctl ebpf-loader; do
+            CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags '-s -w' \
+              -o bin/$cmd ./cmd/$cmd
+          done
+
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm
+      - run: helm template t deploy/helm > /tmp/knative.yaml
+      - run: helm template t deploy/helm --set mode=deployment > /tmp/dep.yaml
+      - run: helm template t deploy/helm --set mode=statefulset > /tmp/ss.yaml
+      - name: R-SBX-1 guard test
+        run: |
+          if helm template t deploy/helm --set sandbox.runtimeClass=runc 2>/dev/null; then
+            echo "R-SBX-1 guard FAILED to block runc without override"
+            exit 1
+          fi
+          echo "R-SBX-1 guard active ✓"
+      - name: ebpf-loader presets render
+        run: |
+          for p in generic gke-cos eks-bottlerocket aks-mariner k3s openshift talos; do
+            echo "=== preset=$p ==="
+            helm template t deploy/helm --set ebpfLoader.preset=$p > /tmp/loader-$p.yaml
+            grep -q "kind: DaemonSet" /tmp/loader-$p.yaml || { echo "MISSING DaemonSet for $p"; exit 1; }
+          done
+          echo "all 7 presets ✓"
+      - name: bad ebpf-loader preset rejected
+        run: |
+          if helm template t deploy/helm --set ebpfLoader.preset=bogus 2>/dev/null; then
+            echo "bad preset accepted — guard broken"
+            exit 1
+          fi
+          echo "preset guard ✓"
+      - name: sandbox presets render with correct RuntimeClass
+        run: |
+          declare -A want=(
+            [generic]=kata-fc
+            [bare-metal]=kata-fc
+            [eks-bottlerocket]=kata-fc
+            [aks]=kata-cc-isolation
+            [openshift-sandboxed]=kata
+            [k3s]=kata-fc
+            [talos]=kata-fc
+            [gke]=gvisor
+            [generic-gvisor]=gvisor
+          )
+          for p in "${!want[@]}"; do
+            got=$(helm template t deploy/helm --set sandbox.preset=$p 2>/dev/null \
+                  | awk '/runtimeClassName:/{print $2; exit}')
+            if [ "$got" != "${want[$p]}" ]; then
+              echo "preset=$p got=$got want=${want[$p]}"
+              exit 1
+            fi
+            echo "preset=$p RuntimeClass=$got ✓"
+          done
+      - name: bad sandbox preset rejected
+        run: |
+          if helm template t deploy/helm --set sandbox.preset=bogus 2>/dev/null; then
+            echo "bad sandbox preset accepted — guard broken"
+            exit 1
+          fi
+          echo "sandbox preset guard ✓"
+      - name: runc accepted only with allowHostRuntime override
+        run: |
+          if helm template t deploy/helm --set sandbox.runtimeClass=runc 2>/dev/null; then
+            echo "R-SBX-1 guard FAILED for runc"; exit 1
+          fi
+          helm template t deploy/helm --set sandbox.runtimeClass=runc --set sandbox.allowHostRuntime=true > /dev/null
+          echo "runc override path ✓"
+
+  formal:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install -g @informalsystems/quint
+      - name: typecheck Quint specs
+        run: |
+          for f in spec/quint/*.qnt; do
+            echo "=== $f ==="
+            quint typecheck "$f"
+          done
+      - name: model-check Safety invariants
+        run: |
+          for f in spec/quint/*.qnt; do
+            echo "=== run --invariant=Safety $f ==="
+            quint run --invariant=Safety --max-steps=30 --max-samples=2000 "$f"
+          done
+
+  bpf:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: install clang/llvm/bpftool
+        run: sudo apt-get update && sudo apt-get install -y clang llvm linux-tools-common linux-tools-generic
+      - name: build BPF objects
+        run: make -C bpf/programs all
+        continue-on-error: true   # vmlinux.h availability varies on CI runners

@@ -1,0 +1,72 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tools.runtime.agents.stigen.ai
+spec:
+  group: runtime.agents.stigen.ai
+  scope: Namespaced
+  names:
+    kind: Tool
+    plural: tools
+    singular: tool
+    shortNames: [atool]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Kind
+          type: string
+          jsonPath: .spec.kind
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [kind, inputSchema, outputSchema]
+              properties:
+                kind: { type: string, enum: [mcp, http, agent, function] }
+                description: { type: string }
+                inputSchema:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                outputSchema:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                mcp:
+                  type: object
+                  properties:
+                    url: { type: string }
+                    auth:
+                      type: object
+                      properties:
+                        secretName: { type: string }
+                http:
+                  type: object
+                  properties:
+                    url: { type: string }
+                    method: { type: string }
+                    headers:
+                      type: object
+                      additionalProperties: { type: string }
+                    auth:
+                      type: object
+                      properties:
+                        secretName: { type: string }
+                agent:
+                  type: object
+                  properties:
+                    ref:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        namespace: { type: string }
+                function:
+                  type: object
+                  properties:
+                    name: { type: string }

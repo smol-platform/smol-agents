@@ -1,0 +1,93 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentruns.runtime.agents.stigen.ai
+spec:
+  group: runtime.agents.stigen.ai
+  scope: Namespaced
+  names:
+    kind: AgentRun
+    plural: agentruns
+    singular: agentrun
+    shortNames: [arun]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Agent
+          type: string
+          jsonPath: .spec.agentRef
+        - name: State
+          type: string
+          jsonPath: .status.state
+        - name: Steps
+          type: integer
+          jsonPath: .status.usage.steps
+        - name: Tokens
+          type: integer
+          jsonPath: .status.usage.tokens
+        - name: Started
+          type: date
+          jsonPath: .status.startedAt
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [agentRef, input]
+              properties:
+                agentRef: { type: string, minLength: 1 }
+                sessionRef: { type: string }
+                input:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                seed: { type: integer, format: int64 }
+                budgetOverride:
+                  type: object
+                  properties:
+                    maxSteps: { type: integer, minimum: 1 }
+                    maxTokens: { type: integer, minimum: 1 }
+                    maxWallClockSeconds: { type: integer, minimum: 1 }
+                    maxToolCalls: { type: integer, minimum: 0 }
+                cancel: { type: boolean }
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Pending, Running, RequiresAction, Completed, Failed, Cancelled, Expired]
+                startedAt: { type: string, format: date-time }
+                endedAt: { type: string, format: date-time }
+                terminationReason: { type: string }
+                output:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                usage:
+                  type: object
+                  properties:
+                    steps: { type: integer }
+                    tokens: { type: integer }
+                    toolCalls: { type: integer }
+                    wallClockUsed: { type: integer, format: int64 }
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      index: { type: integer }
+                      kind: { type: string }
+                      startedAt: { type: string, format: date-time }
+                      endedAt: { type: string, format: date-time }
+                      tokensIn: { type: integer }
+                      tokensOut: { type: integer }
+                      error: { type: string }
+                      toolCalls:
+                        type: array
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true

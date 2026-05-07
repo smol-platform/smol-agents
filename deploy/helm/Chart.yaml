@@ -1,0 +1,22 @@
+apiVersion: v2
+name: knative-agents
+description: |
+  Hardened agent runtime: eBPF + gVisor + SPIFFE/SPIRE + dual-rail mTLS +
+  kloak-style secret broker.
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+keywords:
+  - agent
+  - ebpf
+  - gvisor
+  - spiffe
+  - spire
+  - knative
+  - mtls
+  - secrets
+home: https://github.com/stigen/knative-agents
+sources:
+  - https://github.com/stigen/knative-agents
+maintainers:
+  - name: stigen

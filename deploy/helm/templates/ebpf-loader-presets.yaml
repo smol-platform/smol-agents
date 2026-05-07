@@ -1,0 +1,75 @@
+{{- /*
+Distro presets for the ebpf-loader DaemonSet. This template emits no
+Kubernetes objects; it merges preset defaults into .Values.ebpfLoader
+*before* daemonset.yaml renders, by mutating the dictionary in place.
+
+Each preset documents WHY it diverges from the generic defaults so the
+reasoning is visible at template time, not buried in a wiki.
+*/ -}}
+{{- if .Values.ebpfLoader.enabled -}}
+{{- $p := .Values.ebpfLoader.preset | default "generic" -}}
+{{- $hp := .Values.ebpfLoader.hostPaths -}}
+{{- $caps := .Values.ebpfLoader.capabilities -}}
+
+{{- if eq $p "generic" -}}
+  {{- /* defaults already match. */ -}}
+{{- else if eq $p "gke-cos" -}}
+  {{- /*
+    Google COS:
+    - bpffs is pre-mounted at /sys/fs/bpf
+    - /sys/kernel/debug is unavailable on locked-down COS images
+    - /lib/modules exists but is read-only (no module loading anyway)
+  */ -}}
+  {{- $_ := set $hp "debugfs" false -}}
+  {{- $_ := set $hp "modules" "/lib/modules" -}}
+  {{- $_ := set $caps "mode" "privileged" -}}
+{{- else if eq $p "eks-bottlerocket" -}}
+  {{- /*
+    Bottlerocket:
+    - host filesystem is exposed under /run/host/* (api-server contract)
+    - kernel ≥ 5.10 is shipped, so CAP_BPF works
+    - bpffs is mounted at /sys/fs/bpf inside the host namespace
+  */ -}}
+  {{- $_ := set $hp "bpffs" "/sys/fs/bpf" -}}
+  {{- $_ := set $hp "debugfs" true -}}
+  {{- $_ := set $hp "modules" "/lib/modules" -}}
+  {{- $_ := set $caps "mode" "minimal" -}}
+{{- else if eq $p "aks-mariner" -}}
+  {{- /*
+    AKS Mariner: standard layout; kernel ≥ 5.15.
+  */ -}}
+  {{- $_ := set $hp "debugfs" true -}}
+  {{- $_ := set $caps "mode" "minimal" -}}
+{{- else if eq $p "k3s" -}}
+  {{- /*
+    K3s and k3os:
+    - bpffs may not be mounted; init container handles it
+    - debugfs path varies; safest to mount if present
+  */ -}}
+  {{- $_ := set $hp "bpffs" "/sys/fs/bpf" -}}
+  {{- $_ := set $hp "debugfs" true -}}
+  {{- $_ := set $hp "modules" "/lib/modules" -}}
+  {{- $_ := set $caps "mode" "privileged" -}}
+{{- else if eq $p "openshift" -}}
+  {{- /*
+    OpenShift:
+    - SCC is required (see docs/INSTALL.md §7) — operator must label
+      the namespace with appropriate scc:privileged
+    - default to privileged caps because SCC governs them
+  */ -}}
+  {{- $_ := set $hp "debugfs" true -}}
+  {{- $_ := set $caps "mode" "privileged" -}}
+{{- else if eq $p "talos" -}}
+  {{- /*
+    Talos Linux:
+    - host root is read-only; /lib/modules absent on most installs
+    - bpffs is mounted at /sys/fs/bpf
+    - kernel ≥ 5.15 always; minimal caps work
+  */ -}}
+  {{- $_ := set $hp "modules" "" -}}
+  {{- $_ := set $hp "debugfs" false -}}
+  {{- $_ := set $caps "mode" "minimal" -}}
+{{- else -}}
+  {{- fail (printf "unknown ebpfLoader.preset=%q (valid: generic gke-cos eks-bottlerocket aks-mariner k3s openshift talos)" $p) -}}
+{{- end -}}
+{{- end -}}

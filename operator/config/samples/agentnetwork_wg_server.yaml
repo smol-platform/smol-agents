@@ -1,0 +1,22 @@
+# WireGuard server: the agent itself listens for inbound WireGuard
+# connections on 51820. Useful when external operators / on-call
+# tooling needs to reach the agent over a private mesh.
+apiVersion: runtime.agents.stigen.ai/v1
+kind: AgentNetwork
+metadata:
+  name: hub-mode
+  namespace: tenant-a
+spec:
+  kind: wireguardMesh
+  wireguardMesh:
+    mode: server
+    listenPort: 51820
+    privateKeyRef:
+      secretName: wg-server-private
+    addresses:
+      - 10.99.0.1/24
+    peers:
+      - name: oncall-laptop
+        publicKey: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+        allowedIPs:
+          - 10.99.0.10/32

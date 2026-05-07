@@ -1,0 +1,95 @@
+{{- include "knative-agents.validateSandbox" . -}}
+{{- if eq .Values.mode "statefulset" -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "knative-agents.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-agents.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "knative-agents.fullname" . }}
+  replicas: {{ .Values.agent.replicas }}
+  selector:
+    matchLabels:
+      {{- include "knative-agents.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "knative-agents.selectorLabels" . | nindent 8 }}
+    spec:
+      runtimeClassName: {{ .Values.sandbox.runtimeClass }}    # R-SBX-1
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: agent
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          args: ["--config=/etc/knative-agents/agent.yaml"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: private-mtls
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+          volumeMounts:
+            - name: spire-agent-socket
+              mountPath: {{ dir .Values.spire.workloadAPISocket }}
+              readOnly: true
+            - name: secret-broker
+              mountPath: /run/secret-broker
+            - name: config
+              mountPath: /etc/knative-agents
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/knative-agents
+            - name: tmp
+              mountPath: /tmp
+        - name: secret-proxy
+          image: "{{ .Values.secretProxy.image.repository }}:{{ .Values.secretProxy.image.tag }}"
+          args: ["--config=/etc/secret-proxy/config.yaml"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.secretProxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: spire-agent-socket
+              mountPath: {{ dir .Values.spire.workloadAPISocket }}
+              readOnly: true
+            - name: secret-broker
+              mountPath: /run/secret-broker
+            - name: config
+              mountPath: /etc/secret-proxy
+              readOnly: true
+      volumes:
+        - name: spire-agent-socket
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: secret-broker
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: {{ include "knative-agents.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+{{- end -}}

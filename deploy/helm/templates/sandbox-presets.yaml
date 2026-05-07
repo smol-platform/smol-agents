@@ -1,0 +1,80 @@
+{{- /*
+Distro presets for the sandbox runtime. Renders no Kubernetes objects;
+mutates .Values.sandbox in place so downstream templates pick up the
+right RuntimeClass + flags. Pattern mirrors templates/ebpf-loader-presets.yaml.
+
+Each preset documents WHY it diverges so the reasoning is in-tree, not
+in a wiki.
+*/ -}}
+{{- $sb := .Values.sandbox -}}
+{{- $p := default "generic" $sb.preset -}}
+
+{{- if eq $p "generic" -}}
+  {{- /*
+    Generic Linux nodes with kata-deploy installed. Uses kata-fc
+    (Firecracker) for fast cold starts.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata-fc" -}}
+
+{{- else if eq $p "bare-metal" -}}
+  {{- /*
+    Bare-metal: /dev/kvm is directly available; we can take a hard
+    dependency on Firecracker. We also auto-render the RuntimeClass
+    since admins on bare metal often wire Kata by hand.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata-fc" -}}
+  {{- $_ := set $sb "installRuntimeClass" true -}}
+
+{{- else if eq $p "eks-bottlerocket" -}}
+  {{- /*
+    EKS Bottlerocket Kata variant images expose kata-fc out of the box.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata-fc" -}}
+
+{{- else if eq $p "aks" -}}
+  {{- /*
+    Azure Kubernetes Service installs Kata via the AKS Pod Sandboxing
+    feature; the RuntimeClass is named kata-cc-isolation.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata-cc-isolation" -}}
+
+{{- else if eq $p "openshift-sandboxed" -}}
+  {{- /*
+    OpenShift Sandboxed Containers Operator (which IS Kata) registers a
+    RuntimeClass simply named "kata".
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata" -}}
+
+{{- else if eq $p "k3s" -}}
+  {{- /*
+    K3s + kata-deploy works the same as generic; we still render the
+    RuntimeClass for the typical k3s "single-binary, single-node" path.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata-fc" -}}
+  {{- $_ := set $sb "installRuntimeClass" true -}}
+
+{{- else if eq $p "talos" -}}
+  {{- /*
+    Talos Linux installs Kata via the kata-containers system extension.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "kata-fc" -}}
+
+{{- else if eq $p "gke" -}}
+  {{- /*
+    GKE managed nodes do NOT expose /dev/kvm and Kata is not supported.
+    GKE Sandbox provides gVisor instead; we fall back to that.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "gvisor" -}}
+
+{{- else if eq $p "generic-gvisor" -}}
+  {{- /*
+    Generic Linux node where the operator deliberately prefers gVisor
+    over Kata (e.g. no nested virt available, or a managed K8s without
+    KVM exposure). The chart can install the RuntimeClass for them.
+  */ -}}
+  {{- $_ := set $sb "runtimeClass" "gvisor" -}}
+  {{- $_ := set $sb "installRuntimeClass" true -}}
+
+{{- else -}}
+  {{- fail (printf "unknown sandbox.preset=%q (valid: generic bare-metal eks-bottlerocket aks openshift-sandboxed k3s talos gke generic-gvisor)" $p) -}}
+{{- end -}}

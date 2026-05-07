@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knative-agents.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-agents.labels" . | nindent 4 }}
+data:
+  agent.yaml: |
+    mode: {{ .Values.agent.config.mode }}
+    trustDomain: {{ .Values.trustDomain }}
+    identity:
+      workloadAPI: unix://{{ .Values.spire.workloadAPISocket }}
+    transport:
+      private:
+        addr: {{ .Values.agent.config.transport.private.addr | quote }}
+        authorize:
+{{ toYaml .Values.agent.config.transport.private.authorize | indent 10 }}
+      public:
+        addr: {{ .Values.agent.config.transport.public.addr | quote }}
+        certPath: {{ .Values.agent.config.transport.public.certPath }}
+        keyPath: {{ .Values.agent.config.transport.public.keyPath }}
+    secrets:
+      brokerSocket: {{ .Values.agent.config.secrets.brokerSocket }}
+      maxLeaseTTL: {{ .Values.agent.config.secrets.maxLeaseTTL }}
+    ebpf:
+      programs:
+{{ toYaml .Values.agent.config.ebpf.programs | indent 8 }}
+      objectsDir: {{ .Values.agent.config.ebpf.objectsDir }}
+    runtime:
+      drainTimeout: {{ .Values.agent.config.runtime.drainTimeout }}
+      shutdownTimeout: {{ .Values.agent.config.runtime.shutdownTimeout }}
+      healthAddr: {{ .Values.agent.config.runtime.healthAddr | quote }}
+    sandbox:
+      runtimeClass: {{ .Values.sandbox.runtimeClass }}
+    observability:
+      otlpEndpoint: {{ .Values.agent.config.observability.otlpEndpoint }}
+      serviceName: {{ .Values.agent.config.observability.serviceName }}
+  secret-proxy.yaml: |
+    socketPath: {{ .Values.agent.config.secrets.brokerSocket }}
+    workloadAPI: unix://{{ .Values.spire.workloadAPISocket }}
+    maxLeaseTTL: {{ .Values.agent.config.secrets.maxLeaseTTL }}
+    defaultTTL: 10m
+    backend:
+      kind: {{ .Values.secretProxy.config.backend.kind }}
+      static:
+{{ toYaml .Values.secretProxy.config.backend.static | indent 8 }}
+    policy:
+{{ toYaml .Values.secretProxy.config.policy | indent 6 }}

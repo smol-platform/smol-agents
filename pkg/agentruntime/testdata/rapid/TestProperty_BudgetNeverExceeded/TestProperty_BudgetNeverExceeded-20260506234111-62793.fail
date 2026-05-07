@@ -1,0 +1,51 @@
+# 2026/05/06 23:41:11.987658 [TestProperty_BudgetNeverExceeded] [rapid] draw maxSteps: 1
+# 2026/05/06 23:41:11.987671 [TestProperty_BudgetNeverExceeded] [rapid] draw maxTokens: 50
+# 2026/05/06 23:41:11.987671 [TestProperty_BudgetNeverExceeded] [rapid] draw maxWallClockSeconds: 1
+# 2026/05/06 23:41:11.987673 [TestProperty_BudgetNeverExceeded] [rapid] draw maxToolCalls: 0
+# 2026/05/06 23:41:11.987674 [TestProperty_BudgetNeverExceeded] [rapid] draw nAllowed: 1
+# 2026/05/06 23:41:11.987675 [TestProperty_BudgetNeverExceeded] [rapid] draw name: "aa"
+# 2026/05/06 23:41:11.987675 [TestProperty_BudgetNeverExceeded] [rapid] draw nDecisions: 1
+# 2026/05/06 23:41:11.987676 [TestProperty_BudgetNeverExceeded] [rapid] draw tokensIn: 20
+# 2026/05/06 23:41:11.987676 [TestProperty_BudgetNeverExceeded] [rapid] draw tokensOut: 31
+# 2026/05/06 23:41:11.987676 [TestProperty_BudgetNeverExceeded] [rapid] draw isFinal: true
+# 2026/05/06 23:41:11.987677 [TestProperty_BudgetNeverExceeded] [rapid] draw seed: 0
+# 2026/05/06 23:41:11.987678 [TestProperty_BudgetNeverExceeded] budget violated: tokens 51 > maxTokens 50
+# 
+v0.4.8#3351921344543135788
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0xc05c654ab866b
+0x14
+0x0
+0xc05c654ab866b
+0x1f
+0x1
+0x0
+0x0
+0x0

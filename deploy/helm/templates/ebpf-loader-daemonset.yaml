@@ -1,0 +1,218 @@
+{{- if .Values.ebpfLoader.enabled -}}
+{{- $caps := .Values.ebpfLoader.capabilities -}}
+{{- $hostPaths := .Values.ebpfLoader.hostPaths -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ebpf-loader
+spec:
+  selector:
+    matchLabels:
+      {{- include "knative-agents.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ebpf-loader
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.ebpfLoader.maxUnavailable }}
+  template:
+    metadata:
+      labels:
+        {{- include "knative-agents.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ebpf-loader
+      annotations:
+        # Force a restart whenever the ConfigMap or program objects change.
+        checksum/config: {{ include (print $.Template.BasePath "/ebpf-loader-configmap.yaml") . | sha256sum }}
+        {{- with .Values.ebpfLoader.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # The loader is cluster-critical: it must run on every eligible node,
+      # even on tainted nodes (control plane, dedicated, NoSchedule).
+      priorityClassName: {{ .Values.ebpfLoader.priorityClassName | default "system-node-critical" }}
+      serviceAccountName: {{ include "knative-agents.fullname" . }}-ebpf-loader
+
+      # Tolerate every common control-plane / managed taint so we cover
+      # all nodes of a cluster.
+      tolerations:
+        - operator: Exists
+        {{- with .Values.ebpfLoader.extraTolerations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+      # Skip non-Linux nodes (Windows, etc.). On hybrid clusters this is
+      # the difference between a healthy DS and a hard-loop CrashLoop.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/os
+                    operator: In
+                    values: ["linux"]
+                  {{- with .Values.ebpfLoader.nodeAffinity.matchExpressions }}
+                  {{- toYaml . | nindent 18 }}
+                  {{- end }}
+        {{- with .Values.ebpfLoader.podAffinity }}
+        podAffinity:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+
+      hostPID: {{ .Values.ebpfLoader.hostPID }}
+      hostNetwork: {{ .Values.ebpfLoader.hostNetwork }}
+      dnsPolicy: {{ ternary "ClusterFirstWithHostNet" "ClusterFirst" .Values.ebpfLoader.hostNetwork }}
+
+      terminationGracePeriodSeconds: {{ .Values.ebpfLoader.terminationGracePeriodSeconds }}
+
+      # ------------------------------------------------------------------
+      # Init container: mount bpffs at the chosen path if it isn't already.
+      # On nearly every modern distro /sys/fs/bpf is pre-mounted; this
+      # init exists to cover Talos, K3s, hardened images, and old kernels.
+      # ------------------------------------------------------------------
+      initContainers:
+        - name: init-bpffs
+          image: "{{ .Values.ebpfLoader.image.repository }}:{{ .Values.ebpfLoader.image.tag }}"
+          imagePullPolicy: {{ .Values.ebpfLoader.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "init-bpffs: ensuring {{ $hostPaths.bpffs }} is bpffs"
+              mountpoint -q "{{ $hostPaths.bpffs }}" || mount -t bpf bpf "{{ $hostPaths.bpffs }}"
+              mkdir -p "{{ $hostPaths.bpffs }}/{{ .Release.Name }}-knative-agents"
+              chmod 0755 "{{ $hostPaths.bpffs }}"
+              echo "init-bpffs: ok"
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          volumeMounts:
+            - name: bpffs
+              mountPath: {{ $hostPaths.bpffs }}
+              mountPropagation: Bidirectional
+          resources:
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+
+      containers:
+        - name: ebpf-loader
+          image: "{{ .Values.ebpfLoader.image.repository }}:{{ .Values.ebpfLoader.image.tag }}"
+          imagePullPolicy: {{ .Values.ebpfLoader.image.pullPolicy }}
+          args: ["--config=/etc/ebpf-loader/config.yaml", "--log-level={{ .Values.ebpfLoader.logLevel }}"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: health
+              containerPort: 8081
+              hostPort: 0
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 12       # tolerate slow first-load (BTF mining etc.)
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ebpfLoader.resources | nindent 12 }}
+          securityContext:
+            {{- if eq $caps.mode "privileged" }}
+            privileged: true
+            runAsUser: 0
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: true
+            {{- else }}
+            # Minimal capabilities path: kernel must be ≥ 5.8 for CAP_BPF.
+            privileged: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add:
+                - BPF
+                - PERFMON
+                - NET_ADMIN
+                {{- range $caps.extraAdd }}
+                - {{ . }}
+                {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ebpf-loader
+              readOnly: true
+            - name: bpffs
+              mountPath: {{ $hostPaths.bpffs }}
+              # Bidirectional so pinned objects we create here are
+              # visible to other Pods that mount the same host path.
+              mountPropagation: Bidirectional
+            - name: kernel-btf
+              mountPath: /sys/kernel/btf
+              readOnly: true
+            - name: kernel-tracing
+              mountPath: /sys/kernel/tracing
+              readOnly: true
+            {{- if $hostPaths.debugfs }}
+            - name: kernel-debug
+              mountPath: /sys/kernel/debug
+              readOnly: true
+            {{- end }}
+            {{- if $hostPaths.modules }}
+            - name: modules
+              mountPath: /lib/modules
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "knative-agents.fullname" . }}-ebpf-loader-config
+        - name: bpffs
+          hostPath:
+            path: {{ $hostPaths.bpffs }}
+            type: DirectoryOrCreate
+        - name: kernel-btf
+          hostPath:
+            path: /sys/kernel/btf
+            type: DirectoryOrCreate
+        - name: kernel-tracing
+          hostPath:
+            path: /sys/kernel/tracing
+            type: DirectoryOrCreate
+        {{- if $hostPaths.debugfs }}
+        - name: kernel-debug
+          hostPath:
+            path: /sys/kernel/debug
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- if $hostPaths.modules }}
+        - name: modules
+          hostPath:
+            path: {{ $hostPaths.modules }}
+            type: Directory
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+{{- end -}}

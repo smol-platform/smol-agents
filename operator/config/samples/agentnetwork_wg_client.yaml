@@ -1,0 +1,28 @@
+# WireGuard client: agents join an existing WireGuard hub at
+# vpn.example.com. The userspace device runs inside the agent Pod
+# (Kata-FC sandbox), no kernel module needed.
+apiVersion: runtime.agents.stigen.ai/v1
+kind: AgentNetwork
+metadata:
+  name: corp-vpn
+  namespace: tenant-a
+spec:
+  kind: wireguardMesh
+  agentSelector:
+    app.kubernetes.io/name: knative-agents
+  wireguardMesh:
+    mode: client
+    privateKeyRef:
+      secretName: wg-private
+    addresses:
+      - 10.99.0.5/32
+    dns:
+      - 10.99.0.1
+    mtu: 1420
+    peers:
+      - name: hub
+        publicKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        endpoint: vpn.example.com:51820
+        allowedIPs:
+          - 10.0.0.0/16
+        persistentKeepalive: 25

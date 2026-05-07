@@ -1,0 +1,16 @@
+# Wrapper image bundling the SPIRE server + agent binaries with an
+# alpine base so /bin/sh works. Distroless SPIRE images don't expose
+# a shell, which the L0 bootstrap dance (token generate → write file
+# → exec agent with -joinToken) needs.
+#
+# Used only by the e2e L0 ring; production runs the upstream
+# distroless images.
+
+FROM ghcr.io/spiffe/spire-server:1.10.0 AS server
+FROM ghcr.io/spiffe/spire-agent:1.10.0  AS agent
+
+FROM alpine:3.19
+RUN apk add --no-cache jq
+COPY --from=server /opt/spire/bin/spire-server /opt/spire/bin/spire-server
+COPY --from=agent  /opt/spire/bin/spire-agent  /opt/spire/bin/spire-agent
+ENTRYPOINT ["/bin/sh"]

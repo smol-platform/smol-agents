@@ -1,0 +1,122 @@
+// Command manager is the operator entrypoint.
+package main
+
+import (
+	"flag"
+	"os"
+
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"k8s.io/apimachinery/pkg/runtime"
+
+	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
+	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	"github.com/stigen/knative-agents/operator/internal/controllers"
+	"github.com/stigen/knative-agents/operator/internal/controllers/agentmodel"
+	"github.com/stigen/knative-agents/operator/internal/webhooks"
+)
+
+var (
+	scheme   = runtime.NewScheme()
+	setupLog = ctrl.Log.WithName("setup")
+)
+
+func init() {
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = v1.AddToScheme(scheme)
+	_ = amv1.AddToScheme(scheme)
+}
+
+func main() {
+	var metricsAddr, probeAddr string
+	var enableLeaderElection bool
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
+	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
+	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
+	opts := zap.Options{Development: false}
+	opts.BindFlags(flag.CommandLine)
+	flag.Parse()
+
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:                  scheme,
+		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "knative-agents-operator.stigen.ai",
+		LeaderElectionNamespace: "knative-agents-system",
+	})
+	if err != nil {
+		setupLog.Error(err, "unable to start manager")
+		os.Exit(1)
+	}
+
+	r := &controllers.KnativeAgentReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+	if err := r.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register KnativeAgent controller")
+		os.Exit(1)
+	}
+	pr := &controllers.KnativeAgentPlatformReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+	if err := pr.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register KnativeAgentPlatform controller")
+		os.Exit(1)
+	}
+
+	// runtime.agents.stigen.ai/v1 — agent-model CRDs.
+	if err := (&agentmodel.AgentReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register Agent controller")
+		os.Exit(1)
+	}
+	if err := (&agentmodel.AgentRunReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register AgentRun controller")
+		os.Exit(1)
+	}
+	if err := (&agentmodel.AgentNetworkReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register AgentNetwork controller")
+		os.Exit(1)
+	}
+
+	// Admission webhooks. R-OP-WH-1, R-OP-WH-2.
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhooks.SetupAgentWebhook(mgr, "default"); err != nil {
+			setupLog.Error(err, "unable to register KnativeAgent webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupPlatformWebhook(mgr, "default"); err != nil {
+			setupLog.Error(err, "unable to register KnativeAgentPlatform webhook")
+			os.Exit(1)
+		}
+	}
+
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to set up health check")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		setupLog.Error(err, "unable to set up ready check")
+		os.Exit(1)
+	}
+
+	setupLog.Info("starting manager")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		setupLog.Error(err, "manager exit")
+		os.Exit(1)
+	}
+}

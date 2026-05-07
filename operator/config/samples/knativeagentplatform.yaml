@@ -1,0 +1,18 @@
+# Singleton platform CR. Required for any KnativeAgent to leave Pending.
+apiVersion: agents.stigen.ai/v1
+kind: KnativeAgentPlatform
+metadata:
+  name: default
+spec:
+  defaultTrustDomain: stigen.ai
+  ebpfLoader:
+    enabled: true
+    preset: generic
+    pinRoot: /sys/fs/bpf/knative-agents
+    capabilityMode: privileged
+  canary:
+    percent: 0
+  featurePolicy:
+    - feature: transport.public
+      allowed: false       # public mTLS is disabled cluster-wide by default
+      defaultEnabled: false

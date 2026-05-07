@@ -1,0 +1,147 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentnetworks.runtime.agents.stigen.ai
+spec:
+  group: runtime.agents.stigen.ai
+  scope: Namespaced
+  names:
+    kind: AgentNetwork
+    plural: agentnetworks
+    singular: agentnetwork
+    shortNames: [anet]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Kind
+          type: string
+          jsonPath: .spec.kind
+        - name: Resources
+          type: integer
+          jsonPath: .status.proxyResourceCount
+        - name: WG-Peers
+          type: integer
+          jsonPath: .status.wgPeerCount
+        - name: Bound
+          type: integer
+          jsonPath: .status.boundAgents
+        - name: Ready
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [identityProxy, wireguardMesh]
+                agentSelector:
+                  type: object
+                  additionalProperties: { type: string }
+                identityProxy:
+                  type: object
+                  required: [resources]
+                  properties:
+                    resources:
+                      type: array
+                      items:
+                        type: object
+                        required: [name, kind, gateway]
+                        properties:
+                          name: { type: string, minLength: 1 }
+                          kind: { type: string, enum: [tcp, http] }
+                          localAddr: { type: string }
+                          localPort: { type: integer }
+                          gateway: { type: string }
+                          authorize:
+                            type: array
+                            items: { type: string }
+                          jwtAudience: { type: string }
+                    egress:
+                      type: object
+                      properties:
+                        enforcement:
+                          type: string
+                          enum: [none, ebpfRedirect, ebpfAllowList, ebpfBoth]
+                          default: ebpfBoth
+                        redirectCIDRs:
+                          type: array
+                          items: { type: string }
+                        allow:
+                          type: array
+                          items:
+                            type: object
+                            required: [cidr]
+                            properties:
+                              cidr: { type: string }
+                              protocol:
+                                type: string
+                                enum: [tcp, udp, ""]
+                              ports:
+                                type: array
+                                items: { type: integer }
+                wireguardMesh:
+                  type: object
+                  required: [mode, privateKeyRef]
+                  properties:
+                    mode:
+                      type: string
+                      enum: [client, server]
+                    listenPort:
+                      type: integer
+                    privateKeyRef:
+                      type: object
+                      required: [secretName]
+                      properties:
+                        secretName: { type: string }
+                    addresses:
+                      type: array
+                      items: { type: string }
+                    dns:
+                      type: array
+                      items: { type: string }
+                    mtu:
+                      type: integer
+                      minimum: 576
+                      maximum: 9000
+                    peers:
+                      type: array
+                      items:
+                        type: object
+                        required: [name, publicKey, allowedIPs]
+                        properties:
+                          name: { type: string, minLength: 1 }
+                          publicKey: { type: string, minLength: 44, maxLength: 44 }
+                          endpoint: { type: string }
+                          allowedIPs:
+                            type: array
+                            items: { type: string }
+                          persistentKeepalive:
+                            type: integer
+                            minimum: 0
+                          pskRef:
+                            type: object
+                            properties:
+                              secretName: { type: string }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                observedGeneration: { type: integer }
+                boundAgents: { type: integer }
+                wgPeerCount: { type: integer }
+                proxyResourceCount: { type: integer }
+                reason: { type: string }
+                message: { type: string }

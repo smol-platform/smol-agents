@@ -1,0 +1,67 @@
+# Sample Agent + ModelProvider + Tool that the operator will resolve.
+---
+apiVersion: runtime.agents.stigen.ai/v1
+kind: ModelProvider
+metadata:
+  name: openai-prod
+  namespace: tenant-a
+spec:
+  kind: openai
+  endpoint: https://api.openai.com
+  secretRef:
+    secretName: openai-key
+---
+apiVersion: runtime.agents.stigen.ai/v1
+kind: Tool
+metadata:
+  name: search
+  namespace: tenant-a
+spec:
+  kind: http
+  description: "Web search via Tavily"
+  inputSchema:
+    type: object
+    required: [query]
+    properties:
+      query: { type: string, description: "Search query" }
+  outputSchema:
+    type: object
+    properties:
+      results:
+        type: array
+        items: { type: object }
+  http:
+    url: https://api.tavily.com/search
+    method: POST
+    auth:
+      secretName: tavily-key
+---
+apiVersion: runtime.agents.stigen.ai/v1
+kind: Agent
+metadata:
+  name: researcher
+  namespace: tenant-a
+spec:
+  model:
+    providerRef: openai-prod
+    name: gpt-4
+    temperature: 0.2
+  instructions: "You are a careful research assistant. Cite every source."
+  tools:
+    - name: search
+  budget:
+    maxSteps: 10
+    maxTokens: 50000
+    maxWallClockSeconds: 120
+    maxToolCalls: 8
+---
+apiVersion: runtime.agents.stigen.ai/v1
+kind: AgentRun
+metadata:
+  name: researcher-001
+  namespace: tenant-a
+spec:
+  agentRef: researcher
+  input:
+    question: "What were the top three open-source agent frameworks released in 2025?"
+  seed: 42

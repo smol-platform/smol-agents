@@ -1,0 +1,43 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentpolicies.runtime.agents.stigen.ai
+spec:
+  group: runtime.agents.stigen.ai
+  scope: Namespaced
+  names:
+    kind: AgentPolicy
+    plural: agentpolicies
+    singular: agentpolicy
+    shortNames: [apol]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              properties:
+                allowedProviders:
+                  type: array
+                  items: { type: string }
+                allowedTools:
+                  type: array
+                  items: { type: string }
+                maxBudget:
+                  type: object
+                  properties:
+                    maxSteps: { type: integer, minimum: 1 }
+                    maxTokens: { type: integer, minimum: 1 }
+                    maxWallClockSeconds: { type: integer, minimum: 1 }
+                    maxToolCalls: { type: integer, minimum: 0 }
+                redaction:
+                  type: object
+                  properties:
+                    patterns:
+                      type: array
+                      items: { type: string }

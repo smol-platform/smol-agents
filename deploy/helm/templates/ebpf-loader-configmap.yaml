@@ -1,0 +1,18 @@
+{{- if .Values.ebpfLoader.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knative-agents.fullname" . }}-ebpf-loader-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ebpf-loader
+data:
+  config.yaml: |
+    pinRoot: {{ .Values.ebpfLoader.pinRoot | quote }}
+    objectsDir: /usr/share/knative-agents/bpf
+    programs:
+{{ toYaml .Values.ebpfLoader.programs | indent 6 }}
+    mountBPFFS: {{ .Values.ebpfLoader.mountBPFFS }}
+    healthAddr: "0.0.0.0:8081"
+{{- end -}}

@@ -1,0 +1,59 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+vendor/
+
+# eBPF build artifacts
+bpf/build/
+*.bpf.o
+bpfel.go
+bpfel.o
+bpfeb.go
+bpfeb.o
+*_bpfel*
+*_bpfeb*
+
+# Build output
+bin/
+dist/
+build/
+
+# Coverage
+coverage.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env / secrets
+.env
+.env.local
+*.key
+*.pem
+*.crt
+!**/testdata/*.key
+!**/testdata/*.pem
+!**/testdata/*.crt
+
+# devenv / direnv
+.devenv/
+.direnv/
+.envrc.local
+
+# Working files
+.claude/
+.spec-workflow/specs/*/draft.md

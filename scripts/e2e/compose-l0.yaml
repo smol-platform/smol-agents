@@ -1,0 +1,121 @@
+# L0 docker-compose stack for fullstack-e2e.
+#
+# Brings up:
+#   - spire-server   issues SVIDs.
+#   - spire-agent    runs the workload-API socket; mounts shared
+#                    socket volume read/write so the test driver can
+#                    use it from the host (via testcontainers' bind).
+#   - spire-init     one-shot job that registers entries for
+#                    fake-gateway + the test-driver workload.
+#   - fake-llm       deterministic LLM, served at http://fake-llm:8080.
+#   - fake-gateway   echo + mTLS + JWT validator.
+#   - wg-hub         WireGuard server peer for the WG scenario.
+#
+# The agent itself is run IN-PROCESS by the Go test driver (not as a
+# compose service) because cmd/agent doesn't yet have a fakellm
+# provider — the executor is invoked directly with fakellm.Client.
+# This is fine for L0 (userland scenarios). L1+L2 run cmd/agent in a
+# Pod against the same fake-llm + fake-gateway shapes.
+#
+# All networking is on a dedicated bridge `e2e_l0` so we don't collide
+# with anything else docker is running.
+#
+# Implements R-E2E-L0-1 .. R-E2E-L0-4.
+
+name: knative-agents-e2e-l0
+
+networks:
+  e2e_l0:
+    driver: bridge
+
+volumes:
+  spire-data:
+  spire-sockets:
+  server-sockets:
+
+services:
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.10.0
+    networks: [e2e_l0]
+    # Run as root in the test rig so named volumes (root-owned by default)
+    # are writable. Production SPIRE runs as uid 1000.
+    user: "0:0"
+    volumes:
+      - spire-data:/tmp/spire
+      - server-sockets:/tmp/spire-server/private
+      - ./spire/server.conf:/run/spire/conf/server.conf:ro
+    command: ["-config", "/run/spire/conf/server.conf"]
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck", "-socketPath", "/tmp/spire-server/private/api.sock"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+
+  spire-agent:
+    image: knative-agents/spire-shell:dev
+    depends_on:
+      spire-init: { condition: service_completed_successfully }
+    networks: [e2e_l0]
+    # pid: host so the unix WorkloadAttestor can see the calling
+    # process's /proc entry. Without this, attestation fails silently.
+    pid: host
+    user: "0:0"
+    volumes:
+      # Host bind so the test driver running OUTSIDE the compose
+      # network can use the workload-API socket. Path matches
+      # composeEnv.socketDir.
+      - /tmp/knative-agents-e2e-l0-spire-sockets:/run/spire/agent-sockets
+      - spire-data:/tmp/spire
+      - ./spire/agent.conf:/run/spire/conf/agent.conf:ro
+    entrypoint:
+      - "/bin/sh"
+      - "-c"
+      - "exec /opt/spire/bin/spire-agent run -config /run/spire/conf/agent.conf -joinToken $$(cat /tmp/spire/agent-token)"
+
+  spire-init:
+    image: knative-agents/spire-shell:dev
+    depends_on:
+      spire-server: { condition: service_healthy }
+    networks: [e2e_l0]
+    user: "0:0"
+    volumes:
+      - server-sockets:/tmp/spire-server/private
+      - spire-data:/tmp/spire
+      - ./spire/bootstrap.sh:/bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap.sh"]
+
+  fake-llm:
+    image: knative-agents/fake-llm:dev
+    networks: [e2e_l0]
+    ports: ["18080:8080"] # exposed to host for direct test access
+    healthcheck:
+      test: ["CMD", "/fake-llm", "-help"]
+      interval: 2s
+      retries: 30
+
+  fake-gateway:
+    image: knative-agents/fake-gateway:dev
+    depends_on:
+      spire-agent: { condition: service_started }
+      spire-init:  { condition: service_completed_successfully }
+    networks: [e2e_l0]
+    volumes:
+      - spire-sockets:/run/spire/agent-sockets:ro
+    command:
+      - "-tcp-addr=:8443"
+      - "-http-addr=:8080"
+      - "-jwt-audience=spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway"
+      - "-authorize-tcp=spiffe://stigen.ai/ns/tenant-a"
+    ports:
+      - "18081:8080"
+      - "18443:8443"
+
+  wg-hub:
+    image: lscr.io/linuxserver/wireguard:latest
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks: [e2e_l0]
+    volumes:
+      - ./wireguard/wg0.conf:/config/wg_confs/wg0.conf:ro
+    ports: ["51820:51820/udp"]

@@ -1,0 +1,36 @@
+# Identity-aware proxy: agents reach internal Postgres + billing API
+# through a SPIFFE-mTLS sidecar; eBPF on the host transparently
+# redirects 10.42.0.0/16 to the sidecar and drops everything else.
+apiVersion: runtime.agents.stigen.ai/v1
+kind: AgentNetwork
+metadata:
+  name: prod-net
+  namespace: tenant-a
+spec:
+  kind: identityProxy
+  agentSelector:
+    app.kubernetes.io/name: knative-agents
+  identityProxy:
+    resources:
+      - name: orders-db
+        kind: tcp
+        localAddr: 127.0.0.1:5432
+        gateway: pg-gateway.infra.svc:8443
+        authorize:
+          - spiffe://stigen.ai/ns/infra/sa/pg-gateway
+      - name: billing-api
+        kind: http
+        localPort: 9100
+        gateway: https://billing.infra.svc/
+        jwtAudience: spiffe://stigen.ai/ns/infra/sa/billing
+    egress:
+      enforcement: ebpfBoth
+      redirectCIDRs:
+        - 10.42.0.0/16
+      allow:
+        - cidr: 10.42.5.7/32   # pg-gateway
+          protocol: tcp
+          ports: [443, 8443]
+        - cidr: 10.42.6.10/32  # billing-api
+          protocol: tcp
+          ports: [443]

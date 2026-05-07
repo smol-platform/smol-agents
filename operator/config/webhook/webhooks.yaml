@@ -1,0 +1,79 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knative-agents-operator-webhook
+  namespace: knative-agents-system
+  labels:
+    app.kubernetes.io/name: knative-agents-operator
+    app.kubernetes.io/component: webhook
+spec:
+  selector:
+    app.kubernetes.io/name: knative-agents-operator
+    app.kubernetes.io/component: manager
+  ports:
+    - name: https
+      port: 443
+      targetPort: 9443
+      protocol: TCP
+---
+# CA bundle is filled in by cert-manager (or a custom issuer) at install
+# time via the cert-manager.io/inject-ca-from annotation. For self-managed
+# installs replace ${CA_BUNDLE} with your CA before applying.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: knative-agents-operator-validating
+  annotations:
+    cert-manager.io/inject-ca-from: knative-agents-system/knative-agents-operator-serving-cert
+webhooks:
+  - name: validate.knativeagent.agents.stigen.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: knative-agents-operator-webhook
+        namespace: knative-agents-system
+        path: /validate-agents-stigen-ai-v1-knativeagent
+    rules:
+      - apiGroups: [agents.stigen.ai]
+        apiVersions: [v1]
+        resources: [knativeagents]
+        operations: [CREATE, UPDATE]
+  - name: validate.knativeagentplatform.agents.stigen.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: knative-agents-operator-webhook
+        namespace: knative-agents-system
+        path: /validate-agents-stigen-ai-v1-knativeagentplatform
+    rules:
+      - apiGroups: [agents.stigen.ai]
+        apiVersions: [v1]
+        resources: [knativeagentplatforms]
+        operations: [CREATE, UPDATE]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: knative-agents-operator-mutating
+  annotations:
+    cert-manager.io/inject-ca-from: knative-agents-system/knative-agents-operator-serving-cert
+webhooks:
+  - name: default.knativeagent.agents.stigen.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    clientConfig:
+      service:
+        name: knative-agents-operator-webhook
+        namespace: knative-agents-system
+        path: /mutate-agents-stigen-ai-v1-knativeagent
+    rules:
+      - apiGroups: [agents.stigen.ai]
+        apiVersions: [v1]
+        resources: [knativeagents]
+        operations: [CREATE, UPDATE]

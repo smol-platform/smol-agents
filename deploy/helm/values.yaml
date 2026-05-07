@@ -1,0 +1,207 @@
+# knative-agents values.yaml
+#
+# All defaults below honour R-SBX-1 (Kata + Firecracker microVMs)
+# and the SPIFFE / mTLS posture described in design.md.
+
+mode: knative           # knative | deployment | statefulset
+trustDomain: stigen.ai
+
+# ----------------------------------------------------------------------
+# Sandbox (R-SBX-1)
+# ----------------------------------------------------------------------
+# By default the chart targets Kata Containers + Firecracker microVMs
+# (RuntimeClass "kata-fc", as installed by the upstream kata-deploy
+# chart). gVisor remains supported as a fallback for environments that
+# cannot expose `/dev/kvm` (notably GKE Sandbox).
+#
+# Multi-distro support is driven by `sandbox.preset`. Presets we ship:
+#
+#   - "generic"             — kata-fc via kata-deploy (default)
+#   - "bare-metal"          — kata-fc on bare-metal Linux nodes
+#   - "eks-bottlerocket"    — kata-fc on Bottlerocket (Kata variant)
+#   - "aks"                 — kata-cc-isolation (AKS confidential-style)
+#   - "openshift-sandboxed" — Kata via Sandboxed Containers Operator
+#   - "k3s"                 — kata-fc via kata-deploy
+#   - "talos"               — kata-fc via Talos kata extension
+#   - "gke"                 — gVisor (managed; no KVM available)
+#   - "generic-gvisor"      — gVisor outside GKE
+#
+# Switch with: --set sandbox.preset=eks-bottlerocket
+sandbox:
+  preset: generic
+  runtimeClass: kata-fc            # set by preset; override if needed
+  allowHostRuntime: false          # R-SBX-1 guard: runc requires this
+  # Whether the chart should render a RuntimeClass object alongside the
+  # workload. Most clusters install the RuntimeClass via kata-deploy
+  # (or the gVisor installer), in which case leave this off.
+  installRuntimeClass: false
+
+agent:
+  image:
+    repository: knative-agents/agent
+    tag: 0.1.0
+  replicas: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  config:
+    mode: strict
+    transport:
+      private:
+        addr: "0.0.0.0:8443"
+        authorize:
+          - "prefix:spiffe://stigen.ai/ns/agents"
+      public:
+        addr: ""               # disable public listener by default
+        certPath: /etc/tls/tls.crt
+        keyPath:  /etc/tls/tls.key
+    secrets:
+      brokerSocket: /run/secret-broker/secret-broker.sock
+      maxLeaseTTL: 15m
+    ebpf:
+      programs: ["syscalls", "network"]
+      objectsDir: /usr/share/knative-agents/bpf
+    runtime:
+      drainTimeout: 30s
+      shutdownTimeout: 5s
+      healthAddr: "0.0.0.0:8080"
+    observability:
+      otlpEndpoint: "otel-collector.observability.svc:4317"
+      serviceName: knative-agent
+
+secretProxy:
+  image:
+    repository: knative-agents/secret-proxy
+    tag: 0.1.0
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  config:
+    backend:
+      kind: static            # static | vault
+      static: []              # populate per-tenant
+    policy: []                # spiffeID → allow [secret-names]
+
+spire:
+  # Existing SPIRE agent (DaemonSet, CSI workload API). We do not deploy
+  # SPIRE here; the chart only renders the ClusterSPIFFEID binding.
+  workloadAPISocket: /run/spire/agent-sockets/api.sock
+  clusterSPIFFEID:
+    create: true
+    spiffeIDTemplate: "spiffe://stigen.ai/ns/{{ .Release.Namespace }}/sa/{{ .Values.serviceAccount.name }}"
+
+serviceAccount:
+  create: true
+  name: knative-agent
+
+# Knative-specific knobs
+knative:
+  scaleToZero: true
+  minScale: 0
+  maxScale: 50
+
+monitoring:
+  enabled: true
+
+# ----------------------------------------------------------------------
+# eBPF Loader DaemonSet
+# ----------------------------------------------------------------------
+# Loads CO-RE BPF programs on every node and pins maps to bpffs so
+# unprivileged agent Pods can subscribe through pinned paths.
+#
+# Multi-distro support is driven by ebpfLoader.preset, which sets safe
+# defaults for hostPaths/capabilities. The presets we ship cover the
+# most common Kubernetes distributions; you can always override the
+# individual fields below.
+#
+# Available presets (case-sensitive):
+#   - "generic"       — standard Linux nodes (Ubuntu, Debian, RHEL, AL2)
+#   - "gke-cos"       — Google Container-Optimized OS
+#   - "eks-bottlerocket" — Bottlerocket on EKS / EKS-A
+#   - "aks-mariner"   — Azure Mariner (CBL-Mariner)
+#   - "k3s"           — Rancher k3s / k3os
+#   - "openshift"     — OpenShift (requires SCC; see docs/INSTALL.md §7)
+#   - "talos"         — Talos Linux (read-only host, custom paths)
+#
+# To switch presets:  helm install ... --set ebpfLoader.preset=gke-cos
+# Override anything else underneath (it merges last-write-wins).
+
+ebpfLoader:
+  enabled: true
+  preset: generic                    # see list above
+
+  image:
+    repository: knative-agents/ebpf-loader
+    tag: 0.1.0
+    pullPolicy: IfNotPresent
+
+  programs:
+    - syscalls
+    - network
+
+  pinRoot: /sys/fs/bpf/knative-agents
+  mountBPFFS: true                   # init container mounts bpffs if missing
+
+  hostPID: true                      # required for some BPF program types
+  hostNetwork: false                 # syscall/network observers don't need it
+
+  # Per-distro paths. The defaults cover "generic"; presets override.
+  hostPaths:
+    bpffs:    /sys/fs/bpf
+    debugfs:  true                   # mount /sys/kernel/debug RO
+    modules:  /lib/modules           # set "" (empty string) to skip
+
+  # Capabilities mode. Two options:
+  #   "privileged"   — securityContext.privileged: true (works everywhere)
+  #   "minimal"      — drop ALL, add CAP_BPF + CAP_PERFMON + CAP_NET_ADMIN
+  #                    (kernel ≥ 5.8 only)
+  capabilities:
+    mode: privileged
+    extraAdd: []                     # extra caps when mode=minimal
+
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
+  maxUnavailable: 1
+  terminationGracePeriodSeconds: 30
+  logLevel: info
+
+  # Optional: schedule on additional taints, restrict to specific node
+  # labels, or attach extra Pod-level affinity.
+  extraTolerations: []
+  nodeAffinity:
+    matchExpressions: []
+  podAffinity: {}
+  podAnnotations: {}
+
+  rbac:
+    expose: false                    # ClusterRole get/watch/list nodes
+
+  priorityClassName: system-node-critical
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

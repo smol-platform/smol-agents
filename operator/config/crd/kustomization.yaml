@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - knativeagents.stigen.ai_knativeagents.yaml
+  - knativeagents.stigen.ai_knativeagentplatforms.yaml
+  - runtime.agents.stigen.ai_agents.yaml
+  - runtime.agents.stigen.ai_tools.yaml
+  - runtime.agents.stigen.ai_modelproviders.yaml
+  - runtime.agents.stigen.ai_agentruns.yaml
+  - runtime.agents.stigen.ai_agentsessions.yaml
+  - runtime.agents.stigen.ai_agentpolicies.yaml
+  - runtime.agents.stigen.ai_agentnetworks.yaml

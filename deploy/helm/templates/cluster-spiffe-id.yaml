@@ -1,0 +1,18 @@
+{{- if .Values.spire.clusterSPIFFEID.create -}}
+# Implements R-IDN-1 / R-IDN-3: every agent Pod gets a SPIFFE ID via
+# the cluster's existing ClusterSPIFFEID controller.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: {{ include "knative-agents.fullname" . }}
+  labels:
+    {{- include "knative-agents.labels" . | nindent 4 }}
+spec:
+  spiffeIDTemplate: {{ tpl .Values.spire.clusterSPIFFEID.spiffeIDTemplate . | quote }}
+  podSelector:
+    matchLabels:
+      {{- include "knative-agents.selectorLabels" . | nindent 6 }}
+  workloadSelectorTemplates:
+    - "k8s:ns:{{ .Release.Namespace }}"
+    - "k8s:sa:{{ .Values.serviceAccount.name }}"
+{{- end -}}
