@@ -11,7 +11,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -77,11 +80,19 @@ func Provision(ctx context.Context) (*Cluster, error) {
 	}
 	imageID := *amiOut.Parameter.Value
 
-	// User-data is the cloud-init template (rendered separately —
-	// here we ship a minimal sentinel-only stub so the test can
-	// confirm provision works without depending on the full k0s
-	// bootstrap chain).
-	userData := minimalUserData()
+	// Render the full cloud-init from scripts/aws-l2/cloud-init.yaml.tmpl
+	// unless L2_BOOTSTRAP_MINIMAL=1 (smoke-only). The full template
+	// installs containerd + Kata + k0s and pulls our manifests +
+	// images from S3/ECR.
+	userData, err := renderCloudInit(userDataInputs{
+		ArtifactBucket: os.Getenv("L2_ARTIFACT_BUCKET"),
+		ECRRegistry:    os.Getenv("L2_ECR_REGISTRY"),
+		ImageTag:       envOrDefault("L2_IMAGE_TAG", "dev"),
+		RunID:          runID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("render cloud-init: %w", err)
+	}
 
 	out, err := ec2c.RunInstances(ctx, &ec2.RunInstancesInput{
 		ImageId:      aws.String(imageID),
@@ -225,17 +236,66 @@ func rfc3339Plus(d time.Duration) string {
 	return time.Now().Add(d).UTC().Format(time.RFC3339)
 }
 
-// minimalUserData returns a cloud-init that drops a sentinel file
-// so SSM-based tests can verify provision worked. Production L2
-// uses scripts/aws-l2/cloud-init.yaml.tmpl which installs k0s +
-// Kata; that wires up in T-4.* and is mounted via the artifact
-// bucket.
+// minimalUserData returns a cloud-init that drops a sentinel file.
+// Used as a fallback when the full cloud-init template renders blank
+// (e.g., L2_BOOTSTRAP_MINIMAL=1 for fast smoke verifying provision +
+// SSM ping without the full k0s + Kata bring-up).
 func minimalUserData() string {
 	var b bytes.Buffer
 	b.WriteString("#cloud-config\n")
 	b.WriteString("runcmd:\n")
 	b.WriteString("  - touch /var/log/l2-bootstrap.READY\n")
 	return b.String()
+}
+
+// userDataInputs are the template variables consumed by
+// scripts/aws-l2/cloud-init.yaml.tmpl. Caller supplies them at
+// Provision time; production renders from CI env, dev runs may
+// hardcode.
+type userDataInputs struct {
+	ArtifactBucket string
+	ECRRegistry    string
+	ImageTag       string
+	RunID          string
+}
+
+// renderCloudInit reads scripts/aws-l2/cloud-init.yaml.tmpl, fills
+// in userDataInputs, returns the rendered YAML. Returns the minimal
+// stub if L2_BOOTSTRAP_MINIMAL=1.
+func renderCloudInit(in userDataInputs) (string, error) {
+	if os.Getenv("L2_BOOTSTRAP_MINIMAL") == "1" {
+		return minimalUserData(), nil
+	}
+	tmplPath := repoFile("scripts/aws-l2/cloud-init.yaml.tmpl")
+	raw, err := os.ReadFile(tmplPath)
+	if err != nil {
+		return "", fmt.Errorf("read cloud-init template: %w", err)
+	}
+	t, err := template.New("cloud-init").Parse(string(raw))
+	if err != nil {
+		return "", fmt.Errorf("parse cloud-init template: %w", err)
+	}
+	var b bytes.Buffer
+	if err := t.Execute(&b, in); err != nil {
+		return "", fmt.Errorf("execute cloud-init template: %w", err)
+	}
+	return b.String(), nil
+}
+
+// repoFile resolves a path relative to the project root.
+func repoFile(rel string) string {
+	_, here, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(here)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, rel)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return rel
+		}
+		dir = parent
+	}
 }
 
 // ensureRegion is a sanity check used by the test setup. Returns
@@ -246,6 +306,14 @@ func ensureRegion() error {
 		return fmt.Errorf("AWS_REGION=%q; L2 only supports %q", r, requiredRegion)
 	}
 	return nil
+}
+
+// envOrDefault returns os.Getenv(k) or fallback when empty.
+func envOrDefault(k, fallback string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // silence imports if a future refactor drops one.

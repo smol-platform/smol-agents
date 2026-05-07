@@ -1,0 +1,132 @@
+#cloud-config
+#
+# L2 e2e cloud-init template. Rendered by the L2 driver at Provision
+# time with these Go-template variables:
+#
+#   .ArtifactBucket  S3 bucket holding manifests.tar.gz + images.tar
+#   .ECRRegistry     ECR registry hostname (account.dkr.ecr.us-east-2.amazonaws.com)
+#   .ImageTag        Image tag to pull (git SHA)
+#   .RunID           Random hex from Provision; used in log paths
+#
+# Bring-up sequence (~5 min from instance-start to sentinel):
+#   1. dnf install: containerd, runc, jq, awscli, tar
+#   2. download Kata-Containers static bundle (arm64, ~150MB)
+#   3. write containerd config registering kata-fc runtime
+#   4. install k0s, start in single-controller mode
+#   5. pull manifest tarball + image tarball from S3 (fast: same region)
+#   6. import images into k0s containerd, drop manifests under
+#      /var/lib/k0s/manifests/ (k0s manifest watcher applies them)
+#   7. write sentinel file /var/log/l2-bootstrap.READY
+#
+# Spot interruption hook listens on IMDS /spot/instance-action and
+# uploads /var/log/*.log to S3 before the 2-min deadline (R-E2E-CLEAN-4).
+
+packages:
+  - containerd
+  - runc
+  - jq
+  - tar
+  - awscli
+
+write_files:
+  - path: /etc/containerd/config.toml
+    permissions: "0644"
+    content: |
+      version = 2
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
+        runtime_type = "io.containerd.kata-fc.v2"
+        privileged_without_host_devices = true
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
+          ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+        runtime_type = "io.containerd.runc.v2"
+
+  - path: /etc/k0s/k0s.yaml
+    permissions: "0644"
+    content: |
+      apiVersion: k0s.k0sproject.io/v1beta1
+      kind: ClusterConfig
+      spec:
+        api:
+          address: 0.0.0.0
+        network:
+          provider: kuberouter
+        controllerManager:
+          extraArgs:
+            bind-address: "0.0.0.0"
+
+  # Spot-interruption handler — uploads logs before AWS reclaims.
+  - path: /usr/local/bin/spot-interruption-watch.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -eu
+      while true; do
+        token=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+                  -H "X-aws-ec2-metadata-token-ttl-seconds: 300" 2>/dev/null || true)
+        body=$(curl -sf -H "X-aws-ec2-metadata-token: $token" \
+                  http://169.254.169.254/latest/meta-data/spot/instance-action 2>/dev/null || true)
+        if [ -n "$body" ]; then
+          echo "spot interruption notice received: $body"
+          tar -czf /tmp/logs-{{ .RunID }}.tgz /var/log
+          aws s3 cp /tmp/logs-{{ .RunID }}.tgz \
+            s3://{{ .ArtifactBucket }}/spot-interrupt-logs/{{ .RunID }}.tgz \
+            --region us-east-2 || true
+          break
+        fi
+        sleep 5
+      done
+
+  - path: /etc/systemd/system/spot-interruption-watch.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Spot interruption watcher
+      After=network.target
+      [Service]
+      ExecStart=/usr/local/bin/spot-interruption-watch.sh
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # 1. BPF FS (cgroup_skb/egress and cgroup/connect4 need this).
+  - mount bpffs /sys/fs/bpf -t bpf || true
+
+  # 2. Install Kata-Containers static bundle.
+  - mkdir -p /opt/kata
+  - |
+    curl -sSL \
+      https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
+      | tar -xJ -C /opt/kata --strip-components=1
+  - ln -sf /opt/kata/bin/kata-runtime /usr/local/bin/kata-runtime
+  - ln -sf /opt/kata/bin/containerd-shim-kata-fc-v2 /usr/local/bin/containerd-shim-kata-fc-v2
+
+  # 3. Restart containerd with Kata config.
+  - systemctl daemon-reload
+  - systemctl enable --now containerd
+
+  # 4. Install k0s + bring up the single-node controller.
+  - curl -sSf https://get.k0s.sh | sh
+  - k0s install controller --single -c /etc/k0s/k0s.yaml
+  - k0s start
+  - timeout 120 sh -c 'until k0s status >/dev/null 2>&1; do sleep 2; done'
+
+  # 5. Pull manifest tarball + image bundle from S3.
+  - mkdir -p /var/lib/k0s/manifests/{spire,operator,samples} /tmp/images
+  - aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz - --region us-east-2 \
+      | tar -xz -C /var/lib/k0s/manifests/
+
+  # 6. Pull images: ECR login, then `k0s ctr image pull` for each.
+  - |
+    aws ecr get-login-password --region us-east-2 \
+      | k0s ctr image login --user AWS --password-stdin {{ .ECRRegistry }}
+    for img in operator agent ebpf-loader secret-proxy fake-llm fake-gateway; do
+      k0s ctr image pull {{ .ECRRegistry }}/knative-agents/$img:{{ .ImageTag }}
+    done
+
+  # 7. Start spot-interruption watcher (Spot reclaim signal listener).
+  - systemctl enable --now spot-interruption-watch
+
+  # 8. Sentinel — the L2 driver polls SSM until this file exists.
+  - touch /var/log/l2-bootstrap.READY
