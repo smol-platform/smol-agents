@@ -26,12 +26,12 @@ type kindEnv struct {
 	context   string
 	endpoints map[string]string
 
-	// scriptPath points at scripts/kind-verify.sh. The L1 driver
-	// reuses that script's bring-up because it already creates the
-	// cluster, builds + loads the operator image, applies CRDs +
-	// RBAC + manager via the kind overlay, and pre-creates the
-	// `<agent>-agent` ServiceAccount.
+	// scriptPath points at scripts/kind-verify.sh.
 	scriptPath string
+
+	// portForwards holds the cancel-funcs for `kubectl port-forward`
+	// goroutines; cleanup teardown stops them.
+	portForwards []func()
 }
 
 // kindUp brings the cluster up. Idempotent — kind-verify.sh reuses
@@ -51,12 +51,10 @@ func kindUp(ctx context.Context) (*kindEnv, error) {
 		cluster:    cluster,
 		context:    "kind-" + cluster,
 		scriptPath: script,
-		// L1 doesn't currently deploy fake-llm / fake-gateway /
-		// wg-hub in-cluster. Scenarios that need them self-skip via
-		// `env.Endpoint(name)` returning false. Wiring those in is
-		// a follow-up (T-2.x) — at that point they become k8s
-		// Service DNS names like fake-llm.tenant-a.svc.cluster.local.
-		endpoints: map[string]string{},
+		// Endpoints populate after deployFakes() lands the in-cluster
+		// services; we keep this nil-on-construct so a Failed bring-
+		// up doesn't accidentally claim endpoints exist.
+		endpoints: nil,
 	}
 
 	cmd := exec.CommandContext(ctx, "bash", script)
@@ -68,7 +66,135 @@ func kindUp(ctx context.Context) (*kindEnv, error) {
 		return nil, fmt.Errorf("kind-verify.sh: %w\nstdout: %s\nstderr: %s",
 			err, stdout.String(), stderr.String())
 	}
+
+	// Build + load the fake services + apply their manifests so
+	// scenarios that need fake-llm / fake-gateway in-cluster have
+	// targets to dial.
+	if err := env.deployFakes(ctx); err != nil {
+		return nil, fmt.Errorf("deploy fakes: %w", err)
+	}
+	// Port-forward in-cluster services to host ports so the test
+	// driver (running on the host, outside the cluster) can dial
+	// them. Without this, the cluster-internal DNS names don't
+	// resolve from the host. Each call also waits for the local
+	// listener to actually accept TCP connections so scenarios
+	// don't race the forwarder's startup.
+	pfs := []struct {
+		logical, svc, ns  string
+		hostPort, svcPort int
+	}{
+		{"fake-llm", "fake-llm", "tenant-a", 18090, 8080},
+		{"fake-gateway-http", "fake-gateway", "tenant-a", 18091, 8080},
+		{"fake-gateway-tcp", "fake-gateway", "tenant-a", 18092, 8443},
+	}
+	env.endpoints = map[string]string{}
+	for _, p := range pfs {
+		stop, err := env.portForward(ctx, p.ns, "svc/"+p.svc, p.hostPort, p.svcPort)
+		if err != nil {
+			env.stopPortForwards()
+			return nil, fmt.Errorf("port-forward %s: %w", p.logical, err)
+		}
+		env.portForwards = append(env.portForwards, stop)
+		switch p.logical {
+		case "fake-gateway-tcp":
+			env.endpoints[p.logical] = fmt.Sprintf("127.0.0.1:%d", p.hostPort)
+		default:
+			env.endpoints[p.logical] = fmt.Sprintf("http://127.0.0.1:%d", p.hostPort)
+		}
+	}
+
 	return env, nil
+}
+
+// portForward starts `kubectl port-forward` in the background and
+// returns a stop function. Blocks until the host port accepts
+// connections, with a generous timeout to absorb kubectl warm-up.
+func (e *kindEnv) portForward(ctx context.Context, ns, target string, hostPort, svcPort int) (func(), error) {
+	pfCtx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(pfCtx, "kubectl", "--context", e.context,
+		"-n", ns, "port-forward", target,
+		fmt.Sprintf("%d:%d", hostPort, svcPort))
+	// Discard stdout/stderr — kubectl port-forward is chatty and we
+	// only care about whether the local listener comes up.
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, err
+	}
+	stop := func() {
+		cancel()
+		_ = cmd.Wait()
+	}
+
+	// Poll the host port until it accepts.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", hostPort), 200*time.Millisecond)
+		if err == nil {
+			_ = c.Close()
+			return stop, nil
+		}
+		select {
+		case <-ctx.Done():
+			stop()
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	stop()
+	return nil, fmt.Errorf("port-forward 127.0.0.1:%d never came up", hostPort)
+}
+
+func (e *kindEnv) stopPortForwards() {
+	for _, stop := range e.portForwards {
+		stop()
+	}
+	e.portForwards = nil
+}
+
+// deployFakes builds the fake-llm + fake-gateway images, loads them
+// into the kind cluster, and kubectl-applies the manifests. Idempotent.
+func (e *kindEnv) deployFakes(ctx context.Context) error {
+	root := repoFile("")
+	// 1. Build fake-llm image (fake-gateway uses an upstream socat
+	// image so no build needed for L1).
+	if err := runCmd(ctx, "docker", "build",
+		"-f", filepath.Join(root, "deploy/docker/fake-llm.Dockerfile"),
+		"-t", "knative-agents/fake-llm:dev", root); err != nil {
+		return fmt.Errorf("docker build fake-llm: %w", err)
+	}
+	// 2. kind-load it.
+	if err := runCmd(ctx, "kind", "load", "docker-image",
+		"knative-agents/fake-llm:dev", "--name", e.cluster); err != nil {
+		return fmt.Errorf("kind load fake-llm: %w", err)
+	}
+	// 3. Apply manifests.
+	manifests := filepath.Join(root, "test/e2e/manifests")
+	if err := runCmd(ctx, "kubectl", "--context", e.context,
+		"apply", "-k", manifests); err != nil {
+		return fmt.Errorf("kubectl apply manifests: %w", err)
+	}
+	// 4. Wait for fake-llm to be ready.
+	if err := runCmd(ctx, "kubectl", "--context", e.context,
+		"-n", "tenant-a", "wait", "--for=condition=available",
+		"deployment/fake-llm", "deployment/fake-gateway",
+		"--timeout=120s"); err != nil {
+		return fmt.Errorf("wait fakes ready: %w", err)
+	}
+	return nil
+}
+
+func runCmd(ctx context.Context, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s %s: %w\nstdout: %s\nstderr: %s",
+			name, strings.Join(args, " "), err, stdout.String(), stderr.String())
+	}
+	return nil
 }
 
 func (e *kindEnv) Capabilities() shared.Caps {
@@ -133,9 +259,12 @@ func (e *kindEnv) WaitFor(ctx context.Context, name string, deadline time.Durati
 	}
 }
 
-// Cleanup deletes the kind cluster. Disabled by default to keep
-// inner-loop dev fast; set L1_TEARDOWN=1 to opt in.
+// Cleanup stops port-forwards (always) and optionally deletes the
+// cluster. Cluster delete is opt-in via L1_TEARDOWN=1 to keep the
+// inner-loop fast; port-forwards always stop because they hold host
+// ports + child processes.
 func (e *kindEnv) Cleanup(ctx context.Context) error {
+	e.stopPortForwards()
 	if os.Getenv("L1_TEARDOWN") != "1" {
 		return nil
 	}
