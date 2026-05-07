@@ -1,0 +1,53 @@
+# Kind-cluster overlay WITH webhooks enabled. Used by the L1 e2e
+# ring to test admission validation. Requires cert-manager already
+# installed in the cluster (the L1 driver does that).
+#
+# Differences from operator/config/kind/:
+#   - Includes ../webhook resources
+#   - ENABLE_WEBHOOKS env removed (defaults to true in main.go)
+#   - Adds the cert-manager Issuer + Certificate the webhook config's
+#     `cert-manager.io/inject-ca-from` annotation expects
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: knative-agents-system
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager
+  - ../webhook
+  - certificate.yaml
+patches:
+  - target:
+      kind: Deployment
+      name: knative-agents-operator
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --leader-elect=false
+          - --metrics-bind-address=:8443
+          - --health-probe-bind-address=:8081
+      - op: add
+        path: /spec/template/spec/containers/0/ports/-
+        value:
+          name: webhook
+          containerPort: 9443
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: webhook-cert
+            mountPath: /tmp/k8s-webhook-server/serving-certs
+            readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: webhook-cert
+            secret:
+              secretName: knative-agents-operator-serving-cert
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/managed-by: knative-agents-operator

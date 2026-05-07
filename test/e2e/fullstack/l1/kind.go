@@ -184,6 +184,30 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 		"apply", "-k", filepath.Join(manifests, "spire")); err != nil {
 		return fmt.Errorf("kubectl apply spire: %w", err)
 	}
+	// 3b. Install cert-manager (webhook overlay needs it). Skip if
+	// already there.
+	out, _ := exec.CommandContext(ctx, "kubectl", "--context", e.context,
+		"get", "ns", "cert-manager", "--ignore-not-found", "-o", "name").Output()
+	if strings.TrimSpace(string(out)) == "" {
+		_ = runCmd(ctx, "kubectl", "--context", e.context, "apply",
+			"-f", "https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml")
+		_ = runCmd(ctx, "kubectl", "--context", e.context, "-n", "cert-manager",
+			"wait", "--for=condition=available", "deployment", "--all",
+			"--timeout=120s")
+	}
+	// 3c. Apply the kind-webhook overlay — adds the operator's
+	// validating webhook + cert-manager Issuer/Certificate. Replaces
+	// the no-webhook deployment from kind-verify.sh's overlay.
+	if err := runCmd(ctx, "kubectl", "--context", e.context,
+		"apply", "-k", filepath.Join(root, "operator/config/kind-webhook")); err != nil {
+		return fmt.Errorf("kubectl apply webhook overlay: %w", err)
+	}
+	// 3d. Wait for the rolled-out operator pod to be Ready.
+	if err := runCmd(ctx, "kubectl", "--context", e.context,
+		"-n", "knative-agents-system", "rollout", "status",
+		"deployment/knative-agents-operator", "--timeout=120s"); err != nil {
+		return fmt.Errorf("wait operator rollout: %w", err)
+	}
 	// 4. Wait for fakes ready.
 	if err := runCmd(ctx, "kubectl", "--context", e.context,
 		"-n", "tenant-a", "wait", "--for=condition=available",
@@ -218,7 +242,22 @@ func (e *kindEnv) Capabilities() shared.Caps {
 	if e.canReachSPIREInCluster() {
 		caps |= shared.CapSPIRE
 	}
+	if e.hasWebhook() {
+		caps |= shared.CapWebhook
+	}
 	return caps
+}
+
+// hasWebhook reports whether the operator's ValidatingWebhook is
+// installed. Used to gate the S-WEBHOOK scenario.
+func (e *kindEnv) hasWebhook() bool {
+	out, err := exec.Command("kubectl", "--context", e.context, "get",
+		"validatingwebhookconfiguration", "knative-agents-operator-validating",
+		"--ignore-not-found", "-o", "name").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }
 
 func (e *kindEnv) Ring() string { return "l1" }

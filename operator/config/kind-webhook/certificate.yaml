@@ -1,0 +1,27 @@
+# Self-signed Issuer + Certificate that backs the operator's webhook
+# TLS. The `cert-manager.io/inject-ca-from` annotation on the
+# ValidatingWebhookConfiguration tells cert-manager-cainjector to
+# stamp this CA into each webhook's caBundle.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned
+  namespace: knative-agents-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: knative-agents-operator-serving-cert
+  namespace: knative-agents-system
+spec:
+  secretName: knative-agents-operator-serving-cert
+  duration: 24h
+  renewBefore: 6h
+  issuerRef:
+    name: selfsigned
+    kind: Issuer
+  dnsNames:
+    - knative-agents-operator-webhook.knative-agents-system.svc
+    - knative-agents-operator-webhook.knative-agents-system.svc.cluster.local

@@ -541,9 +541,45 @@ func (s slowLLM) Chat(ctx context.Context, _ agentruntime.ChatRequest) (rt.LLMDe
 
 var webhook = Scenario{
 	ID:       "R-E2E-SCN-WEBHOOK",
-	Name:     "webhook-rejects-bad-agentnetwork",
+	Name:     "webhook-rejects-bad-knativeagent",
 	Requires: CapKubernetes | CapWebhook,
-	Run:      todo("webhook reject body lands in T-5.4 (L2 only)"),
+	Run:      runWebhook,
+}
+
+// runWebhook applies a KnativeAgent with mode=insecure and no
+// allow-insecure annotation, asserts the apiserver rejects it via
+// the validating webhook (R-OP-WH-1).
+//
+// The original requirement named this "rejects-bad-agentnetwork"
+// but AgentNetwork has no validating webhook today (its admission
+// rules are enforced by the reconciler). This variant exercises
+// the existing KnativeAgent webhook end-to-end.
+func runWebhook(t *testing.T, env Env) {
+	t.Helper()
+	manifest := []byte(`apiVersion: agents.stigen.ai/v1
+kind: KnativeAgent
+metadata:
+  name: webhook-bad-mode
+  namespace: tenant-a
+spec:
+  trustDomain: stigen.ai
+  mode: insecure
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	err := env.Apply(ctx, manifest)
+	if err == nil {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", "knativeagent",
+			"webhook-bad-mode", "-n", "tenant-a")
+		t.Fatal("expected apiserver to reject bad KnativeAgent; admission accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "denied") || !strings.Contains(msg, "allow-insecure") {
+		t.Errorf("rejection error doesn't look like the expected webhook denial: %v", err)
+	}
+	t.Logf("webhook rejected bad spec as expected: %s",
+		strings.SplitN(msg, "\n", 2)[0])
 }
 
 var kataIsolation = Scenario{
