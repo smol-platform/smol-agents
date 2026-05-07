@@ -1,6 +1,24 @@
 # fake-llm Deployment + Service for the L1 e2e ring.
 # In-cluster scenarios dial http://fake-llm.tenant-a.svc.cluster.local:8080.
-# The image is built locally + kind-loaded as knative-agents/fake-llm:dev.
+# Plans mounted via ConfigMap so S-AGENTRUN exercises the real
+# plan→tool→observation cycle (not just the fallback FinalAnswer).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-llm-plans
+  namespace: tenant-a
+data:
+  plans.json: |
+    {
+      "globalSequence": [
+        {"toolCall": {"tool": "echo", "arguments": {"text": "hello"}},
+         "tokensIn": 10, "tokensOut": 5},
+        {"finalAnswer": {"output": {"echoed": "hello"}},
+         "tokensIn": 12, "tokensOut": 8}
+      ],
+      "fallback": {"finalAnswer": {"output": {"answer": "done"}}}
+    }
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -35,7 +53,7 @@ spec:
         - name: fake-llm
           image: knative-agents/fake-llm:dev
           imagePullPolicy: Never
-          args: ["-addr=:8080"]
+          args: ["-addr=:8080", "-plans=/etc/fake-llm/plans.json"]
           ports:
             - name: http
               containerPort: 8080
@@ -53,3 +71,11 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
             seccompProfile: { type: RuntimeDefault }
+          volumeMounts:
+            - name: plans
+              mountPath: /etc/fake-llm
+              readOnly: true
+      volumes:
+        - name: plans
+          configMap:
+            name: fake-llm-plans
