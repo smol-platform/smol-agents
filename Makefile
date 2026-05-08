@@ -81,15 +81,15 @@ test-e2e:
 # See .spec-workflow/specs/knative-agents-fullstack-e2e/.
 
 .PHONY: e2e-l0
-e2e-l0:
+e2e-l0: ## fullstack-e2e L0 ring (docker-compose, ~1 min)
 	$(GO) test -tags='e2e_l0 wgnetstack' -timeout 10m ./test/e2e/fullstack/l0/...
 
 .PHONY: e2e-l1
-e2e-l1:
+e2e-l1: ## fullstack-e2e L1 ring (kind on Linux, ~5 min)
 	$(GO) test -tags=e2e_l1 -timeout 15m ./test/e2e/fullstack/l1/...
 
 .PHONY: e2e-l2
-e2e-l2:
+e2e-l2: ## fullstack-e2e L2 ring (AWS Spot bare-metal, 12 min, USD 0.22/run)
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	@: $${AWS_REGION:?must be set, expected us-east-2}
 	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
@@ -101,7 +101,7 @@ e2e-l2:
 # scenarios. Run on every PR touching scripts/aws-l2/cloud-init.* to
 # catch drift without paying the full 12-minute scenario-suite tax.
 .PHONY: e2e-l2-smoke
-e2e-l2-smoke:
+e2e-l2-smoke: ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run)
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	@: $${AWS_REGION:?must be set, expected us-east-2}
 	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
@@ -113,7 +113,7 @@ e2e-l2-smoke:
 # tagged knative-agents-e2e in us-east-2 stigen account. Used when
 # the sweeper Lambda or budget alarm both failed (R-E2E-VRF-3).
 .PHONY: e2e-clean-aws
-e2e-clean-aws:
+e2e-clean-aws: ## terminate every stranded knative-agents-e2e instance
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	bash scripts/aws-l2/sweep.sh
 
@@ -127,16 +127,16 @@ e2e-clean-aws:
 L2_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
 .PHONY: l2-bundle
-l2-bundle: l2-manifests l2-images
+l2-bundle: l2-manifests l2-images ## build + upload manifest tarball + ECR images
 
 .PHONY: l2-manifests
-l2-manifests:
+l2-manifests: ## kustomize-render manifests, upload tarball to S3
 	@: $${L2_ARTIFACT_BUCKET:?must be set (S3 bucket from terraform output)}
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	bash scripts/aws-l2/build-manifests.sh $(L2_IMAGE_TAG)
 
 .PHONY: l2-images
-l2-images:
+l2-images: ## build linux/arm64 images, push to ECR
 	@: $${L2_ECR_REGISTRY:?must be set (e.g. 123.dkr.ecr.us-east-2.amazonaws.com)}
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	bash scripts/aws-l2/build-images.sh $(L2_IMAGE_TAG)
@@ -172,5 +172,5 @@ clean:
 	find . -name '*_bpfel*' -delete -o -name '*_bpfeb*' -delete
 
 .PHONY: help
-help:
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+help: ## list documented targets
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
