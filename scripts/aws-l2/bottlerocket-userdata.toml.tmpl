@@ -1,0 +1,25 @@
+# Bottlerocket user-data (TOML).
+#
+# Bottlerocket ships a read-only rootfs and a TOML-driven settings
+# API; it has no shell, no apt/dnf, and is architecturally the
+# wrong fit for hosting a single-node k0s control plane. The
+# canonical "Bottlerocket workload" is a worker node joining an
+# existing control plane (EKS) — a different test entirely.
+#
+# What this user-data validates:
+#   1. The AL2-shaped Bottlerocket AMI launches with our IAM role
+#   2. SSM control container starts (default behaviour) and reports
+#      Online to the SSM API within ~2 min
+#   3. The L2 driver detects DistroBottlerocket and writes the
+#      /var/log/l2-bootstrap.READY sentinel via SSM rather than
+#      relying on cloud-init runcmd (which doesn't exist here)
+#
+# Keep this TOML minimal — every additional setting is a chance to
+# break Bottlerocket's bootstrap, which leaves the control container
+# unresponsive and the driver hanging.
+#
+# Template vars are NOT used; the L2 driver gets all artifacts
+# via SSM after boot, not via this user-data.
+
+[settings.host-containers.admin]
+enabled = false

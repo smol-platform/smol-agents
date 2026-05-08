@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -69,40 +68,30 @@ func Provision(ctx context.Context) (*Cluster, error) {
 	}
 
 	runID := randHex(6)
+	distro := ResolveDistro()
 
-	// Resolve the latest Amazon Linux 2023 arm64 AMI via SSM
-	// parameter store — that's how Amazon publishes them.
-	amiOut, err := ssmc.GetParameter(ctx, &ssm.GetParameterInput{
-		Name: aws.String("/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"),
-	})
+	imageID, err := distro.AMI(ctx, ec2c, ssmc)
 	if err != nil {
-		return nil, fmt.Errorf("ami lookup: %w", err)
+		return nil, fmt.Errorf("ami lookup (%s): %w", distro, err)
 	}
-	imageID := *amiOut.Parameter.Value
 
-	// Render the full cloud-init from scripts/aws-l2/cloud-init.yaml.tmpl
-	// unless L2_BOOTSTRAP_MINIMAL=1 (smoke-only). The full template
-	// installs containerd + Kata + k0s and pulls our manifests +
-	// images from S3/ECR.
 	userData, err := renderCloudInit(userDataInputs{
 		ArtifactBucket: os.Getenv("L2_ARTIFACT_BUCKET"),
 		ECRRegistry:    os.Getenv("L2_ECR_REGISTRY"),
 		ImageTag:       envOrDefault("L2_IMAGE_TAG", "dev"),
 		RunID:          runID,
+		Distro:         distro,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("render cloud-init: %w", err)
+		return nil, fmt.Errorf("render user-data (%s): %w", distro, err)
 	}
 
-	out, err := ec2c.RunInstances(ctx, &ec2.RunInstancesInput{
+	runReq := &ec2.RunInstancesInput{
 		ImageId: aws.String(imageID),
 		InstanceType: types.InstanceType(
 			envOrDefault("L2_INSTANCE_TYPE", string(types.InstanceTypeC6gdMetal))),
 		MinCount: aws.Int32(1),
 		MaxCount: aws.Int32(1),
-		InstanceMarketOptions: &types.InstanceMarketOptionsRequest{
-			MarketType: types.MarketTypeSpot,
-		},
 		IamInstanceProfile: &types.IamInstanceProfileSpecification{
 			Name: aws.String("knative-agents-e2e-l2"),
 		},
@@ -116,7 +105,15 @@ func Provision(ctx context.Context) (*Cluster, error) {
 				{Key: aws.String("Name"), Value: aws.String("knative-agents-e2e-l2-" + runID)},
 			},
 		}},
-	})
+	}
+	// Default to Spot. L2_INSTANCE_MARKET=on-demand opts out — useful
+	// when Spot capacity is constrained for the chosen instance type.
+	if envOrDefault("L2_INSTANCE_MARKET", "spot") == "spot" {
+		runReq.InstanceMarketOptions = &types.InstanceMarketOptionsRequest{
+			MarketType: types.MarketTypeSpot,
+		}
+	}
+	out, err := ec2c.RunInstances(ctx, runReq)
 	if err != nil {
 		return nil, fmt.Errorf("run-instances: %w", err)
 	}
@@ -249,38 +246,28 @@ func minimalUserData() string {
 	return b.String()
 }
 
-// userDataInputs are the template variables consumed by
-// scripts/aws-l2/cloud-init.yaml.tmpl. Caller supplies them at
-// Provision time; production renders from CI env, dev runs may
-// hardcode.
+// userDataInputs are the template variables consumed by every
+// distro's user-data template. Distro-specific templates may use
+// only a subset; that's fine.
 type userDataInputs struct {
 	ArtifactBucket string
 	ECRRegistry    string
 	ImageTag       string
 	RunID          string
+	Distro         Distro
 }
 
-// renderCloudInit reads scripts/aws-l2/cloud-init.yaml.tmpl, fills
-// in userDataInputs, returns the rendered YAML. Returns the minimal
-// stub if L2_BOOTSTRAP_MINIMAL=1.
+// renderCloudInit dispatches to the per-distro user-data renderer.
+// Returns the minimal stub if L2_BOOTSTRAP_MINIMAL=1 (smoke-only,
+// validates provision + SSM ping without the full bring-up).
 func renderCloudInit(in userDataInputs) (string, error) {
 	if os.Getenv("L2_BOOTSTRAP_MINIMAL") == "1" {
 		return minimalUserData(), nil
 	}
-	tmplPath := repoFile("scripts/aws-l2/cloud-init.yaml.tmpl")
-	raw, err := os.ReadFile(tmplPath)
-	if err != nil {
-		return "", fmt.Errorf("read cloud-init template: %w", err)
+	if in.Distro == "" {
+		in.Distro = ResolveDistro()
 	}
-	t, err := template.New("cloud-init").Parse(string(raw))
-	if err != nil {
-		return "", fmt.Errorf("parse cloud-init template: %w", err)
-	}
-	var b bytes.Buffer
-	if err := t.Execute(&b, in); err != nil {
-		return "", fmt.Errorf("execute cloud-init template: %w", err)
-	}
-	return b.String(), nil
+	return in.Distro.UserData(in)
 }
 
 // repoFile resolves a path relative to the project root.
