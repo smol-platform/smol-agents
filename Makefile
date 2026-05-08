@@ -95,7 +95,19 @@ e2e-l2:
 	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
 		echo "AWS_REGION must be us-east-2; got $(AWS_REGION)" >&2; exit 1; \
 	fi
-	$(GO) test -tags=e2e_l2 -timeout 30m ./test/e2e/fullstack/l2/...
+	$(GO) test -tags=e2e_l2 -timeout 30m -run TestL2$$ ./test/e2e/fullstack/l2/...
+
+# e2e-l2-smoke: cheap (~$0.10) Provision+sentinel+Teardown, no
+# scenarios. Run on every PR touching scripts/aws-l2/cloud-init.* to
+# catch drift without paying the full 12-minute scenario-suite tax.
+.PHONY: e2e-l2-smoke
+e2e-l2-smoke:
+	@: $${AWS_PROFILE:?must be set, expected stigen}
+	@: $${AWS_REGION:?must be set, expected us-east-2}
+	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
+		echo "AWS_REGION must be us-east-2; got $(AWS_REGION)" >&2; exit 1; \
+	fi
+	$(GO) test -tags=e2e_l2 -timeout 15m -run TestL2_Smoke ./test/e2e/fullstack/l2/...
 
 # e2e-clean-aws: manual escape hatch — terminate every L2 instance
 # tagged knative-agents-e2e in us-east-2 stigen account. Used when
