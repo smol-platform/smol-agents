@@ -377,7 +377,7 @@ spec:
   volumes:
     - name: sockets
       hostPath: { path: /run/spire/agent-sockets, type: DirectoryOrCreate }
-`, pod, jsonStringList(probeArgs))
+`, pod, shared.JSONStringList(probeArgs))
 
 	if err := e.Apply(ctx, []byte(manifest)); err != nil {
 		return nil, fmt.Errorf("apply probe pod: %w", err)
@@ -395,7 +395,7 @@ spec:
 		// Probe failed; still grab logs to surface why.
 		out, _ := exec.Command("kubectl", "--context", e.context,
 			"-n", "tenant-a", "logs", pod).CombinedOutput()
-		return parseProbeLines(string(out)), fmt.Errorf("probe pod did not succeed: %w\nlogs:\n%s", err, out)
+		return shared.ParseProbeLines(string(out)), fmt.Errorf("probe pod did not succeed: %w\nlogs:\n%s", err, out)
 	}
 
 	out, err := exec.Command("kubectl", "--context", e.context,
@@ -403,45 +403,7 @@ spec:
 	if err != nil {
 		return nil, fmt.Errorf("kubectl logs: %w", err)
 	}
-	return parseProbeLines(string(out)), nil
-}
-
-// jsonStringList renders ["a","b"] for embedding into the YAML's
-// args field — kubectl applies as a JSON list inside YAML.
-func jsonStringList(items []string) string {
-	var b strings.Builder
-	b.WriteByte('[')
-	for i, s := range items {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(strings.ReplaceAll(s, `"`, `\"`))
-		b.WriteByte('"')
-	}
-	b.WriteByte(']')
-	return b.String()
-}
-
-func parseProbeLines(s string) []shared.ProbeLine {
-	var out []shared.ProbeLine
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "OK "):
-			rest := strings.TrimPrefix(line, "OK ")
-			scen, detail, _ := strings.Cut(rest, " ")
-			out = append(out, shared.ProbeLine{OK: true, Scenario: scen, Detail: detail})
-		case strings.HasPrefix(line, "FAIL "):
-			rest := strings.TrimPrefix(line, "FAIL ")
-			scen, detail, _ := strings.Cut(rest, " ")
-			out = append(out, shared.ProbeLine{OK: false, Scenario: scen, Detail: detail})
-		}
-	}
-	return out
+	return shared.ParseProbeLines(string(out)), nil
 }
 
 // ----------------------------- helpers -----------------------------

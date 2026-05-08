@@ -88,41 +88,29 @@ e2e-l0: ## fullstack-e2e L0 ring (docker-compose, ~1 min)
 e2e-l1: ## fullstack-e2e L1 ring (kind on Linux, ~5 min)
 	$(GO) test -tags=e2e_l1 -timeout 15m ./test/e2e/fullstack/l1/...
 
-.PHONY: e2e-l2
-e2e-l2: ## fullstack-e2e L2 ring (AWS Spot bare-metal, 12 min, USD 0.22/run)
+# All L2 targets must run against us-east-2 under the stigen
+# sandbox profile — the IAM role, sweeper Lambda, and budget
+# alarm only exist there.
+.PHONY: _check-l2-aws
+_check-l2-aws:
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	@: $${AWS_REGION:?must be set, expected us-east-2}
 	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
 		echo "AWS_REGION must be us-east-2; got $(AWS_REGION)" >&2; exit 1; \
 	fi
+
+.PHONY: e2e-l2
+e2e-l2: _check-l2-aws ## fullstack-e2e L2 ring (AWS Spot bare-metal, 12 min, USD 0.22/run)
 	$(GO) test -tags=e2e_l2 -timeout 30m -run TestL2$$ ./test/e2e/fullstack/l2/...
 
-# e2e-l2-smoke: cheap (~$0.10) Provision+sentinel+Teardown, no
-# scenarios. Run on every PR touching scripts/aws-l2/cloud-init.* to
-# catch drift without paying the full 12-minute scenario-suite tax.
 .PHONY: e2e-l2-smoke
-e2e-l2-smoke: ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run)
-	@: $${AWS_PROFILE:?must be set, expected stigen}
-	@: $${AWS_REGION:?must be set, expected us-east-2}
-	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
-		echo "AWS_REGION must be us-east-2; got $(AWS_REGION)" >&2; exit 1; \
-	fi
+e2e-l2-smoke: _check-l2-aws ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run)
 	$(GO) test -tags=e2e_l2 -timeout 15m -run TestL2_Smoke ./test/e2e/fullstack/l2/...
 
-# e2e-clean-aws: manual escape hatch — terminate every L2 instance
-# tagged knative-agents-e2e in us-east-2 stigen account. Used when
-# the sweeper Lambda or budget alarm both failed (R-E2E-VRF-3).
 .PHONY: e2e-clean-aws
 e2e-clean-aws: ## terminate every stranded knative-agents-e2e instance
 	@: $${AWS_PROFILE:?must be set, expected stigen}
 	bash scripts/aws-l2/sweep.sh
-
-# L2 bundle: produce the manifest tarball + push images to ECR that
-# the cloud-init template pulls from at instance-start. The L2
-# driver populates these env vars before invoking; standalone runs
-# can also use them. Tag defaults to short git SHA.
-#
-# Implements T-4.2 (manifest bundle) + T-4.3 (image push).
 
 L2_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 

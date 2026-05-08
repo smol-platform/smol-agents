@@ -6,8 +6,6 @@
 #   L2_ECR_REGISTRY=123.dkr.ecr.us-east-2.amazonaws.com \
 #   AWS_PROFILE=stigen \
 #     scripts/aws-l2/build-images.sh <tag>
-#
-# Implements T-4.3.
 set -euo pipefail
 
 TAG=${1:?usage: $0 <tag>}

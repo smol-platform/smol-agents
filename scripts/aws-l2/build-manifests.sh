@@ -8,8 +8,6 @@
 #     scripts/aws-l2/build-manifests.sh <tag>
 #
 # Outputs s3://${L2_ARTIFACT_BUCKET}/manifests-${tag}.tar.gz
-#
-# Implements T-4.2.
 set -euo pipefail
 
 TAG=${1:?usage: $0 <tag>}

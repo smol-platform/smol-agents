@@ -5,6 +5,7 @@ package l2
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -21,23 +22,12 @@ import (
 // returns a fresh CommandId; the same id then resolves through
 // GetCommandInvocation according to invocations[id]. Callers append
 // invocation outcomes via queue() before triggering Apply/Exec.
-//
-// Reads/writes are guarded so the runSSM polling goroutine is safe.
 type fakeSSM struct {
-	mu sync.Mutex
-
-	// commands captures every SendCommand input in order, so tests
-	// can assert exact shell payloads.
-	commands []*ssm.SendCommandInput
-
-	// nextID is the id returned by the next SendCommand. Starts at 1.
-	nextID int
-
-	// invocations is keyed by CommandId; pop() returns the next one.
+	mu          sync.Mutex
+	commands    []*ssm.SendCommandInput
+	nextID      int
 	invocations map[string][]*ssm.GetCommandInvocationOutput
-
-	// sendErr forces SendCommand to fail when non-nil.
-	sendErr error
+	sendErr     error
 }
 
 func newFakeSSM() *fakeSSM {
@@ -52,24 +42,23 @@ func (f *fakeSSM) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...
 	}
 	f.commands = append(f.commands, in)
 	f.nextID++
-	id := commandIDFor(f.nextID)
+	id := fmt.Sprintf("cmd-%d", f.nextID)
 	return &ssm.SendCommandOutput{Command: &ssmtypes.Command{CommandId: aws.String(id)}}, nil
 }
 
 func (f *fakeSSM) GetCommandInvocation(_ context.Context, in *ssm.GetCommandInvocationInput, _ ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	id := aws.ToString(in.CommandId)
-	queue := f.invocations[id]
+	queue := f.invocations[aws.ToString(in.CommandId)]
 	if len(queue) == 0 {
-		// Default: report Success with empty stdout so tests that
-		// don't care about the polling-loop transitions still work.
+		// Default Success keeps tests that don't enumerate the
+		// poll loop concise.
 		return &ssm.GetCommandInvocationOutput{
 			Status: ssmtypes.CommandInvocationStatusSuccess,
 		}, nil
 	}
 	out := queue[0]
-	f.invocations[id] = queue[1:]
+	f.invocations[aws.ToString(in.CommandId)] = queue[1:]
 	return out, nil
 }
 
@@ -78,26 +67,8 @@ func (f *fakeSSM) GetCommandInvocation(_ context.Context, in *ssm.GetCommandInvo
 func (f *fakeSSM) queue(outcomes ...*ssm.GetCommandInvocationOutput) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	id := commandIDFor(f.nextID + 1)
+	id := fmt.Sprintf("cmd-%d", f.nextID+1)
 	f.invocations[id] = append(f.invocations[id], outcomes...)
-}
-
-func commandIDFor(n int) string {
-	return strings.Repeat("0", 7) + "-fake-" + strings.Repeat("a", 4) + "-" +
-		strings.Repeat("b", 4) + "-" + strings.Repeat("c", 4) + "-cmd" +
-		strings.Repeat("0", 8) + "-" + intToStr(n)
-}
-
-func intToStr(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var out []byte
-	for n > 0 {
-		out = append([]byte{byte('0' + n%10)}, out...)
-		n /= 10
-	}
-	return string(out)
 }
 
 func successOut(stdout string) *ssm.GetCommandInvocationOutput {
@@ -115,9 +86,9 @@ func failedOut(stderr string) *ssm.GetCommandInvocationOutput {
 	}
 }
 
-func newTestEnv(f *fakeSSM) *l2Env { return &l2Env{ssm: f} }
-
-// ----------------------------- tests ------------------------------
+func newTestEnv(f *fakeSSM) *l2Env {
+	return &l2Env{ssm: f, instanceID: "i-test"}
+}
 
 func TestEnv_Apply_PipesManifestThroughKubectlApply(t *testing.T) {
 	f := newFakeSSM()
@@ -143,8 +114,8 @@ func TestEnv_Apply_PipesManifestThroughKubectlApply(t *testing.T) {
 			t.Errorf("Apply payload missing %q\nfull payload:\n%s", want, cmd)
 		}
 	}
-	if got := aws.ToString(f.commands[0].DocumentName); got != "AWS-RunShellScript" {
-		t.Errorf("DocumentName: got %q want AWS-RunShellScript", got)
+	if got := aws.ToString(f.commands[0].DocumentName); got != ssmDocRunShell {
+		t.Errorf("DocumentName: got %q want %q", got, ssmDocRunShell)
 	}
 }
 
@@ -206,8 +177,8 @@ func TestEnv_Exec_KubectlExecWithPodAndContainer(t *testing.T) {
 
 func TestEnv_RunSSM_PollsUntilTerminal(t *testing.T) {
 	f := newFakeSSM()
-	// First poll = InProgress, second = Success. The runSSM loop
-	// must keep polling until it sees a terminal status.
+	// First poll = InProgress, second = Success: runSSM must keep
+	// polling until it sees a terminal status.
 	f.queue(
 		&ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatusInProgress},
 		&ssm.GetCommandInvocationOutput{
@@ -236,8 +207,3 @@ func TestEnv_RunSSM_SurfacesSendCommandError(t *testing.T) {
 		t.Errorf("want SendCommand-wrapped error, got %v", err)
 	}
 }
-
-// Compile-time check: *ssm.Client satisfies our subset interface.
-// (If AWS SDK changes its signature this test won't compile, which
-// is the failure mode we want — better than a runtime panic.)
-var _ ssmAPI = (*ssm.Client)(nil)

@@ -79,30 +79,33 @@ func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 	t.Logf("L2 cluster up: instance=%s public_dns=%s run_id=%s",
 		cluster.InstanceID, cluster.PublicDNS, cluster.RunID)
 
-	// Wait for the cloud-init health gate. Sentinel is binary:
-	//   /var/log/l2-bootstrap.READY  → cluster ready, scenarios can run
-	//   /var/log/l2-bootstrap.FAILED → bootstrap aborted, fetch the log
-	// We poll for either; if FAILED appears we abort early instead
-	// of waiting out the 8-minute deadline.
-	env = &l2Env{cluster: cluster}
+	// Wait for either sentinel. Capturing which one fired in the
+	// closure avoids a second SSM round-trip after WaitFor returns.
+	env = &l2Env{ssm: cluster.ssmc, instanceID: cluster.InstanceID}
+	var observed string
 	err = env.WaitFor(ctx, "l2-bootstrap.{READY,FAILED}", 8*time.Minute,
 		func(ctx context.Context) bool {
 			out, err := env.runSSM(ctx,
-				"test -f /var/log/l2-bootstrap.READY  && echo READY ; "+
-					"test -f /var/log/l2-bootstrap.FAILED && echo FAILED ; true",
+				"test -f "+sentinelREADY+"  && echo READY ; "+
+					"test -f "+sentinelFAILED+" && echo FAILED ; true",
 				15*time.Second)
-			return err == nil &&
-				(bytes.Contains(out, []byte("READY")) ||
-					bytes.Contains(out, []byte("FAILED")))
+			if err != nil {
+				return false
+			}
+			switch {
+			case bytes.Contains(out, []byte("FAILED")):
+				observed = "FAILED"
+			case bytes.Contains(out, []byte("READY")):
+				observed = "READY"
+			}
+			return observed != ""
 		})
 	if err != nil {
 		t.Fatalf("bootstrap sentinel never appeared: %v", err)
 		return nil, false
 	}
-	failed, _ := env.runSSM(ctx, "test -f /var/log/l2-bootstrap.FAILED && echo yes",
-		15*time.Second)
-	if bytes.Contains(failed, []byte("yes")) {
-		log, _ := env.runSSM(ctx, "cat /var/log/l2-bootstrap.log 2>/dev/null || true",
+	if observed == "FAILED" {
+		log, _ := env.runSSM(ctx, "cat "+bootstrapLog+" 2>/dev/null || true",
 			30*time.Second)
 		t.Fatalf("bootstrap reported FAILED; log:\n%s", log)
 		return nil, false
