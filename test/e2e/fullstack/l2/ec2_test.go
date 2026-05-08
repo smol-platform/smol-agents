@@ -51,8 +51,8 @@ func TestL2_RegionGate(t *testing.T) {
 // missing and t.Fatal when the bootstrap reports FAILED.
 func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 	t.Helper()
-	if os.Getenv("AWS_PROFILE") != "stigen" {
-		t.Skip("AWS_PROFILE != stigen; skipping L2 (set AWS_PROFILE=stigen to run)")
+	if os.Getenv("AWS_PROFILE") == "" {
+		t.Skip("AWS_PROFILE unset; skipping L2 (set AWS_PROFILE to a sandbox account to run)")
 		return nil, false
 	}
 	if err := ensureRegion(); err != nil {
@@ -69,6 +69,12 @@ func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 		return nil, false
 	}
 	t.Cleanup(func() {
+		if os.Getenv("L2_KEEP_INSTANCE") != "" {
+			t.Logf("L2_KEEP_INSTANCE set; leaving %s alive for debugging — "+
+				"sweeper Lambda will reclaim it within 1h or run "+
+				"`make e2e-clean-aws`", cluster.InstanceID)
+			return
+		}
 		shutdown, c := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer c()
 		if err := cluster.Teardown(shutdown); err != nil {

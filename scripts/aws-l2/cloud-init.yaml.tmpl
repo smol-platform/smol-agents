@@ -47,13 +47,10 @@ write_files:
       apiVersion: k0s.k0sproject.io/v1beta1
       kind: ClusterConfig
       spec:
-        api:
-          address: 0.0.0.0
         network:
           provider: kuberouter
-        controllerManager:
-          extraArgs:
-            bind-address: "0.0.0.0"
+        # k0s rejects address: 0.0.0.0 ("invalid INADDR_ANY") — leave
+        # api.address unset so k0s picks the first non-loopback IP.
 
   # Spot-interruption handler — uploads logs before AWS reclaims.
   - path: /usr/local/bin/spot-interruption-watch.sh
@@ -107,23 +104,80 @@ runcmd:
   - systemctl enable --now containerd
 
   # 4. Install k0s + bring up the single-node controller.
+  #    `k0s install controller` registers the k0scontroller systemd
+  #    unit; bringing it up is `systemctl start k0scontroller`,
+  #    *not* `k0s start` (which isn't a real subcommand). Wait up
+  #    to 5 min — first boot has to extract etcd + kube-apiserver
+  #    binaries and generate the PKI.
   - curl -sSf https://get.k0s.sh | sh
   - k0s install controller --single -c /etc/k0s/k0s.yaml
-  - k0s start
-  - timeout 120 sh -c 'until k0s status >/dev/null 2>&1; do sleep 2; done'
+  - systemctl start k0scontroller
+  - timeout 300 sh -c 'until k0s status >/dev/null 2>&1; do sleep 5; done'
+  - timeout 120 sh -c 'until [ -f /var/lib/k0s/pki/admin.conf ]; do sleep 2; done'
 
-  # 5. Pull manifest tarball + image bundle from S3.
-  - mkdir -p /var/lib/k0s/manifests/{spire,operator,samples} /tmp/images
-  - aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz - --region us-east-2 \
-      | tar -xz -C /var/lib/k0s/manifests/
-
-  # 6. Pull images: ECR login, then `k0s ctr image pull` for each.
+  # 5. Wire ECR auth into k0s containerd BEFORE the manifest
+  #    watcher fires — kubelet's pull backoff persists across
+  #    config reloads, so a missed pull can take minutes to recover.
+  #    K0s's containerd starts with config_path="", so we override
+  #    via /etc/k0s/containerd.d/ (any *.toml here is auto-imported).
   - |
-    aws ecr get-login-password --region us-east-2 \
-      | k0s ctr image login --user AWS --password-stdin {{ .ECRRegistry }}
-    for img in operator agent ebpf-loader secret-proxy fake-llm fake-gateway; do
-      k0s ctr image pull {{ .ECRRegistry }}/knative-agents/$img:{{ .ImageTag }}
+    for i in 1 2 3 4 5; do
+      if aws sts get-caller-identity --region us-east-2 >/dev/null 2>&1; then
+        break
+      fi
+      echo "waiting for IMDS credentials ($i/5)"
+      sleep 5
     done
+  - |
+    setup_ecr_auth() {
+      local pw=$(aws ecr get-login-password --region us-east-2)
+      local auth=$(printf 'AWS:%s' "$pw" | base64 -w0)
+      mkdir -p /etc/k0s/containerd.d /etc/containerd/certs.d/{{ .ECRRegistry }}
+      cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+    TOML
+      cat >/etc/containerd/certs.d/{{ .ECRRegistry }}/hosts.toml <<TOML
+    server = "https://{{ .ECRRegistry }}"
+    [host."https://{{ .ECRRegistry }}"]
+      capabilities = ["pull", "resolve"]
+      [host."https://{{ .ECRRegistry }}".header]
+        authorization = "Basic $auth"
+    TOML
+      systemctl restart k0scontroller
+      timeout 180 sh -c 'until k0s kubectl get ns >/dev/null 2>&1; do sleep 3; done'
+    }
+    setup_ecr_auth
+
+  # 5b. Pull manifest tarball from S3.
+  - mkdir -p /var/lib/k0s/manifests/{spire,operator,samples} /tmp/images
+  - |
+    # NOTE: every runcmd entry runs in the same shell; an `exit`
+    # inside one terminates the whole bootstrap. Use a function
+    # whose final `return` falls through to the next runcmd item.
+    download_manifests() {
+      for i in 1 2 3; do
+        if aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz \
+             /tmp/manifests.tar.gz --region us-east-2; then
+          tar -xzf /tmp/manifests.tar.gz -C /var/lib/k0s/manifests/
+          chown -R root:root /var/lib/k0s/manifests/{spire,operator,samples}
+          # Strip macOS AppleDouble files; if any leak through the
+          # build script, k0s rejects the whole dir.
+          find /var/lib/k0s/manifests/{spire,operator,samples} \
+            -name '._*' -delete 2>/dev/null || true
+          rm /tmp/manifests.tar.gz
+          return 0
+        fi
+        echo "manifest tarball download failed, retry $i/3"
+        sleep 5
+      done
+      echo "MANIFEST DOWNLOAD FAILED after 3 retries" >&2
+      return 1
+    }
+    download_manifests
+
+  # Pre-pull is skipped (k0s ctr doesn't honor hosts.toml; kubelet
+  # will pull on-demand once auth is wired in below).
 
   # 7. Start spot-interruption watcher (Spot reclaim signal listener).
   - systemctl enable --now spot-interruption-watch
@@ -131,7 +185,7 @@ runcmd:
   # 8. Install cert-manager (the operator's webhook requires Issuer
   #    + Certificate CRDs from cert-manager). Pinned 1.16.x to match
   #    the L1 ring's overlay. Drop into the manifest watcher dir so
-  #    k0s applies it alongside spire/operator/samples.
+  #    k0s applies it alongside spire-system/operator/samples.
   - mkdir -p /var/lib/k0s/manifests/cert-manager
   - |
     curl -sSL \
@@ -146,21 +200,60 @@ runcmd:
   - |
     set +e
     log=/var/log/l2-bootstrap.log
-    fail() { echo "BOOTSTRAP FAILED: $*" >>"$log"; touch /var/log/l2-bootstrap.FAILED; exit 0; }
+    fail() {
+      echo "BOOTSTRAP FAILED: $*" >>"$log"
+      touch /var/log/l2-bootstrap.FAILED
+      # Upload cloud-init + k0s logs to S3 so the test driver can
+      # surface them after teardown (no need to keep the instance
+      # alive for post-mortem).
+      tar -czf /tmp/bootstrap-fail-{{ .RunID }}.tgz \
+        /var/log/cloud-init-output.log \
+        /var/log/cloud-init.log \
+        /var/log/l2-bootstrap.log \
+        /var/log/syslog 2>/dev/null
+      aws s3 cp /tmp/bootstrap-fail-{{ .RunID }}.tgz \
+        s3://{{ .ArtifactBucket }}/bootstrap-fail/{{ .RunID }}.tgz \
+        --region us-east-2 || true
+      exit 0
+    }
     KCTL="k0s kubectl"
+
+    # wait_resource <kind> <namespace> <selector-or-name> <timeout-s>
+    # Polls until at least one matching resource exists, then returns 0.
+    # Without this, kubectl wait races against the manifest watcher and
+    # exits immediately with "no matching resources found".
+    wait_resource() {
+      local kind=$1 ns=$2 sel=$3 timeout=${4:-180}
+      local end=$(( $(date +%s) + timeout ))
+      while [ $(date +%s) -lt $end ]; do
+        n=$($KCTL -n "$ns" get "$kind" $sel -o name 2>/dev/null | wc -l)
+        if [ "$n" -gt 0 ]; then return 0; fi
+        sleep 3
+      done
+      return 1
+    }
+
     {
       echo "=== bootstrap health gate $(date -u) ==="
+      wait_resource deployment cert-manager "" 180 || fail "cert-manager not appearing"
       $KCTL wait --for=condition=Available --timeout=180s \
         deployment -n cert-manager --all || fail "cert-manager deploys"
+
+      wait_resource pod spire-system "-l app=spire-server" 180 || fail "spire-server not appearing"
       $KCTL wait --for=condition=Ready --timeout=180s \
-        pod -n spire -l app=spire-server || fail "spire-server pod"
+        pod -n spire-system -l app=spire-server || fail "spire-server pod"
+
+      wait_resource pod spire-system "-l app=spire-agent" 180 || fail "spire-agent not appearing"
       $KCTL wait --for=condition=Ready --timeout=180s \
-        pod -n spire -l app=spire-agent || fail "spire-agent pods"
+        pod -n spire-system -l app=spire-agent || fail "spire-agent pods"
+
+      wait_resource deployment knative-agents-system "" 180 || fail "operator not appearing"
       $KCTL wait --for=condition=Available --timeout=180s \
         deployment -n knative-agents-system --all || fail "operator deploy"
+
       $KCTL wait --for=condition=Established --timeout=60s \
         crd/knativeagents.agents.stigen.ai \
-        crd/agentnetworks.runtime-agents.stigen.ai \
-        crd/agentruns.runtime-agents.stigen.ai || fail "CRDs established"
+        crd/agentnetworks.runtime.agents.stigen.ai \
+        crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
     } >>"$log" 2>&1
     touch /var/log/l2-bootstrap.READY

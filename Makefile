@@ -93,7 +93,7 @@ e2e-l1: ## fullstack-e2e L1 ring (kind on Linux, ~5 min)
 # alarm only exist there.
 .PHONY: _check-l2-aws
 _check-l2-aws:
-	@: $${AWS_PROFILE:?must be set, expected stigen}
+	@: $${AWS_PROFILE:?must be set to a sandbox AWS profile}
 	@: $${AWS_REGION:?must be set, expected us-east-2}
 	@if [ "$(AWS_REGION)" != "us-east-2" ]; then \
 		echo "AWS_REGION must be us-east-2; got $(AWS_REGION)" >&2; exit 1; \
@@ -109,7 +109,7 @@ e2e-l2-smoke: _check-l2-aws ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run
 
 .PHONY: e2e-clean-aws
 e2e-clean-aws: ## terminate every stranded knative-agents-e2e instance
-	@: $${AWS_PROFILE:?must be set, expected stigen}
+	@: $${AWS_PROFILE:?must be set to a sandbox AWS profile}
 	bash scripts/aws-l2/sweep.sh
 
 L2_IMAGE_TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
@@ -120,13 +120,13 @@ l2-bundle: l2-manifests l2-images ## build + upload manifest tarball + ECR image
 .PHONY: l2-manifests
 l2-manifests: ## kustomize-render manifests, upload tarball to S3
 	@: $${L2_ARTIFACT_BUCKET:?must be set (S3 bucket from terraform output)}
-	@: $${AWS_PROFILE:?must be set, expected stigen}
+	@: $${AWS_PROFILE:?must be set to a sandbox AWS profile}
 	bash scripts/aws-l2/build-manifests.sh $(L2_IMAGE_TAG)
 
 .PHONY: l2-images
 l2-images: ## build linux/arm64 images, push to ECR
 	@: $${L2_ECR_REGISTRY:?must be set (e.g. 123.dkr.ecr.us-east-2.amazonaws.com)}
-	@: $${AWS_PROFILE:?must be set, expected stigen}
+	@: $${AWS_PROFILE:?must be set to a sandbox AWS profile}
 	bash scripts/aws-l2/build-images.sh $(L2_IMAGE_TAG)
 
 .PHONY: verify-formal

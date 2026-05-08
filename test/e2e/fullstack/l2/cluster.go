@@ -95,10 +95,11 @@ func Provision(ctx context.Context) (*Cluster, error) {
 	}
 
 	out, err := ec2c.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:      aws.String(imageID),
-		InstanceType: types.InstanceTypeC6gdMetal,
-		MinCount:     aws.Int32(1),
-		MaxCount:     aws.Int32(1),
+		ImageId: aws.String(imageID),
+		InstanceType: types.InstanceType(
+			envOrDefault("L2_INSTANCE_TYPE", string(types.InstanceTypeC6gdMetal))),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
 		InstanceMarketOptions: &types.InstanceMarketOptionsRequest{
 			MarketType: types.MarketTypeSpot,
 		},

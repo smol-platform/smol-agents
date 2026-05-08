@@ -63,6 +63,14 @@ resource "aws_ecr_repository" "fake_gateway" {
   image_tag_mutability = "MUTABLE"
 }
 
+# spire-shell is the bootstrap sidecar image used by spire-server
+# to register workload entries. Built from
+# scripts/e2e/spire/Dockerfile.spire-shell.
+resource "aws_ecr_repository" "spire_shell" {
+  name                 = "knative-agents/spire-shell"
+  image_tag_mutability = "MUTABLE"
+}
+
 resource "aws_ecr_lifecycle_policy" "trim" {
   for_each = toset([
     aws_ecr_repository.operator.name,
@@ -71,6 +79,7 @@ resource "aws_ecr_lifecycle_policy" "trim" {
     aws_ecr_repository.secret_proxy.name,
     aws_ecr_repository.fake_llm.name,
     aws_ecr_repository.fake_gateway.name,
+    aws_ecr_repository.spire_shell.name,
   ])
   repository = each.value
   policy = jsonencode({

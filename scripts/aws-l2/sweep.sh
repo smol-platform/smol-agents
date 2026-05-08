@@ -7,7 +7,7 @@
 # Satisfies R-E2E-VRF-3.
 set -euo pipefail
 
-PROFILE=${AWS_PROFILE:-stigen}
+PROFILE=${AWS_PROFILE:?AWS_PROFILE required}
 REGION=${AWS_REGION:-us-east-2}
 
 if [[ "$REGION" != "us-east-2" ]]; then

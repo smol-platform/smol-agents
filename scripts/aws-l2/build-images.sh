@@ -29,12 +29,13 @@ aws --profile "$PROFILE" --region "$REGION" ecr get-login-password \
 
 # Each entry: image-name dockerfile build-context
 images=(
-  "operator     deploy/docker/operator.Dockerfile     ."
-  "agent        deploy/docker/agent.Dockerfile        ."
-  "ebpf-loader  deploy/docker/ebpf-loader.Dockerfile  ."
-  "secret-proxy deploy/docker/secret-proxy.Dockerfile ."
-  "fake-llm     deploy/docker/fake-llm.Dockerfile     ."
-  "fake-gateway deploy/docker/fake-gateway.Dockerfile ."
+  "operator     deploy/docker/operator.Dockerfile        ."
+  "agent        deploy/docker/agent.Dockerfile           ."
+  "ebpf-loader  deploy/docker/ebpf-loader.Dockerfile     ."
+  "secret-proxy deploy/docker/secret-proxy.Dockerfile    ."
+  "fake-llm     deploy/docker/fake-llm.Dockerfile        ."
+  "fake-gateway deploy/docker/fake-gateway.Dockerfile    ."
+  "spire-shell  scripts/e2e/spire/Dockerfile.spire-shell scripts/e2e/spire"
 )
 
 for entry in "${images[@]}"; do
@@ -42,8 +43,14 @@ for entry in "${images[@]}"; do
   full=$REGISTRY/knative-agents/$name:$TAG
 
   step "build + push $name → $full"
+  # --build-arg TARGETARCH=arm64 overrides Dockerfiles whose ARG
+  # has a default of amd64; without this, the binary inside the
+  # arm64-tagged image is still x86 and fails with `exec format
+  # error` on bare-metal Graviton.
   docker buildx build \
     --platform linux/arm64 \
+    --build-arg TARGETOS=linux \
+    --build-arg TARGETARCH=arm64 \
     --file "$dockerfile" \
     --tag  "$full" \
     --push \

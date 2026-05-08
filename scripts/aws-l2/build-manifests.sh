@@ -32,13 +32,34 @@ step "render manifests for tag=$TAG"
 # applies. We render kustomize bases into flat YAML files.
 mkdir -p "$WORK/spire" "$WORK/operator" "$WORK/samples"
 
-# 1. SPIRE (server + agent + RBAC + bootstrap sidecar).
+# 1. SPIRE (server + agent + RBAC).
 kustomize build "$ROOT/test/e2e/manifests/spire" > "$WORK/spire/00-spire.yaml"
+
+# Strip the spire-server StatefulSet's `bootstrap` sidecar at L2.
+# The sidecar registers workload entries via spire-server's UDS;
+# scenarios that need entries register them at runtime instead.
+# Keeping the sidecar would force kubelet to pull spire-shell from
+# ECR before spire-server is Ready, which races against ECR auth
+# setup. Drop it for L2 — smoke just needs spire-server live.
+yq -i '
+  select(.kind == "StatefulSet" and .metadata.name == "spire-server").spec.template.spec.containers
+    |= map(select(.name != "bootstrap"))
+' "$WORK/spire/00-spire.yaml"
 
 # 2. Operator (CRDs + RBAC + manager + webhook).
 #    Use the kind-webhook overlay so the L2 cluster gets the full
 #    webhook surface — same fidelity as the L1 ring.
 kustomize build "$ROOT/operator/config/kind-webhook" > "$WORK/operator/00-operator.yaml"
+
+# Rewrite the operator image reference: kind uses
+# `knative-agents/operator:0.1.0` (loaded via `kind load`); L2 pulls
+# from ECR. Empty L2_ECR_REGISTRY leaves the dev tag intact.
+if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
+  sed -i.bak \
+    -e "s|knative-agents/operator:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/operator:${TAG}|g" \
+    "$WORK/operator/00-operator.yaml"
+  rm "$WORK/operator/00-operator.yaml.bak"
+fi
 
 # 3. Sample CRs (Platform + KnativeAgent + ModelProvider + Tool +
 #    Agent + AgentRun + AgentNetwork). The Platform CR must apply
@@ -52,7 +73,12 @@ cp "$ROOT/operator/config/samples/agentnetwork_wg_client.yaml" "$WORK/samples/31
 
 step "package as tarball"
 TARBALL=$WORK/manifests-$TAG.tar.gz
-tar -czf "$TARBALL" -C "$WORK" spire operator samples
+# COPYFILE_DISABLE=1 + --no-xattrs strips macOS AppleDouble (._*)
+# files; if any leak in, k0s manifest watcher rejects the whole
+# directory ("error converting YAML to JSON: yaml: control
+# characters are not allowed").
+COPYFILE_DISABLE=1 tar --no-xattrs --exclude='._*' \
+  -czf "$TARBALL" -C "$WORK" spire operator samples
 ls -lh "$TARBALL"
 
 step "upload to s3://$BUCKET/manifests-$TAG.tar.gz"

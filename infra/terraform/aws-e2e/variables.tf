@@ -1,11 +1,6 @@
 variable "aws_profile" {
-  description = "AWS CLI profile to use; pinned to 'stigen' per memory/aws_e2e_account.md."
+  description = "AWS CLI profile name pointing at the sandbox account; required."
   type        = string
-  default     = "stigen"
-  validation {
-    condition     = var.aws_profile == "stigen"
-    error_message = "Only the stigen sandbox account is supported; other profiles are blocked at the variable level."
-  }
 }
 
 variable "region" {
@@ -43,5 +38,25 @@ variable "instance_type" {
   validation {
     condition     = var.instance_type == "c6gd.metal"
     error_message = "Only c6gd.metal is supported (cheapest bare-metal with Graviton arm64)."
+  }
+}
+
+# Bring-your-own-VPC: when set, the module reuses an existing VPC +
+# public subnet instead of creating its own. Useful when the
+# sandbox's IGW quota is already saturated, or when sharing
+# networking with other workloads. Both must be set together.
+variable "vpc_id" {
+  description = "Existing VPC ID to reuse. Empty means create a new VPC + IGW + subnet."
+  type        = string
+  default     = ""
+}
+
+variable "subnet_id" {
+  description = "Existing public subnet ID inside vpc_id. Required when vpc_id is set."
+  type        = string
+  default     = ""
+  validation {
+    condition     = (var.subnet_id == "") == (var.vpc_id == "")
+    error_message = "vpc_id and subnet_id must both be set or both empty."
   }
 }
