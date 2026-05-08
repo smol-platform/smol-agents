@@ -34,6 +34,15 @@ output "ecr_repos" {
   }
 }
 
+# ecr_registry is the hostname-only form (e.g.
+# `123456789.dkr.ecr.us-east-2.amazonaws.com`) that the L2 image
+# build script + cloud-init template both want — they prepend
+# `/knative-agents/<image>:<tag>` themselves. Derived by stripping
+# the path off any one repo URL.
+output "ecr_registry" {
+  value = split("/", aws_ecr_repository.operator.repository_url)[0]
+}
+
 output "sweeper_lambda" {
   value = aws_lambda_function.sweeper.function_name
 }
