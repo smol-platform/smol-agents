@@ -21,4 +21,10 @@
 # in a bootstrap-container.
 
 [settings.host-containers.admin]
+# Set true (and provide an SSH key via separate user-data, or use
+# the SSM session-manager) to debug bootstrap failures via:
+#   apiclient exec admin journalctl \
+#     -D /.bottlerocket/rootfs/var/log/journal/ \
+#     -u bootstrap-containers@<name>.service
+# See scripts/aws-l2/bottlerocket-bootstrap/README.md.
 enabled = false
