@@ -28,10 +28,11 @@ import (
 type Distro string
 
 const (
-	DistroAL2023       Distro = "al2023"
-	DistroUbuntu       Distro = "ubuntu"
-	DistroBottlerocket Distro = "bottlerocket"
-	DistroFlatcar      Distro = "flatcar"
+	DistroAL2023             Distro = "al2023"
+	DistroUbuntu             Distro = "ubuntu"
+	DistroBottlerocket       Distro = "bottlerocket"
+	DistroFlatcar            Distro = "flatcar"
+	DistroBottlerocketWorker Distro = "bottlerocket-worker"
 )
 
 // ResolveDistro reads L2_DISTRO from the environment; default
@@ -40,7 +41,7 @@ const (
 func ResolveDistro() Distro {
 	d := strings.ToLower(strings.TrimSpace(os.Getenv("L2_DISTRO")))
 	switch Distro(d) {
-	case DistroUbuntu, DistroBottlerocket, DistroFlatcar:
+	case DistroUbuntu, DistroBottlerocket, DistroFlatcar, DistroBottlerocketWorker:
 		return Distro(d)
 	default:
 		return DistroAL2023
@@ -63,6 +64,12 @@ func (d Distro) AMI(ctx context.Context, ec2c *ec2.Client, ssmc *ssm.Client) (st
 		// container (k8s variant would need an EKS cluster to join).
 		return ssmAMI(ctx, ssmc,
 			"/aws/service/bottlerocket/aws-ecs-1/arm64/latest/image_id")
+	case DistroBottlerocketWorker:
+		// kubelet-on-host variant. Joins an external k0s control
+		// plane via [settings.kubernetes] in user-data — see
+		// scripts/aws-l2/bottlerocket-worker.toml.tmpl.
+		return ssmAMI(ctx, ssmc,
+			"/aws/service/bottlerocket/aws-k8s-1.31/arm64/latest/image_id")
 	case DistroUbuntu:
 		return findAMI(ctx, ec2c, "099720109477", // Canonical
 			"ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*")
@@ -152,6 +159,8 @@ func (d Distro) userDataFilename() string {
 		return "cloud-init-ubuntu.yaml.tmpl"
 	case DistroBottlerocket:
 		return "bottlerocket-userdata.toml.tmpl"
+	case DistroBottlerocketWorker:
+		return "bottlerocket-worker.toml.tmpl"
 	case DistroFlatcar:
 		return "flatcar.bu.tmpl"
 	}

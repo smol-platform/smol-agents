@@ -69,6 +69,9 @@ func Provision(ctx context.Context) (*Cluster, error) {
 
 	runID := randHex(6)
 	distro := ResolveDistro()
+	if d := os.Getenv("L2_DISTRO_OVERRIDE"); d != "" {
+		distro = Distro(d)
+	}
 
 	imageID, err := distro.AMI(ctx, ec2c, ssmc)
 	if err != nil {
@@ -76,11 +79,15 @@ func Provision(ctx context.Context) (*Cluster, error) {
 	}
 
 	userData, err := renderCloudInit(userDataInputs{
-		ArtifactBucket: os.Getenv("L2_ARTIFACT_BUCKET"),
-		ECRRegistry:    os.Getenv("L2_ECR_REGISTRY"),
-		ImageTag:       envOrDefault("L2_IMAGE_TAG", "dev"),
-		RunID:          runID,
-		Distro:         distro,
+		ArtifactBucket:  os.Getenv("L2_ARTIFACT_BUCKET"),
+		ECRRegistry:     os.Getenv("L2_ECR_REGISTRY"),
+		ImageTag:        envOrDefault("L2_IMAGE_TAG", "dev"),
+		RunID:           runID,
+		Distro:          distro,
+		APIServer:       os.Getenv("L2_K8S_API_SERVER"),
+		ClusterCABase64: os.Getenv("L2_K8S_CA_BASE64"),
+		BootstrapToken:  os.Getenv("L2_K8S_BOOTSTRAP_TOKEN"),
+		ClusterName:     envOrDefault("L2_K8S_CLUSTER_NAME", "knative-agents-l2"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render user-data (%s): %w", distro, err)
@@ -271,6 +278,14 @@ type userDataInputs struct {
 	// sources. Computed by Distro.UserData() for DistroBottlerocket;
 	// other distros leave it empty.
 	BottlerocketBootstrapUserData string
+
+	// Bottlerocket-worker join params: populated by the test
+	// driver from a live controller before provisioning the
+	// worker.
+	APIServer       string
+	ClusterCABase64 string
+	BootstrapToken  string
+	ClusterName     string
 }
 
 // renderCloudInit dispatches to the per-distro user-data renderer.

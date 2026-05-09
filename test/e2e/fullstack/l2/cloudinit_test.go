@@ -67,7 +67,12 @@ func TestRenderUserData_PerDistro(t *testing.T) {
 		DistroAL2023:       {"#cloud-config", "test-bucket", "containerd", "k0s install controller"},
 		DistroUbuntu:       {"#cloud-config", "test-bucket", "package_update", "k0s install controller"},
 		DistroBottlerocket: {"settings.host-containers.admin", "enabled = false"},
-		DistroFlatcar:      {`"ignition"`, "amazon-ssm-agent.service", "l2-bootstrap.service"},
+		DistroBottlerocketWorker: {
+			"settings.kubernetes",
+			"api-server",
+			"bootstrap-token",
+		},
+		DistroFlatcar: {`"ignition"`, "amazon-ssm-agent.service", "l2-bootstrap.service"},
 	}
 	for d, mustContain := range cases {
 		t.Run(string(d), func(t *testing.T) {

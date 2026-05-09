@@ -2,17 +2,42 @@
 
 ## Status
 
-Bottlerocket smoke is **SSM-Online-only** (driver writes the
-sentinel via SSM after Provision succeeds). Full bring-up
-(cert-manager + SPIRE + operator + CRDs) on Bottlerocket is **not
-implemented**. We made substantial progress on the host-container
-approach (see `scripts/aws-l2/bottlerocket-k0s-host/`) and reached
-the point where k0s + apiserver + kubelet all start successfully
-inside a `[settings.host-containers.k0s]` superpowered container.
-The remaining blocker is Bottlerocket's MAC policy denying nested
-containerd from creating pod rootfs filesystems —
-fundamental Bottlerocket constraint that can't be worked around
-in user-data alone.
+Bottlerocket smoke is **SSM-Online-only**. Two approaches were
+attempted to extend it to the full health gate; both hit
+fundamental Bottlerocket constraints. The smoke remains at the
+"AMI provisions + SSM reachable" level. AL2023 / Ubuntu / Flatcar
+all pass the full health gate in their own variants of the smoke;
+Bottlerocket's gap is a known + documented limitation.
+
+### Approach 1: host-container running k0s control plane
+
+See `scripts/aws-l2/bottlerocket-k0s-host/`. Built end-to-end;
+each layer worked until pod scheduling: Bottlerocket's SELinux
+super_t label (the most permissive label available to user-defined
+host-containers) does not authorise nested containerd to mkdir
+under its task-rootfs tree. Manifests as `mkdirat ...rootfs/proc:
+permission denied`. Custom Bottlerocket AMI build is the only path.
+
+### Approach 2: Bottlerocket aws-k8s worker joining external k0s
+
+See `scripts/aws-l2/bottlerocket-worker.toml.tmpl` +
+`test/e2e/fullstack/l2/bottlerocket_worker_test.go`. The worker
+boots and reaches Bottlerocket's `pluto` settings-generator,
+which times out at exactly 5 min with "Timed out retrieving
+private DNS name from EC2: deadline has elapsed" — even with
+ec2:DescribeInstances granted to the instance role and
+explicit `[settings.aws.region]` + `node-ip` in user-data. Pluto
+appears to require an EKS-cluster context (cluster tags, etc.)
+that a self-hosted k0s control plane doesn't satisfy. Per
+bottlerocket-os/bottlerocket#4517 the AWS-recommended path for
+a self-managed control plane is "static pods + standalone mode"
+which sidesteps pluto but requires shipping pre-rendered kubeadm
+manifests — a substantial implementation that's out of scope.
+
+The worker test is committed but skipped by default (gated on
+`L2_RUN_BOTTLEROCKET_WORKER=1`); the IAM grant for
+ec2:DescribeInstances is left in terraform for any future
+Bottlerocket-related integration.
 
 ## What works
 
