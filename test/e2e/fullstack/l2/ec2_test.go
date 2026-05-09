@@ -124,9 +124,11 @@ func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 	env = &l2Env{ssm: cluster.ssmc, instanceID: cluster.InstanceID}
 	distro := ResolveDistro()
 
-	// Bottlerocket: SSM-Online IS the smoke (the bootstrap-container
-	// facility has unresolved issues for our k0s-on-host shape).
-	// Driver writes the sentinel via SSM for contract consistency.
+	// Bottlerocket: SSM-Online IS the smoke. Full bring-up via a
+	// k0s host-container reaches kubelet but fails at pod
+	// scheduling because Bottlerocket's MAC policy denies nested
+	// containerd's rootfs-mkdir. See
+	// scripts/aws-l2/bottlerocket-bootstrap/README.md.
 	if distro == DistroBottlerocket {
 		_, _ = env.runSSM(ctx,
 			"mkdir -p /var/log && touch "+sentinelREADY+" 2>/dev/null || true",
@@ -135,7 +137,8 @@ func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 		return env, true
 	}
 
-	// Cloud-init / Ignition-based distros (al2023, ubuntu, flatcar): wait for
+	// Cloud-init / Ignition based distros (al2023, ubuntu, flatcar):
+	// poll for either sentinel via SSM.
 	// either sentinel. Capturing which one fired in the closure
 	// avoids a second SSM round-trip after WaitFor returns.
 	var observed string
