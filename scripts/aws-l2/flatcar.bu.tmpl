@@ -1,0 +1,246 @@
+variant: flatcar
+version: 1.1.0
+# Flatcar Linux full L2 bootstrap via Ignition.
+#
+# Template vars: {{ .ArtifactBucket }} {{ .ECRRegistry }}
+#                {{ .ImageTag }} {{ .RunID }}
+#
+# Bring-up sequence (all via systemd units installed by Ignition):
+#   1. amazon-ssm-agent.service — installs SSM agent binary, runs it.
+#   2. l2-bootstrap.service     — runs after SSM is up. Installs k0s,
+#                                  configures containerd ECR auth,
+#                                  pulls manifests + applies them,
+#                                  waits for the same health gate as
+#                                  AL2023 / Ubuntu, writes sentinel.
+#
+# Flatcar specifics:
+#   - /etc and /var are writable; /usr is read-only
+#   - Built-in containerd at /run/containerd/containerd.sock (system,
+#     not the one k0s would prefer)
+#   - SSM agent isn't packaged; we extract from Amazon's .deb
+
+storage:
+  files:
+    - path: /opt/bin/l2-bootstrap.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -eo pipefail
+          log=/var/log/l2-bootstrap.log
+          : > "$log"
+          fail() {
+            echo "BOOTSTRAP FAILED: $*" >>"$log"
+            touch /var/log/l2-bootstrap.FAILED
+            tar -czf /tmp/bootstrap-fail-{{ .RunID }}.tgz \
+              /var/log/l2-bootstrap.log /var/log/journal 2>/dev/null || true
+            /opt/bin/aws s3 cp /tmp/bootstrap-fail-{{ .RunID }}.tgz \
+              s3://{{ .ArtifactBucket }}/bootstrap-fail/{{ .RunID }}.tgz \
+              --region us-east-2 || true
+            exit 0
+          }
+          exec >>"$log" 2>&1
+          echo "=== L2 bootstrap on flatcar $(date -u) ==="
+
+          # Wait for SSM credentials (metadata-service via IAM role).
+          for i in $(seq 1 10); do
+            if /opt/bin/aws sts get-caller-identity --region us-east-2 >/dev/null 2>&1; then
+              break
+            fi
+            echo "waiting for IMDS credentials ($i/10)"
+            sleep 6
+          done
+
+          # Install k0s directly (the get.k0s.sh helper tries to
+          # write into /usr/local/bin which is read-only on Flatcar).
+          mkdir -p /opt/bin
+          K0S_VERSION="v1.35.3+k0s.0"
+          curl -sSL --fail \
+            "https://github.com/k0sproject/k0s/releases/download/${K0S_VERSION}/k0s-${K0S_VERSION}-arm64" \
+            -o /opt/bin/k0s
+          chmod +x /opt/bin/k0s
+
+          # /opt/bin/k0s install controller writes a systemd unit to
+          # /etc/systemd/system (writable on Flatcar).
+          mkdir -p /etc/k0s
+          cat >/etc/k0s/k0s.yaml <<'YAML'
+          apiVersion: k0s.k0sproject.io/v1beta1
+          kind: ClusterConfig
+          spec:
+            network:
+              provider: kuberouter
+          YAML
+
+          # Configure k0s containerd ECR auth BEFORE k0s starts.
+          mkdir -p /etc/k0s/containerd.d /etc/containerd/certs.d/{{ .ECRRegistry }}
+          pw=$(/opt/bin/aws ecr get-login-password --region us-east-2)
+          auth=$(printf 'AWS:%s' "$pw" | base64 -w0)
+          cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
+          [plugins."io.containerd.grpc.v1.cri".registry]
+            config_path = "/etc/containerd/certs.d"
+          TOML
+          cat >/etc/containerd/certs.d/{{ .ECRRegistry }}/hosts.toml <<TOML
+          server = "https://{{ .ECRRegistry }}"
+          [host."https://{{ .ECRRegistry }}"]
+            capabilities = ["pull", "resolve"]
+            [host."https://{{ .ECRRegistry }}".header]
+              authorization = "Basic $auth"
+          TOML
+
+          /opt/bin/k0s install controller --single -c /etc/k0s/k0s.yaml || fail "/opt/bin/k0s install"
+          systemctl start k0scontroller || fail "k0s start"
+          timeout 300 sh -c 'until /opt/bin/k0s status >/dev/null 2>&1; do sleep 5; done' || fail "/opt/bin/k0s status"
+          timeout 120 sh -c 'until [ -f /var/lib/k0s/pki/admin.conf ]; do sleep 2; done' || fail "k0s admin.conf"
+
+          # Bootstrap fakes / spire / operator from the S3 manifest tarball.
+          mkdir -p /var/lib/k0s/manifests/{spire,operator,samples,cert-manager}
+          for i in 1 2 3; do
+            if /opt/bin/aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz \
+                 /tmp/manifests.tar.gz --region us-east-2; then
+              tar -xzf /tmp/manifests.tar.gz -C /var/lib/k0s/manifests/
+              chown -R root:root /var/lib/k0s/manifests/{spire,operator,samples}
+              find /var/lib/k0s/manifests -name '._*' -delete 2>/dev/null || true
+              rm /tmp/manifests.tar.gz
+              break
+            fi
+            echo "manifest tarball download failed, retry $i/3"
+            sleep 5
+          done
+          [ -f /var/lib/k0s/manifests/operator/00-operator.yaml ] || fail "manifest extract"
+
+          curl -sSL \
+            https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml \
+            > /var/lib/k0s/manifests/cert-manager/00-cert-manager.yaml \
+            || fail "cert-manager download"
+
+          # Health gate (same as al2023 / ubuntu).
+          KCTL="/opt/bin/k0s kubectl"
+          wait_resource() {
+            local kind=$1 ns=$2 sel=$3 timeout=${4:-180}
+            local end=$(( $(date +%s) + timeout ))
+            while [ $(date +%s) -lt $end ]; do
+              n=$($KCTL -n "$ns" get "$kind" $sel -o name 2>/dev/null | wc -l)
+              if [ "$n" -gt 0 ]; then return 0; fi
+              sleep 3
+            done
+            return 1
+          }
+          wait_resource deployment cert-manager "" 180 || fail "cert-manager not appearing"
+          $KCTL wait --for=condition=Available --timeout=180s \
+            deployment -n cert-manager --all || fail "cert-manager deploys"
+          wait_resource pod spire-system "-l app=spire-server" 180 || fail "spire-server not appearing"
+          $KCTL wait --for=condition=Ready --timeout=180s \
+            pod -n spire-system -l app=spire-server || fail "spire-server pod"
+          wait_resource pod spire-system "-l app=spire-agent" 180 || fail "spire-agent not appearing"
+          $KCTL wait --for=condition=Ready --timeout=180s \
+            pod -n spire-system -l app=spire-agent || fail "spire-agent pods"
+          wait_resource deployment knative-agents-system "" 180 || fail "operator not appearing"
+          $KCTL wait --for=condition=Available --timeout=180s \
+            deployment -n knative-agents-system --all || fail "operator deploy"
+          $KCTL wait --for=condition=Established --timeout=60s \
+            crd/knativeagents.agents.stigen.ai \
+            crd/agentnetworks.runtime.agents.stigen.ai \
+            crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+
+          touch /var/log/l2-bootstrap.READY
+          echo "=== bootstrap complete ==="
+
+    - path: /opt/bin/install-ssm-and-aws.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -eo pipefail
+          # Flatcar lacks unzip + ar; use Docker (pre-installed) as a
+          # delivery vehicle for AWS CLI + SSM agent. Both are extracted
+          # to /opt where they persist on the writable layer.
+
+          # Pre-pull (offline-friendly tag).
+          docker pull amazon/aws-cli:latest 2>&1
+          docker pull docker.io/library/ubuntu:24.04 2>&1
+
+          # AWS CLI: amazon/aws-cli is a thin wrapper around the binary
+          # at /usr/local/aws-cli/v2/current/bin/aws + dist/. Copy them
+          # out so the rest of the bootstrap can call /opt/bin/aws
+          # without spinning up a container per call.
+          mkdir -p /opt/aws-cli /opt/bin
+          cid=$(docker create amazon/aws-cli:latest)
+          docker cp "$cid:/usr/local/aws-cli/v2/current/." /opt/aws-cli/
+          docker rm "$cid" >/dev/null
+          ln -sf /opt/aws-cli/bin/aws /opt/bin/aws
+
+          # SSM Agent: pull amazon's deb via an Ubuntu container that
+          # has dpkg, then extract /usr/bin/amazon-ssm-agent + ssm-cli.
+          mkdir -p /opt/aws/ssm
+          docker run --rm -v /opt/aws/ssm:/out \
+            --entrypoint /bin/bash \
+            docker.io/library/ubuntu:24.04 -c '
+              set -e
+              apt-get update -qq
+              apt-get install -y -qq curl dpkg
+              curl -sSL -o /tmp/ssm.deb \
+                https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_arm64/amazon-ssm-agent.deb
+              dpkg-deb -x /tmp/ssm.deb /tmp/ssm
+              cp /tmp/ssm/usr/bin/amazon-ssm-agent /tmp/ssm/usr/bin/ssm-cli /out/
+              chmod +x /out/amazon-ssm-agent /out/ssm-cli
+            '
+          /opt/bin/aws --version
+          /opt/aws/ssm/amazon-ssm-agent --version 2>&1 | head -1
+
+systemd:
+  units:
+    - name: install-prereqs.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install AWS CLI + SSM agent
+        After=network-online.target
+        Wants=network-online.target
+        ConditionPathExists=!/opt/aws/ssm/amazon-ssm-agent
+        Before=amazon-ssm-agent.service l2-bootstrap.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/opt/bin/install-ssm-and-aws.sh
+        StandardOutput=journal
+        StandardError=journal
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: amazon-ssm-agent.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Amazon SSM Agent
+        Requires=install-prereqs.service
+        After=install-prereqs.service network-online.target
+
+        [Service]
+        Type=simple
+        ExecStart=/opt/aws/ssm/amazon-ssm-agent
+        Restart=always
+        RestartSec=10
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: l2-bootstrap.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=L2 bootstrap (k0s + manifests + health gate)
+        Requires=install-prereqs.service amazon-ssm-agent.service
+        After=install-prereqs.service amazon-ssm-agent.service network-online.target
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/opt/bin/l2-bootstrap.sh
+        StandardOutput=journal
+        StandardError=journal
+        TimeoutStartSec=20min
+
+        [Install]
+        WantedBy=multi-user.target

@@ -36,6 +36,7 @@ images=(
   "fake-llm     deploy/docker/fake-llm.Dockerfile        ."
   "fake-gateway deploy/docker/fake-gateway.Dockerfile    ."
   "spire-shell  scripts/e2e/spire/Dockerfile.spire-shell scripts/e2e/spire"
+  "bottlerocket-bootstrap scripts/aws-l2/bottlerocket-bootstrap/Dockerfile scripts/aws-l2/bottlerocket-bootstrap"
 )
 
 for entry in "${images[@]}"; do

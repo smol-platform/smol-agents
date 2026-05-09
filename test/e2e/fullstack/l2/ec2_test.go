@@ -124,25 +124,18 @@ func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 	env = &l2Env{ssm: cluster.ssmc, instanceID: cluster.InstanceID}
 	distro := ResolveDistro()
 
-	// Bottlerocket and Flatcar don't have cloud-init bootstrap that
-	// could write the sentinel — Bottlerocket has no shell at all,
-	// Flatcar uses Ignition (we'd need a separate Ignition spec).
-	// Provision() already confirmed SSM is Online; that IS the
-	// smoke for these distros. Write the sentinel via SSM so the
-	// driver contract still holds.
-	if distro == DistroBottlerocket || distro == DistroFlatcar {
-		// Best-effort sentinel touch — works on Flatcar's writable
-		// /var; Bottlerocket can't access /var directly via SSM but
-		// the smoke pass condition is just "we got here", which
-		// implies SSM-Online which is the validated capability.
+	// Bottlerocket: SSM-Online IS the smoke (the bootstrap-container
+	// facility has unresolved issues for our k0s-on-host shape).
+	// Driver writes the sentinel via SSM for contract consistency.
+	if distro == DistroBottlerocket {
 		_, _ = env.runSSM(ctx,
 			"mkdir -p /var/log && touch "+sentinelREADY+" 2>/dev/null || true",
 			30*time.Second)
-		t.Logf("L2 bootstrap sentinel observed (READY) — %s smoke validates SSM reachability only", distro)
+		t.Log("L2 bootstrap sentinel observed (READY) — bottlerocket smoke validates SSM reachability only")
 		return env, true
 	}
 
-	// Cloud-init-based distros (al2023, ubuntu, flatcar): wait for
+	// Cloud-init / Ignition-based distros (al2023, ubuntu, flatcar): wait for
 	// either sentinel. Capturing which one fired in the closure
 	// avoids a second SSM round-trip after WaitFor returns.
 	var observed string

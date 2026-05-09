@@ -141,10 +141,20 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		}
 	}
 
-	// Wait for SSM to register the instance.
-	if err := waitSSMReady(ctx, ssmc, *inst.InstanceId, 5*time.Minute); err != nil {
-		_ = terminate(ctx, ec2c, *inst.InstanceId)
-		return nil, fmt.Errorf("wait ssm-ready: %w", err)
+	// Wait for SSM to register the instance. Flatcar bootstraps the
+	// SSM agent itself so it takes longer than apt/dnf-based distros
+	// where the agent ships pre-installed.
+	ssmTimeout := 5 * time.Minute
+	if distro == DistroFlatcar {
+		ssmTimeout = 12 * time.Minute
+	}
+	if err := waitSSMReady(ctx, ssmc, *inst.InstanceId, ssmTimeout); err != nil {
+		// L2_KEEP_INSTANCE keeps the instance for debugging; sweeper
+		// Lambda still reclaims within 1h.
+		if os.Getenv("L2_KEEP_INSTANCE") == "" {
+			_ = terminate(ctx, ec2c, *inst.InstanceId)
+		}
+		return nil, fmt.Errorf("wait ssm-ready (instance %s): %w", *inst.InstanceId, err)
 	}
 
 	return &Cluster{
@@ -255,6 +265,12 @@ type userDataInputs struct {
 	ImageTag       string
 	RunID          string
 	Distro         Distro
+
+	// BottlerocketBootstrapUserData is base64-encoded KEY=value
+	// pairs the bottlerocket-bootstrap container's entrypoint
+	// sources. Computed by Distro.UserData() for DistroBottlerocket;
+	// other distros leave it empty.
+	BottlerocketBootstrapUserData string
 }
 
 // renderCloudInit dispatches to the per-distro user-data renderer.

@@ -4,8 +4,10 @@ package l2
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"text/template"
 
@@ -109,7 +111,20 @@ func findAMI(ctx context.Context, ec2c *ec2.Client, ownerID, namePattern string)
 
 // UserData renders the distro-specific bootstrap input. Returns the
 // raw text the caller will base64-encode into RunInstances.UserData.
+//
+// Flatcar's template is Butane (YAML for Ignition); we Go-template
+// it, then shell out to `butane` to compile to Ignition JSON.
+//
+// Bottlerocket's bootstrap-container reads its config from a
+// base64-encoded user-data env; we precompute that so the template
+// can interpolate it as a single value.
 func (d Distro) UserData(in userDataInputs) (string, error) {
+	if d == DistroBottlerocket && in.BottlerocketBootstrapUserData == "" {
+		body := fmt.Sprintf("ARTIFACT_BUCKET=%s\nECR_REGISTRY=%s\nIMAGE_TAG=%s\nRUN_ID=%s\n",
+			in.ArtifactBucket, in.ECRRegistry, in.ImageTag, in.RunID)
+		in.BottlerocketBootstrapUserData = base64.StdEncoding.EncodeToString([]byte(body))
+	}
+
 	tmplPath := repoFile("scripts/aws-l2/" + d.userDataFilename())
 	raw, err := os.ReadFile(tmplPath)
 	if err != nil {
@@ -123,6 +138,9 @@ func (d Distro) UserData(in userDataInputs) (string, error) {
 	if err := t.Execute(&sb, in); err != nil {
 		return "", fmt.Errorf("execute %s template: %w", d, err)
 	}
+	if d == DistroFlatcar {
+		return butaneCompile(sb.String())
+	}
 	return sb.String(), nil
 }
 
@@ -135,9 +153,30 @@ func (d Distro) userDataFilename() string {
 	case DistroBottlerocket:
 		return "bottlerocket-userdata.toml.tmpl"
 	case DistroFlatcar:
-		return "flatcar-userdata.yaml.tmpl"
+		return "flatcar.bu.tmpl"
 	}
 	return ""
+}
+
+// butaneCompile pipes a rendered Butane YAML through the `butane`
+// CLI and returns the Ignition JSON. Requires `butane` on PATH.
+// Install: go install github.com/coreos/butane/internal/cmd/butane,
+// or download the prebuilt binary from coreos/butane releases.
+func butaneCompile(butaneSrc string) (string, error) {
+	bin, err := exec.LookPath("butane")
+	if err != nil {
+		return "", fmt.Errorf("butane not found on PATH (install: "+
+			"https://github.com/coreos/butane/releases): %w", err)
+	}
+	cmd := exec.Command(bin, "--strict")
+	cmd.Stdin = strings.NewReader(butaneSrc)
+	var out, errBuf strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("butane compile: %w\nstderr: %s", err, errBuf.String())
+	}
+	return out.String(), nil
 }
 
 // HealthGateMaxWait is how long the driver waits for the
