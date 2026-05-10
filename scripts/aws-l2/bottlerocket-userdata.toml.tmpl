@@ -1,19 +1,13 @@
 # Bottlerocket user-data — minimal SSM-Online smoke.
 #
-# Full bring-up was investigated end-to-end at
-# scripts/aws-l2/bottlerocket-k0s-host/ via a custom host-container
-# running k0s controller --single. Every layer worked except the
-# final step: Bottlerocket's MAC policy denies nested containerd
-# from creating pod rootfs filesystems (mkdirat ...rootfs/proc:
-# permission denied). See scripts/aws-l2/bottlerocket-bootstrap/
-# README.md for the investigation report.
+# THREE architectural approaches were investigated end-to-end for
+# extending the Bottlerocket smoke to the same full health gate as
+# AL2023/Ubuntu/Flatcar; ALL THREE are blocked by Bottlerocket
+# design constraints. See scripts/aws-l2/bottlerocket-bootstrap/
+# README.md for the full investigation report.
 #
-# The host-container code is preserved in the tree but disabled in
-# user-data; Bottlerocket smoke validates only AMI launch + SSM
-# reachability. The other three distros (AL2023, Ubuntu, Flatcar)
-# pass the full health gate.
+# The Bottlerocket smoke validates only AMI launch + SSM
+# reachability. The other three distros pass the full health gate.
 
 [settings.host-containers.admin]
-# Set true + provide an SSH key (or use SSM session-manager) to
-# debug via `apiclient exec admin journalctl` against host-containers.
 enabled = false

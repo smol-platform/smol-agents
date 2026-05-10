@@ -60,8 +60,11 @@ func (d Distro) AMI(ctx context.Context, ec2c *ec2.Client, ssmc *ssm.Client) (st
 		return ssmAMI(ctx, ssmc,
 			"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64")
 	case DistroBottlerocket:
-		// general-purpose variant for arm64; smoke uses bootstrap-
-		// container (k8s variant would need an EKS cluster to join).
+		// general-purpose ECS variant. We tried aws-k8s-1.31 for
+		// the kubeadm bootstrap pattern but pluto's EC2 probe
+		// blocks boot at 5 min on every non-EKS instance. See
+		// scripts/aws-l2/bottlerocket-bootstrap/README.md for
+		// the full multi-approach investigation.
 		return ssmAMI(ctx, ssmc,
 			"/aws/service/bottlerocket/aws-ecs-1/arm64/latest/image_id")
 	case DistroBottlerocketWorker:

@@ -87,7 +87,7 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		APIServer:       os.Getenv("L2_K8S_API_SERVER"),
 		ClusterCABase64: os.Getenv("L2_K8S_CA_BASE64"),
 		BootstrapToken:  os.Getenv("L2_K8S_BOOTSTRAP_TOKEN"),
-		ClusterName:     envOrDefault("L2_K8S_CLUSTER_NAME", "knative-agents-l2"),
+		ClusterName:     envOrDefault("L2_K8S_CLUSTER_NAME", "knative-agents-l2-smoke"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render user-data (%s): %w", distro, err)

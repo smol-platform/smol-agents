@@ -28,16 +28,47 @@ private DNS name from EC2: deadline has elapsed" — even with
 ec2:DescribeInstances granted to the instance role and
 explicit `[settings.aws.region]` + `node-ip` in user-data. Pluto
 appears to require an EKS-cluster context (cluster tags, etc.)
-that a self-hosted k0s control plane doesn't satisfy. Per
-bottlerocket-os/bottlerocket#4517 the AWS-recommended path for
-a self-managed control plane is "static pods + standalone mode"
-which sidesteps pluto but requires shipping pre-rendered kubeadm
-manifests — a substantial implementation that's out of scope.
+that a self-hosted k0s control plane doesn't satisfy.
 
 The worker test is committed but skipped by default (gated on
 `L2_RUN_BOTTLEROCKET_WORKER=1`); the IAM grant for
 ec2:DescribeInstances is left in terraform for any future
 Bottlerocket-related integration.
+
+### Approach 3: kubeadm bootstrap-container + standalone-mode (the AWS-recommended pattern)
+
+Per bottlerocket-os/bottlerocket#4517, AWS's recommended pattern
+for self-managed control planes on Bottlerocket is "static pods
++ standalone mode" via a kubeadm-driven bootstrap-container —
+exactly what EKS-Anywhere's [bottlerocket-bootstrap](https://github.com/aws/eks-anywhere-build-tooling/tree/main/projects/aws/bottlerocket-bootstrap)
+does. We implemented this end-to-end at
+`scripts/aws-l2/bottlerocket-kubeadm/` (Dockerfile + entrypoint
+that runs `kubeadm init phase ...`, stages static pods via
+`apiclient set kubernetes.static-pods.<name>.manifest=<b64>`,
+fires the `kubernetes.{api-server,cluster-certificate,
+bootstrap-token,authentication-mode,standalone-mode}` cascade,
+applies our manifests, runs the health gate).
+
+**Result: also blocked by pluto.** Even on the kubeadm path with
+`[settings.kubernetes.standalone-mode] = true` AND every
+`kubernetes.*` setting pluto would compute pre-populated in
+user-data (cluster-name, cluster-dns-ip, api-server, max-pods,
+etc.), pluto STILL times out at 5 min. The pluto service has a
+hardcoded EC2 DescribeInstances probe that runs regardless of
+which kubernetes.* settings are pre-set; only its EKS-cluster
+DescribeCluster lookup is gated on cluster-name.
+
+EKS-Anywhere works around this by **shipping a custom Bottlerocket
+build** with their own pluto patches — visible in their build
+tooling at `aws/eks-anywhere-build-tooling`. Stock Bottlerocket
+AMIs from `/aws/service/bottlerocket/aws-k8s-*/...` will not
+boot without an EKS context.
+
+The kubeadm bootstrap-container code, ECR-Public image
+(`public.ecr.aws/f4r4b7z2/knative-agents-bottlerocket-kubeadm`),
+and TOML template are preserved in the tree as a starting
+point for any future investigation that involves a custom
+Bottlerocket AMI build.
 
 ## What works
 
