@@ -695,8 +695,12 @@ spec:
 		desc, _ := env.Exec(ctx, ExecTarget{},
 			"-n", "tenant-a", "describe", "pod", pod)
 		if strings.Contains(string(desc), "FailedCreatePodSandBox") {
-			t.Skipf("kata-fc runtime not functional on this host "+
-				"(sandbox creation failed) — Phase D follow-up.\n"+
+			t.Skipf("kata-fc sandbox creation failed — kata-fc 3.10 "+
+				"requires a block-device-backed snapshotter "+
+				"(devmapper or nydus) and k0s ships overlayfs only. "+
+				"Phase D follow-up: install nydus-snapshotter + "+
+				"per-runtime snapshotter selection, OR set up a "+
+				"devmapper thinpool in the cloud-init.\n"+
 				"describe:\n%s", desc)
 		}
 		t.Fatalf("kata pod did not Succeed: %v\ndescribe:\n%s", err, desc)
