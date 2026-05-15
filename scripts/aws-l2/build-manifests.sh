@@ -144,6 +144,15 @@ cp "$ROOT/operator/config/samples/agent_full.yaml"             "$WORK/samples/20
 cp "$ROOT/operator/config/samples/agentnetwork_proxy.yaml"     "$WORK/samples/30-agentnetwork-proxy.yaml"
 cp "$ROOT/operator/config/samples/agentnetwork_wg_client.yaml" "$WORK/samples/31-agentnetwork-wg.yaml"
 
+# Pin the ebpf-loader image on the Platform CR to the L2 ECR copy.
+# The operator's default is "knative-agents/ebpf-loader:0.1.0" which
+# isn't pullable from the L2 cluster — leaving it set crashes the
+# loader DaemonSet with Init:ErrImagePull.
+if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
+  yq -i ".spec.ebpfLoader.image = \"${L2_ECR_REGISTRY}/knative-agents/ebpf-loader:${TAG}\"" \
+    "$WORK/samples/00-platform.yaml"
+fi
+
 step "package as tarball"
 TARBALL=$WORK/manifests-$TAG.tar.gz
 # COPYFILE_DISABLE=1 + --no-xattrs strips macOS AppleDouble (._*)
