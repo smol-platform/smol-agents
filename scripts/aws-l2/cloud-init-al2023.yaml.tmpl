@@ -168,13 +168,6 @@ runcmd:
       cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
     [plugins."io.containerd.grpc.v1.cri".registry]
       config_path = "/etc/containerd/certs.d"
-    # nydus snapshotter must be the global default + annotations
-    # must pass through, otherwise image pulls land in overlayfs
-    # and the kata-fc runtime's per-runtime snapshotter=nydus has
-    # nothing to mount.
-    [plugins."io.containerd.grpc.v1.cri".containerd]
-      snapshotter = "nydus"
-      disable_snapshot_annotations = false
     [proxy_plugins]
       [proxy_plugins.nydus]
         type = "snapshot"
