@@ -59,6 +59,35 @@ func TestL2_Smoke_AllDistros(t *testing.T) {
 	}
 }
 
+// TestL2_AllDistros runs the FULL scenario suite (shared.RunAll)
+// against every fully-supported distro as subtests. Bottlerocket is
+// excluded — see scripts/aws-l2/bottlerocket-bootstrap/README.md
+// for the three blocked architectural approaches.
+//
+// Each subtest is independent: provision + cloud-init/Ignition
+// bootstrap + health gate + scenario suite + teardown.
+//
+// Cost: ~$0.30-0.50/run (3 × c7g.large for ~15-25 min on-demand,
+// dominated by scenario execution time + image pulls).
+//
+// Run a single distro: go test -run 'TestL2_AllDistros/ubuntu'
+func TestL2_AllDistros(t *testing.T) {
+	for _, d := range []Distro{
+		DistroAL2023,
+		DistroUbuntu,
+		DistroFlatcar,
+	} {
+		t.Run(string(d), func(t *testing.T) {
+			t.Setenv("L2_DISTRO", string(d))
+			env, ok := provisionAndWaitReady(t)
+			if !ok {
+				return
+			}
+			shared.RunAll(t, env, shared.All())
+		})
+	}
+}
+
 // TestL2_RegionGate confirms the driver refuses non-us-east-2.
 func TestL2_RegionGate(t *testing.T) {
 	t.Setenv("AWS_REGION", "us-west-2")

@@ -32,19 +32,25 @@ step "render manifests for tag=$TAG"
 # applies. We render kustomize bases into flat YAML files.
 mkdir -p "$WORK/spire" "$WORK/operator" "$WORK/samples"
 
-# 1. SPIRE (server + agent + RBAC).
+# 1. SPIRE (server + agent + RBAC + bootstrap sidecar). The
+#    sidecar registers workload entries via spire-server's UDS;
+#    without it, scenarios that probe via spiffe-probe pods fail
+#    with "setup x509 source: context deadline exceeded" because
+#    no workload entries match their SPIFFE-ID parent. Keep the
+#    sidecar at L2 too — ECR auth via containerd hosts.toml means
+#    kubelet can pull the spire-shell image without racing.
 kustomize build "$ROOT/test/e2e/manifests/spire" > "$WORK/spire/00-spire.yaml"
 
-# Strip the spire-server StatefulSet's `bootstrap` sidecar at L2.
-# The sidecar registers workload entries via spire-server's UDS;
-# scenarios that need entries register them at runtime instead.
-# Keeping the sidecar would force kubelet to pull spire-shell from
-# ECR before spire-server is Ready, which races against ECR auth
-# setup. Drop it for L2 — smoke just needs spire-server live.
-yq -i '
-  select(.kind == "StatefulSet" and .metadata.name == "spire-server").spec.template.spec.containers
-    |= map(select(.name != "bootstrap"))
-' "$WORK/spire/00-spire.yaml"
+# Rewrite the spire-shell image reference (kind uses
+# `knative-agents/spire-shell:dev` with imagePullPolicy: Never;
+# L2 pulls from ECR with IfNotPresent).
+if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
+  sed -i.bak \
+    -e "s|knative-agents/spire-shell:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/spire-shell:${TAG}|g" \
+    -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
+    "$WORK/spire/00-spire.yaml"
+  rm "$WORK/spire/00-spire.yaml.bak"
+fi
 
 # 2. Operator (CRDs + RBAC + manager + webhook).
 #    Use the kind-webhook overlay so the L2 cluster gets the full
@@ -61,9 +67,44 @@ if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
   rm "$WORK/operator/00-operator.yaml.bak"
 fi
 
-# 3. Sample CRs (Platform + KnativeAgent + ModelProvider + Tool +
+# 3. Tenant namespace + fake services + researcher-agent SA. L1's
+#    deployFakes() handles this via separate kubectl commands; we
+#    pre-stage all of it into the manifest tarball so the k0s
+#    manifest watcher applies it at boot.
+mkdir -p "$WORK/tenant"
+cat >"$WORK/tenant/00-namespace.yaml" <<'YAML'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    knative-agents.stigen.ai/tenant: a
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: researcher-agent
+  namespace: tenant-a
+YAML
+
+# Fake services (kustomize-render with the same namespace transform
+# kind uses, then rewrite the image references to ECR URLs).
+kustomize build "$ROOT/test/e2e/manifests" > "$WORK/tenant/10-fakes.yaml"
+if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
+  sed -i.bak \
+    -e "s|knative-agents/fake-llm:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/fake-llm:${TAG}|g" \
+    -e "s|knative-agents/fake-gateway:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/fake-gateway:${TAG}|g" \
+    -e "s|knative-agents/spiffe-probe:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/spiffe-probe:${TAG}|g" \
+    -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
+    "$WORK/tenant/10-fakes.yaml"
+  rm "$WORK/tenant/10-fakes.yaml.bak"
+fi
+
+# 4. Sample CRs (Platform + KnativeAgent + ModelProvider + Tool +
 #    Agent + AgentRun + AgentNetwork). The Platform CR must apply
-#    BEFORE any KnativeAgent CR, so we prefix-order them.
+#    BEFORE any KnativeAgent CR, so we prefix-order them. Tenant
+#    namespace must exist first (it's in tenant/ which the manifest
+#    watcher applies alphabetically before samples/).
 mkdir -p "$WORK/samples"
 cp "$ROOT/operator/config/samples/knativeagentplatform.yaml"   "$WORK/samples/00-platform.yaml"
 cp "$ROOT/operator/config/samples/knativeagent_minimal.yaml"   "$WORK/samples/10-knativeagent.yaml"
@@ -78,7 +119,7 @@ TARBALL=$WORK/manifests-$TAG.tar.gz
 # directory ("error converting YAML to JSON: yaml: control
 # characters are not allowed").
 COPYFILE_DISABLE=1 tar --no-xattrs --exclude='._*' \
-  -czf "$TARBALL" -C "$WORK" spire operator samples
+  -czf "$TARBALL" -C "$WORK" spire operator tenant samples
 ls -lh "$TARBALL"
 
 step "upload to s3://$BUCKET/manifests-$TAG.tar.gz"

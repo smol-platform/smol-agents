@@ -97,14 +97,15 @@ func (e *l2Env) WaitFor(ctx context.Context, name string, deadline time.Duration
 
 func (e *l2Env) Cleanup(_ context.Context) error { return nil }
 
-// Endpoint at L2 returns in-cluster Service DNS for in-cluster
-// scenarios (probe Pod via RunSpiffeProbe). Scenarios that try to
-// dial directly from the test driver self-skip — host ↔ EC2 socket
-// bridging isn't worth wiring; SSM is the contract.
+// Endpoint at L2 returns the in-cluster Service DNS for scenarios
+// that pass the URL into a probe Pod (PROXY-TCP, PROXY-HTTP) —
+// cluster.local resolves inside the cluster and the L2 driver's
+// CapInClusterProbe branch keeps those scenarios on the
+// RunSpiffeProbe path. Scenarios that dial DIRECTLY from the test
+// driver (AGENTRUN's executor.Run, etc.) get ok=false and skip,
+// because we don't bridge host ↔ cluster DNS over SSM.
 func (e *l2Env) Endpoint(name string) (string, bool) {
 	switch name {
-	case "fake-llm":
-		return "http://fake-llm.tenant-a.svc.cluster.local:8080", true
 	case "fake-gateway-http":
 		return "http://fake-gateway.tenant-a.svc.cluster.local:8080", true
 	case "fake-gateway-tcp":

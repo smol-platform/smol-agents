@@ -59,6 +59,10 @@ storage:
             "https://github.com/k0sproject/k0s/releases/download/${K0S_VERSION}/k0s-${K0S_VERSION}-arm64" \
             -o /opt/bin/k0s
           chmod +x /opt/bin/k0s
+          # Make k0s reachable from any PATH (SSM agent runs commands
+          # with a minimal PATH that doesn't include /opt/bin).
+          # /usr/local/bin IS writable on Flatcar (symlink to /var).
+          ln -sf /opt/bin/k0s /usr/local/bin/k0s 2>/dev/null || true
 
           # /opt/bin/k0s install controller writes a systemd unit to
           # /etc/systemd/system (writable on Flatcar).
@@ -219,6 +223,10 @@ systemd:
 
         [Service]
         Type=simple
+        # SSM commands inherit this PATH; without /opt/bin (where
+        # k0s lives on Flatcar) every `k0s kubectl ...` from the
+        # L2 driver dies with "command not found".
+        Environment=PATH=/opt/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
         ExecStart=/opt/aws/ssm/amazon-ssm-agent
         Restart=always
         RestartSec=10
