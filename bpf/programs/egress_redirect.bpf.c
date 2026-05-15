@@ -20,6 +20,10 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+#ifndef AF_INET
+#define AF_INET 2
+#endif
+
 char LICENSE[] SEC("license") = "Apache-2.0";
 
 // ---------------------------------------------------------------------

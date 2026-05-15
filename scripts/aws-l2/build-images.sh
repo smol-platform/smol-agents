@@ -27,6 +27,19 @@ step "ECR login"
 aws --profile "$PROFILE" --region "$REGION" ecr get-login-password \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
+# Compile CO-RE BPF objects FIRST. ebpf-loader.Dockerfile copies
+# bpf/build/*.bpf.o into the image; without this step those files
+# are 0-byte placeholders and the loader attaches nothing.
+step "compile bpf/build/*.bpf.o (arm64 CO-RE)"
+mkdir -p bpf/build
+docker buildx build \
+  --platform linux/arm64 \
+  --file deploy/docker/bpf-builder.Dockerfile \
+  --target export \
+  --output type=local,dest=. \
+  .
+ls -la bpf/build/*.bpf.o
+
 # Each entry: image-name dockerfile build-context
 images=(
   "operator     deploy/docker/operator.Dockerfile        ."
