@@ -115,7 +115,7 @@ e2e-l2-alldistros: _check-l2-aws ## fullstack-e2e L2 across AL2023+Ubuntu+Flatca
 	  subnet=$$(terraform output -raw subnet_id) && \
 	  cd ../../.. && \
 	  L2_SECURITY_GROUP_ID=$$sg L2_SUBNET_ID=$$subnet \
-	    $(GO) test -tags=e2e_l2 -timeout 60m -run TestL2_AllDistros ./test/e2e/fullstack/l2/...
+	    $(GO) test -tags='e2e_l2 wgnetstack' -timeout 60m -run TestL2_AllDistros ./test/e2e/fullstack/l2/...
 
 .PHONY: e2e-l2-smoke
 e2e-l2-smoke: _check-l2-aws ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run)

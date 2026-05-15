@@ -46,9 +46,16 @@ func (c *Cluster) AsEnv() shared.Env {
 }
 
 func (e *l2Env) Capabilities() shared.Caps {
-	return shared.CapKubernetes | shared.CapNetworkEgress |
+	caps := shared.CapKubernetes | shared.CapNetworkEgress |
 		shared.CapEBPF | shared.CapKata | shared.CapWebhook |
 		shared.CapSPIRE | shared.CapInClusterProbe
+	// WG-CLIENT dials the in-cluster wg-hub via NodePort UDP/31820.
+	// Without an SG ingress on that port we have no path; scenarios
+	// requiring CapWireGuard self-skip in shared.RunAll.
+	if e.publicIP != "" {
+		caps |= shared.CapWireGuard
+	}
+	return caps
 }
 
 func (e *l2Env) Ring() string { return "l2" }
@@ -121,6 +128,13 @@ func (e *l2Env) Endpoint(name string) (string, bool) {
 	case "fake-llm":
 		if e.publicIP != "" {
 			return fmt.Sprintf("http://%s:30080", e.publicIP), true
+		}
+	case "wg-hub":
+		// Userspace WireGuard adapter on the driver dials the
+		// in-cluster wg-hub via the instance's public IP. UDP
+		// NodePort 31820 → pod 51820 (kube-router proxies).
+		if e.publicIP != "" {
+			return fmt.Sprintf("%s:31820", e.publicIP), true
 		}
 	}
 	return "", false

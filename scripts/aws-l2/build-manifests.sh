@@ -115,8 +115,22 @@ yq -i '(select(.kind == "Service" and .metadata.name == "fake-llm") | .spec.type
        (select(.kind == "Service" and .metadata.name == "fake-llm") | .spec.ports[] | select(.port == 8080) | .nodePort) = 30080 |
        (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.type) = "NodePort" |
        (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.ports[] | select(.port == 8080) | .nodePort) = 30081 |
-       (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.ports[] | select(.port == 8443) | .nodePort) = 30443' \
+       (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.ports[] | select(.port == 8443) | .nodePort) = 30443 |
+       (select(.kind == "Service" and .metadata.name == "wg-hub") | .spec.type) = "NodePort" |
+       (select(.kind == "Service" and .metadata.name == "wg-hub") | .spec.ports[] | select(.port == 51820) | .nodePort) = 31820' \
        "$WORK/tenant/10-fakes.yaml"
+
+# 3b. Runtime extras: RuntimeClass kata-fc lets the KATA scenario
+#     opt a Pod into the Firecracker microVM runtime. containerd
+#     already has the kata-fc handler registered by cloud-init.
+mkdir -p "$WORK/runtime"
+cat >"$WORK/runtime/00-runtimeclass-kata-fc.yaml" <<'YAML'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-fc
+handler: kata-fc
+YAML
 
 # 4. Sample CRs (Platform + KnativeAgent + ModelProvider + Tool +
 #    Agent + AgentRun + AgentNetwork). The Platform CR must apply
@@ -137,7 +151,7 @@ TARBALL=$WORK/manifests-$TAG.tar.gz
 # directory ("error converting YAML to JSON: yaml: control
 # characters are not allowed").
 COPYFILE_DISABLE=1 tar --no-xattrs --exclude='._*' \
-  -czf "$TARBALL" -C "$WORK" spire operator tenant samples
+  -czf "$TARBALL" -C "$WORK" spire operator tenant runtime samples
 ls -lh "$TARBALL"
 
 step "upload to s3://$BUCKET/manifests-$TAG.tar.gz"

@@ -142,3 +142,16 @@ resource "aws_security_group_rule" "l2_nodeport_fake_gateway_tcp" {
   cidr_blocks       = [var.test_runner_ingress_cidr]
   security_group_id = aws_security_group.l2.id
 }
+
+# WG-CLIENT scenario: driver speaks WireGuard UDP from the host's
+# userspace adapter to the in-cluster wg-hub. NodePort 31820/udp.
+resource "aws_security_group_rule" "l2_nodeport_wg_hub" {
+  count             = var.test_runner_ingress_cidr == "" ? 0 : 1
+  type              = "ingress"
+  description       = "test-runner ingress to wg-hub UDP NodePort"
+  from_port         = 31820
+  to_port           = 31820
+  protocol          = "udp"
+  cidr_blocks       = [var.test_runner_ingress_cidr]
+  security_group_id = aws_security_group.l2.id
+}

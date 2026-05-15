@@ -90,14 +90,18 @@ runcmd:
   # 1. BPF FS (cgroup_skb/egress and cgroup/connect4 need this).
   - mount bpffs /sys/fs/bpf -t bpf || true
 
-  # 2. Install Kata-Containers static bundle.
+  # 2. Install Kata-Containers static bundle. The 3.10 tarball is
+  #    laid out as `<top>/opt/kata/{bin,share,libexec}/…`;
+  #    --strip-components=3 flattens that to `/opt/kata/{bin,share,…}`
+  #    so the standard paths inside configuration-fc.toml resolve
+  #    (path = /opt/kata/bin/firecracker, etc).
   - mkdir -p /opt/kata
   - |
     curl -sSL \
       https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
-      | tar -xJ -C /opt/kata --strip-components=1
+      | tar -xJ -C /opt/kata --strip-components=3
   - ln -sf /opt/kata/bin/kata-runtime /usr/local/bin/kata-runtime
-  - ln -sf /opt/kata/bin/containerd-shim-kata-fc-v2 /usr/local/bin/containerd-shim-kata-fc-v2
+  - ln -sf /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
 
   # 3. Restart containerd with Kata config.
   - systemctl daemon-reload
@@ -144,13 +148,27 @@ runcmd:
       [host."https://{{ .ECRRegistry }}".header]
         authorization = "Basic $auth"
     TOML
+      # kata-fc runtime drop-in — k0s's containerd doesn't read the
+      # system /etc/containerd/config.toml. The kata-static tarball
+      # ships a single shim "containerd-shim-kata-v2"; the FC variant
+      # is selected via the per-runtime ConfigPath, not a separate
+      # binary. Symlink the shim somewhere on the systemd-default
+      # PATH so containerd's shim-lookup resolves it.
+      ln -sf /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
+      cat >/etc/k0s/containerd.d/kata-fc.toml <<TOML
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
+      runtime_type = "io.containerd.kata.v2"
+      privileged_without_host_devices = true
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
+        ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+    TOML
       systemctl restart k0scontroller
       timeout 180 sh -c 'until k0s kubectl get ns >/dev/null 2>&1; do sleep 3; done'
     }
     setup_ecr_auth
 
   # 5b. Pull manifest tarball from S3.
-  - mkdir -p /var/lib/k0s/manifests/{spire,operator,samples} /tmp/images
+  - mkdir -p /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples} /tmp/images
   - |
     # NOTE: every runcmd entry runs in the same shell; an `exit`
     # inside one terminates the whole bootstrap. Use a function
@@ -160,10 +178,10 @@ runcmd:
         if aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz \
              /tmp/manifests.tar.gz --region us-east-2; then
           tar -xzf /tmp/manifests.tar.gz -C /var/lib/k0s/manifests/
-          chown -R root:root /var/lib/k0s/manifests/{spire,operator,samples}
+          chown -R root:root /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples}
           # Strip macOS AppleDouble files; if any leak through the
           # build script, k0s rejects the whole dir.
-          find /var/lib/k0s/manifests/{spire,operator,samples} \
+          find /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples} \
             -name '._*' -delete 2>/dev/null || true
           rm /tmp/manifests.tar.gz
           return 0

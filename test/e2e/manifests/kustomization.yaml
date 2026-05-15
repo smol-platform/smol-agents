@@ -4,3 +4,4 @@ namespace: tenant-a
 resources:
   - fake-llm.yaml
   - fake-gateway.yaml
+  - wg-hub.yaml

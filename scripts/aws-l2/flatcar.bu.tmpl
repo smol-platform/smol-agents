@@ -97,12 +97,12 @@ storage:
           timeout 120 sh -c 'until [ -f /var/lib/k0s/pki/admin.conf ]; do sleep 2; done' || fail "k0s admin.conf"
 
           # Bootstrap fakes / spire / operator from the S3 manifest tarball.
-          mkdir -p /var/lib/k0s/manifests/{spire,operator,samples,cert-manager}
+          mkdir -p /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples,cert-manager}
           for i in 1 2 3; do
             if /opt/bin/aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz \
                  /tmp/manifests.tar.gz --region us-east-2; then
               tar -xzf /tmp/manifests.tar.gz -C /var/lib/k0s/manifests/
-              chown -R root:root /var/lib/k0s/manifests/{spire,operator,samples}
+              chown -R root:root /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples}
               find /var/lib/k0s/manifests -name '._*' -delete 2>/dev/null || true
               rm /tmp/manifests.tar.gz
               break
