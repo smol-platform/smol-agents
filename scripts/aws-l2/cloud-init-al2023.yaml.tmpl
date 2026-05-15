@@ -203,13 +203,30 @@ runcmd:
     fail() {
       echo "BOOTSTRAP FAILED: $*" >>"$log"
       touch /var/log/l2-bootstrap.FAILED
-      # Upload cloud-init + k0s logs to S3 so the test driver can
-      # surface them after teardown (no need to keep the instance
-      # alive for post-mortem).
+      # Cluster post-mortem snapshot: every pod's state + describe +
+      # logs across the namespaces we provision. Without this the
+      # health-gate failures from the L2 driver look like "spire-
+      # server pod" with no signal about WHY.
+      {
+        echo === all-pods ===
+        k0s kubectl get pods -A -o wide
+        echo === events ===
+        k0s kubectl get events -A --sort-by=.lastTimestamp
+        for ns in spire-system knative-agents-system cert-manager tenant-a kube-system; do
+          echo === describe namespace=$ns ===
+          k0s kubectl describe pod -n $ns
+          echo === logs namespace=$ns ===
+          for p in $(k0s kubectl get pods -n $ns -o name 2>/dev/null); do
+            echo --- $ns/$p ---
+            k0s kubectl logs -n $ns "$p" --all-containers --tail=80 2>&1
+          done
+        done
+      } > /var/log/l2-postmortem.log 2>&1 || true
       tar -czf /tmp/bootstrap-fail-{{ .RunID }}.tgz \
         /var/log/cloud-init-output.log \
         /var/log/cloud-init.log \
         /var/log/l2-bootstrap.log \
+        /var/log/l2-postmortem.log \
         /var/log/syslog 2>/dev/null
       aws s3 cp /tmp/bootstrap-fail-{{ .RunID }}.tgz \
         s3://{{ .ArtifactBucket }}/bootstrap-fail/{{ .RunID }}.tgz \
@@ -255,5 +272,25 @@ runcmd:
         crd/knativeagents.agents.stigen.ai \
         crd/agentnetworks.runtime.agents.stigen.ai \
         crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+
+      # tenant-a fakes (PROXY-TCP/HTTP racing connection-refused).
+      wait_resource deployment tenant-a "" 180 || fail "tenant-a deployments not appearing"
+      $KCTL wait --for=condition=Available --timeout=180s \
+        deployment -n tenant-a --all || fail "tenant-a deployments"
+
+      # Sample KnativeAgent: block until operator reconciles to
+      # phase=Ready so KA-PHASE doesn't race the controller.
+      wait_ka_ready() {
+        local end=$(( $(date +%s) + 180 ))
+        while [ $(date +%s) -lt $end ]; do
+          phase=$($KCTL -n tenant-a get knativeagent hello -o jsonpath='{.status.phase}' 2>/dev/null)
+          if [ "$phase" = "Ready" ]; then return 0; fi
+          sleep 3
+        done
+        return 1
+      }
+      # Best-effort: a slow operator should fall through to the
+      # scenario's own 60s timeout, not block the entire bootstrap.
+      wait_ka_ready || echo "WARN: KnativeAgent hello not Ready in bootstrap; scenario will retry"
     } >>"$log" 2>&1
     touch /var/log/l2-bootstrap.READY

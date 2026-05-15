@@ -103,6 +103,20 @@ _check-l2-aws:
 e2e-l2: _check-l2-aws ## fullstack-e2e L2 ring (AWS Spot bare-metal, 12 min, USD 0.22/run)
 	$(GO) test -tags=e2e_l2 -timeout 30m -run TestL2$$ ./test/e2e/fullstack/l2/...
 
+# Resolves SG + subnet from terraform output so NodePort scenarios
+# can reach in-cluster Services from the host. Without this wiring
+# scenarios like AGENTRUN self-skip.
+.PHONY: e2e-l2-alldistros
+e2e-l2-alldistros: _check-l2-aws ## fullstack-e2e L2 across AL2023+Ubuntu+Flatcar with NodePort ingress
+	@: $${L2_ARTIFACT_BUCKET:?must be set}
+	@: $${L2_ECR_REGISTRY:?must be set}
+	@cd infra/terraform/aws-e2e && \
+	  sg=$$(terraform output -raw security_group_id) && \
+	  subnet=$$(terraform output -raw subnet_id) && \
+	  cd ../../.. && \
+	  L2_SECURITY_GROUP_ID=$$sg L2_SUBNET_ID=$$subnet \
+	    $(GO) test -tags=e2e_l2 -timeout 60m -run TestL2_AllDistros ./test/e2e/fullstack/l2/...
+
 .PHONY: e2e-l2-smoke
 e2e-l2-smoke: _check-l2-aws ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run)
 	$(GO) test -tags=e2e_l2 -timeout 15m -run TestL2_Smoke ./test/e2e/fullstack/l2/...

@@ -34,6 +34,7 @@ const requiredRegion = "us-east-2"
 type Cluster struct {
 	InstanceID string
 	PublicDNS  string
+	PublicIP   string
 	RunID      string
 	region     string
 	ec2c       *ec2.Client
@@ -96,7 +97,7 @@ func Provision(ctx context.Context) (*Cluster, error) {
 	runReq := &ec2.RunInstancesInput{
 		ImageId: aws.String(imageID),
 		InstanceType: types.InstanceType(
-			envOrDefault("L2_INSTANCE_TYPE", string(types.InstanceTypeC6gdMetal))),
+			envOrDefault("L2_INSTANCE_TYPE", string(types.InstanceTypeC7gdMetal))),
 		MinCount: aws.Int32(1),
 		MaxCount: aws.Int32(1),
 		IamInstanceProfile: &types.IamInstanceProfileSpecification{
@@ -120,6 +121,18 @@ func Provision(ctx context.Context) (*Cluster, error) {
 			MarketType: types.MarketTypeSpot,
 		}
 	}
+	// Attach the knative-agents-e2e-l2 SG (egress + intra-SG + NodePort
+	// ingress from the test runner). Without it, the instance falls
+	// back to the default VPC SG which gives intra-VPC ingress but
+	// blocks NodePort scenarios (AGENTRUN, WG-CLIENT, PROXY-*).
+	if sg := os.Getenv("L2_SECURITY_GROUP_ID"); sg != "" {
+		runReq.NetworkInterfaces = []types.InstanceNetworkInterfaceSpecification{{
+			DeviceIndex:              aws.Int32(0),
+			SubnetId:                 aws.String(envOrDefault("L2_SUBNET_ID", "")),
+			AssociatePublicIpAddress: aws.Bool(true),
+			Groups:                   []string{sg},
+		}}
+	}
 	out, err := ec2c.RunInstances(ctx, runReq)
 	if err != nil {
 		return nil, fmt.Errorf("run-instances: %w", err)
@@ -141,10 +154,14 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		_ = terminate(ctx, ec2c, *inst.InstanceId)
 		return nil, fmt.Errorf("describe: %w", err)
 	}
-	publicDNS := ""
+	publicDNS, publicIP := "", ""
 	if len(desc.Reservations) > 0 && len(desc.Reservations[0].Instances) > 0 {
-		if v := desc.Reservations[0].Instances[0].PublicDnsName; v != nil {
+		live := desc.Reservations[0].Instances[0]
+		if v := live.PublicDnsName; v != nil {
 			publicDNS = *v
+		}
+		if v := live.PublicIpAddress; v != nil {
+			publicIP = *v
 		}
 	}
 
@@ -167,6 +184,7 @@ func Provision(ctx context.Context) (*Cluster, error) {
 	return &Cluster{
 		InstanceID: *inst.InstanceId,
 		PublicDNS:  publicDNS,
+		PublicIP:   publicIP,
 		RunID:      runID,
 		region:     requiredRegion,
 		ec2c:       ec2c,

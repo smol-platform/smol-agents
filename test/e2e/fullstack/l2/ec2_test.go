@@ -147,10 +147,13 @@ func provisionAndWaitReady(t *testing.T) (env *l2Env, ok bool) {
 		}
 	})
 
-	t.Logf("L2 cluster up: instance=%s public_dns=%s run_id=%s",
-		cluster.InstanceID, cluster.PublicDNS, cluster.RunID)
+	t.Logf("L2 cluster up: instance=%s public_dns=%s public_ip=%s run_id=%s",
+		cluster.InstanceID, cluster.PublicDNS, cluster.PublicIP, cluster.RunID)
 
-	env = &l2Env{ssm: cluster.ssmc, instanceID: cluster.InstanceID}
+	// AsEnv populates publicIP — required so scenarios that dial
+	// fake-llm via NodePort (AGENTRUN) actually run instead of
+	// self-skipping.
+	env = cluster.AsEnv().(*l2Env)
 	distro := ResolveDistro()
 
 	// Bottlerocket: SSM-Online IS the smoke. Three architectural

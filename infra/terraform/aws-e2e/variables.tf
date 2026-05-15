@@ -31,6 +31,17 @@ variable "github_repository" {
   default     = "stigen/knative-agents"
 }
 
+# IP allow-list for NodePort ingress used by the L2 driver to reach
+# in-cluster services (fake-llm:30080, fake-gateway etc.). Default
+# is empty — no ingress, scenarios requiring driver→cluster HTTP
+# self-skip. Set to a /32 (your runner's WAN IP) to enable those
+# scenarios.
+variable "test_runner_ingress_cidr" {
+  description = "CIDR allowed inbound on L2 NodePorts (e.g. 64.96.82.37/32). Empty = no ingress."
+  type        = string
+  default     = ""
+}
+
 variable "instance_type" {
   description = "Bare-metal instance type for L2. Locked to c6gd.metal (only path to /dev/kvm at lowest Spot price)."
   type        = string

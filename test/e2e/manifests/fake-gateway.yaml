@@ -46,6 +46,15 @@ spec:
           ports:
             - { name: http, containerPort: 8080 }
             - { name: tcp,  containerPort: 8443 }
+          # Without a readiness probe the Deployment goes Available
+          # before the TCP listener binds, which lets PROXY-TCP race
+          # the dial and fail with "connection refused". The 8443
+          # socket comes up only after the SPIRE workload-API
+          # handshake, so it's the right gate for "really ready".
+          readinessProbe:
+            tcpSocket: { port: 8443 }
+            initialDelaySeconds: 1
+            periodSeconds: 1
           volumeMounts:
             - name: sockets
               mountPath: /run/spire/agent-sockets

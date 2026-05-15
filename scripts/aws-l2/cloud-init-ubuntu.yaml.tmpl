@@ -256,5 +256,29 @@ runcmd:
         crd/knativeagents.agents.stigen.ai \
         crd/agentnetworks.runtime.agents.stigen.ai \
         crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+
+      # tenant-a fakes: PROXY-TCP raced on Ubuntu (connection
+      # refused) because fake-gateway hadn't bound its listener
+      # when the scenario dialed in. Block READY until both
+      # Deployments are Available.
+      wait_resource deployment tenant-a "" 180 || fail "tenant-a deployments not appearing"
+      $KCTL wait --for=condition=Available --timeout=180s \
+        deployment -n tenant-a --all || fail "tenant-a deployments"
+
+      # Sample KnativeAgent: KA-PHASE timed out on Ubuntu waiting
+      # for status.phase=Ready. Block until the operator finishes
+      # reconciling so the scenario starts from a stable state.
+      wait_ka_ready() {
+        local end=$(( $(date +%s) + 180 ))
+        while [ $(date +%s) -lt $end ]; do
+          phase=$($KCTL -n tenant-a get knativeagent hello -o jsonpath='{.status.phase}' 2>/dev/null)
+          if [ "$phase" = "Ready" ]; then return 0; fi
+          sleep 3
+        done
+        return 1
+      }
+      # Best-effort: a slow operator should fall through to the
+      # scenario's own 60s timeout, not block the entire bootstrap.
+      wait_ka_ready || echo "WARN: KnativeAgent hello not Ready in bootstrap; scenario will retry"
     } >>"$log" 2>&1
     touch /var/log/l2-bootstrap.READY

@@ -100,6 +100,24 @@ if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
   rm "$WORK/tenant/10-fakes.yaml.bak"
 fi
 
+# Promote fake-llm + fake-gateway Services to NodePort so the L2
+# driver (running outside the cluster) can reach them via the
+# instance's public IP. Ports must match what l2Env.Endpoint(...)
+# advertises and what terraform's test_runner_ingress_cidr SG rules
+# allow: fake-llm=30080, fake-gateway-http=30081, fake-gateway-tcp=
+# 30443. Kept out of the kind/L1 source so that ring stays
+# ClusterIP-only.
+if ! command -v yq >/dev/null 2>&1; then
+  echo "yq is required to patch fake Services to NodePort" >&2
+  exit 1
+fi
+yq -i '(select(.kind == "Service" and .metadata.name == "fake-llm") | .spec.type) = "NodePort" |
+       (select(.kind == "Service" and .metadata.name == "fake-llm") | .spec.ports[] | select(.port == 8080) | .nodePort) = 30080 |
+       (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.type) = "NodePort" |
+       (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.ports[] | select(.port == 8080) | .nodePort) = 30081 |
+       (select(.kind == "Service" and .metadata.name == "fake-gateway") | .spec.ports[] | select(.port == 8443) | .nodePort) = 30443' \
+       "$WORK/tenant/10-fakes.yaml"
+
 # 4. Sample CRs (Platform + KnativeAgent + ModelProvider + Tool +
 #    Agent + AgentRun + AgentNetwork). The Platform CR must apply
 #    BEFORE any KnativeAgent CR, so we prefix-order them. Tenant

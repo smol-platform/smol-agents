@@ -146,6 +146,27 @@ storage:
             crd/agentnetworks.runtime.agents.stigen.ai \
             crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
 
+          # tenant-a fakes (PROXY-TCP/HTTP racing connection-refused).
+          wait_resource deployment tenant-a "" 180 || fail "tenant-a deployments not appearing"
+          $KCTL wait --for=condition=Available --timeout=180s \
+            deployment -n tenant-a --all || fail "tenant-a deployments"
+
+          # Sample KnativeAgent: block until operator reconciles to
+          # phase=Ready so KA-PHASE doesn't race the controller.
+          wait_ka_ready() {
+            local end=$(( $(date +%s) + 180 ))
+            while [ $(date +%s) -lt $end ]; do
+              phase=$($KCTL -n tenant-a get knativeagent hello -o jsonpath='{.status.phase}' 2>/dev/null)
+              if [ "$phase" = "Ready" ]; then return 0; fi
+              sleep 3
+            done
+            return 1
+          }
+          # Best-effort: a slow operator should fall through to
+          # the scenario's own 60s timeout, not block the entire
+          # bootstrap.
+          wait_ka_ready || echo "WARN: KnativeAgent hello not Ready in bootstrap; scenario will retry"
+
           touch /var/log/l2-bootstrap.READY
           echo "=== bootstrap complete ==="
 

@@ -77,7 +77,7 @@ locals {
 
 resource "aws_security_group" "l2" {
   name        = "knative-agents-e2e-l2"
-  description = "Egress only; no inbound. SSM-managed, no SSH."
+  description = "L2 e2e: full egress, intra-SG full ingress, NodePort 30080/30443 from caller IP."
   vpc_id      = local.vpc_id
 
   egress {
@@ -91,4 +91,54 @@ resource "aws_security_group" "l2" {
   tags = {
     Name = "knative-agents-e2e-l2"
   }
+}
+
+# Intra-SG: every instance in this SG can talk to every other on
+# any port. Replaces the default-VPC SG behaviour for instances we
+# launch with knative-agents-e2e-l2 attached.
+resource "aws_security_group_rule" "l2_intra" {
+  type              = "ingress"
+  description       = "intra-SG: all traffic"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  security_group_id = aws_security_group.l2.id
+  self              = true
+}
+
+# NodePort exposure for driver-to-cluster scenarios (fake-llm at
+# 30080, fake-gateway at 30443 — phases A and B of the SKIPPED-
+# scenarios plan). Only created when test_runner_ingress_cidr is
+# set; defaults to closed.
+resource "aws_security_group_rule" "l2_nodeport_fake_llm" {
+  count             = var.test_runner_ingress_cidr == "" ? 0 : 1
+  type              = "ingress"
+  description       = "test-runner ingress to fake-llm NodePort"
+  from_port         = 30080
+  to_port           = 30080
+  protocol          = "tcp"
+  cidr_blocks       = [var.test_runner_ingress_cidr]
+  security_group_id = aws_security_group.l2.id
+}
+
+resource "aws_security_group_rule" "l2_nodeport_fake_gateway_http" {
+  count             = var.test_runner_ingress_cidr == "" ? 0 : 1
+  type              = "ingress"
+  description       = "test-runner ingress to fake-gateway HTTP NodePort"
+  from_port         = 30081
+  to_port           = 30081
+  protocol          = "tcp"
+  cidr_blocks       = [var.test_runner_ingress_cidr]
+  security_group_id = aws_security_group.l2.id
+}
+
+resource "aws_security_group_rule" "l2_nodeport_fake_gateway_tcp" {
+  count             = var.test_runner_ingress_cidr == "" ? 0 : 1
+  type              = "ingress"
+  description       = "test-runner ingress to fake-gateway TCP NodePort"
+  from_port         = 30443
+  to_port           = 30443
+  protocol          = "tcp"
+  cidr_blocks       = [var.test_runner_ingress_cidr]
+  security_group_id = aws_security_group.l2.id
 }

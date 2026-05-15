@@ -34,10 +34,15 @@ type ssmAPI interface {
 type l2Env struct {
 	ssm        ssmAPI
 	instanceID string
+	publicIP   string
 }
 
 func (c *Cluster) AsEnv() shared.Env {
-	return &l2Env{ssm: c.ssmc, instanceID: c.InstanceID}
+	return &l2Env{
+		ssm:        c.ssmc,
+		instanceID: c.InstanceID,
+		publicIP:   c.PublicIP,
+	}
 }
 
 func (e *l2Env) Capabilities() shared.Caps {
@@ -97,19 +102,26 @@ func (e *l2Env) WaitFor(ctx context.Context, name string, deadline time.Duration
 
 func (e *l2Env) Cleanup(_ context.Context) error { return nil }
 
-// Endpoint at L2 returns the in-cluster Service DNS for scenarios
-// that pass the URL into a probe Pod (PROXY-TCP, PROXY-HTTP) —
-// cluster.local resolves inside the cluster and the L2 driver's
-// CapInClusterProbe branch keeps those scenarios on the
-// RunSpiffeProbe path. Scenarios that dial DIRECTLY from the test
-// driver (AGENTRUN's executor.Run, etc.) get ok=false and skip,
-// because we don't bridge host ↔ cluster DNS over SSM.
+// Endpoint at L2 returns:
+//   - in-cluster Service DNS for scenarios that pass the URL into
+//     a probe Pod (PROXY-TCP, PROXY-HTTP) — cluster.local resolves
+//     inside the cluster and the L2 driver's CapInClusterProbe
+//     branch keeps those scenarios on the RunSpiffeProbe path.
+//   - NodePort URL on the instance public IP for scenarios that
+//     dial DIRECTLY from the test driver (AGENTRUN's executor.Run),
+//     when SG ingress is wired (L2_SECURITY_GROUP_ID + terraform
+//     var test_runner_ingress_cidr). Without that, returns ok=false
+//     and scenarios self-skip cleanly.
 func (e *l2Env) Endpoint(name string) (string, bool) {
 	switch name {
 	case "fake-gateway-http":
 		return "http://fake-gateway.tenant-a.svc.cluster.local:8080", true
 	case "fake-gateway-tcp":
 		return "fake-gateway.tenant-a.svc.cluster.local:8443", true
+	case "fake-llm":
+		if e.publicIP != "" {
+			return fmt.Sprintf("http://%s:30080", e.publicIP), true
+		}
 	}
 	return "", false
 }
