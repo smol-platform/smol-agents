@@ -57,8 +57,11 @@ func ResolveDistro() Distro {
 func (d Distro) AMI(ctx context.Context, ec2c *ec2.Client, ssmc *ssm.Client) (string, error) {
 	switch d {
 	case DistroAL2023:
+		// Pin to kernel-6.12 AMI: kata-fc + nydus-snapshotter
+		// (blockdev/tarfs mode) needs EROFS tarfs support which only
+		// landed in 6.4. The default kernel image still ships 6.1.
 		return ssmAMI(ctx, ssmc,
-			"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64")
+			"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.12-arm64")
 	case DistroBottlerocket:
 		// general-purpose ECS variant. We tried aws-k8s-1.31 for
 		// the kubeadm bootstrap pattern but pluto's EC2 probe

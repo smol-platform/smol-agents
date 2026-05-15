@@ -1,25 +1,6 @@
 #cloud-config
-#
-# L2 e2e cloud-init template. Rendered by the L2 driver at Provision
-# time with these Go-template variables:
-#
-#   .ArtifactBucket  S3 bucket holding manifests.tar.gz + images.tar
-#   .ECRRegistry     ECR registry hostname (account.dkr.ecr.us-east-2.amazonaws.com)
-#   .ImageTag        Image tag to pull (git SHA)
-#   .RunID           Random hex from Provision; used in log paths
-#
-# Bring-up sequence (~5 min from instance-start to sentinel):
-#   1. dnf install: containerd, runc, jq, awscli, tar
-#   2. download Kata-Containers static bundle (arm64, ~150MB)
-#   3. write containerd config registering kata-fc runtime
-#   4. install k0s, start in single-controller mode
-#   5. pull manifest tarball + image tarball from S3 (fast: same region)
-#   6. import images into k0s containerd, drop manifests under
-#      /var/lib/k0s/manifests/ (k0s manifest watcher applies them)
-#   7. write sentinel file /var/log/l2-bootstrap.READY
-#
-# Spot interruption hook listens on IMDS /spot/instance-action and
-# uploads /var/log/*.log to S3 before the 2-min deadline (R-E2E-CLEAN-4).
+# L2 e2e cloud-init template; vars: .ArtifactBucket .ECRRegistry
+# .ImageTag .RunID. See scripts/aws-l2/cloud-init-al2023.README.md.
 
 packages:
   - containerd
@@ -90,18 +71,65 @@ runcmd:
   # 1. BPF FS (cgroup_skb/egress and cgroup/connect4 need this).
   - mount bpffs /sys/fs/bpf -t bpf || true
 
-  # 2. Install Kata-Containers static bundle. The 3.10 tarball is
-  #    laid out as `<top>/opt/kata/{bin,share,libexec}/…`;
-  #    --strip-components=3 flattens that to `/opt/kata/{bin,share,…}`
-  #    so the standard paths inside configuration-fc.toml resolve
-  #    (path = /opt/kata/bin/firecracker, etc).
+  # 2. Kata static bundle (3.10 arm64, --strip-components=3 yields
+  #    /opt/kata/{bin,share,libexec}).
   - mkdir -p /opt/kata
   - |
-    curl -sSL \
-      https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
+    curl -sSL https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
       | tar -xJ -C /opt/kata --strip-components=3
   - ln -sf /opt/kata/bin/kata-runtime /usr/local/bin/kata-runtime
   - ln -sf /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
+
+  # 2b. nydus + nydus-snapshotter blockdev/tarfs — kata-fc needs the
+  #     container rootfs as a block device; nydus rewrites OCI layers
+  #     into EROFS+verity images on the fly. Needs EROFS >=6.4 (pinned
+  #     via the kernel-6.12 AMI).
+  - mkdir -p /opt/nydus /opt/nydus-snapshotter /etc/nydus
+  - |
+    curl -sSL https://github.com/dragonflyoss/nydus/releases/download/v2.4.3/nydus-static-v2.4.3-linux-arm64.tgz \
+      | tar -xz -C /opt/nydus --strip-components=1
+    ln -sf /opt/nydus/nydusd      /usr/local/bin/nydusd
+    ln -sf /opt/nydus/nydus-image /usr/local/bin/nydus-image
+    curl -sSL https://github.com/containerd/nydus-snapshotter/releases/download/v0.15.15/nydus-snapshotter-v0.15.15-linux-arm64.tar.gz \
+      | tar -xz -C /opt/nydus-snapshotter --strip-components=1
+    ln -sf /opt/nydus-snapshotter/containerd-nydus-grpc /usr/local/bin/containerd-nydus-grpc
+  - |
+    cat >/etc/nydus/config.toml <<'TOML'
+    version = 1
+    root = "/var/lib/containerd/io.containerd.snapshotter.v1.nydus"
+    address = "/run/containerd-nydus/containerd-nydus-grpc.sock"
+    daemon_mode = "none"
+    [daemon]
+    fs_driver = "blockdev"
+    nydusimage_path = "/usr/local/bin/nydus-image"
+    recover_policy = "failover"
+    [remote]
+    skip_ssl_verify = true
+    [snapshot]
+    enable_kata_volume = true
+    [experimental.tarfs]
+    enable_tarfs = true
+    mount_tarfs_on_host = false
+    export_mode = "image_block_with_verity"
+    [log]
+    level = "info"
+    TOML
+    cat >/etc/systemd/system/nydus-snapshotter.service <<'UNIT'
+    [Unit]
+    Description=nydus snapshotter
+    After=network.target
+    Before=k0scontroller.service
+    [Service]
+    Type=simple
+    ExecStartPre=/bin/mkdir -p /run/containerd-nydus
+    ExecStart=/usr/local/bin/containerd-nydus-grpc --config /etc/nydus/config.toml
+    Restart=always
+    RestartSec=1
+    [Install]
+    WantedBy=multi-user.target
+    UNIT
+    systemctl daemon-reload
+    systemctl enable --now nydus-snapshotter
 
   # 3. Restart containerd with Kata config.
   - systemctl daemon-reload
@@ -140,6 +168,17 @@ runcmd:
       cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
     [plugins."io.containerd.grpc.v1.cri".registry]
       config_path = "/etc/containerd/certs.d"
+    # nydus snapshotter must be the global default + annotations
+    # must pass through, otherwise image pulls land in overlayfs
+    # and the kata-fc runtime's per-runtime snapshotter=nydus has
+    # nothing to mount.
+    [plugins."io.containerd.grpc.v1.cri".containerd]
+      snapshotter = "nydus"
+      disable_snapshot_annotations = false
+    [proxy_plugins]
+      [proxy_plugins.nydus]
+        type = "snapshot"
+        address = "/run/containerd-nydus/containerd-nydus-grpc.sock"
     TOML
       cat >/etc/containerd/certs.d/{{ .ECRRegistry }}/hosts.toml <<TOML
     server = "https://{{ .ECRRegistry }}"
@@ -159,6 +198,7 @@ runcmd:
     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
       runtime_type = "io.containerd.kata.v2"
       privileged_without_host_devices = true
+      snapshotter = "nydus"
       [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
         ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
     TOML
