@@ -288,14 +288,43 @@ var ebpfDrop = Scenario{
 	ID:       "R-E2E-SCN-EBPF-DROP",
 	Name:     "ebpf-blocks-disallowed-cidr",
 	Requires: CapEBPF | CapNetworkEgress | CapKubernetes,
-	Run:      todo("eBPF drop body lands in T-2.7 (L1)"),
+	Run:      runEBPFDrop,
+}
+
+func runEBPFDrop(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	lines, err := env.RunEBPFProbe(ctx, []string{"drop"},
+		"--allow-cidr=127.0.0.1/32", "--allow-port=8080",
+		"--dropped-addr=1.1.1.1:80")
+	if err != nil {
+		t.Fatalf("RunEBPFProbe: %v", err)
+	}
+	assertProbeOK(t, lines, "drop")
 }
 
 var ebpfRedirect = Scenario{
 	ID:       "R-E2E-SCN-EBPF-REDIR",
 	Name:     "ebpf-redirects-to-sidecar",
 	Requires: CapEBPF | CapKubernetes,
-	Run:      todo("eBPF redirect body lands in T-2.8 (L1)"),
+	Run:      runEBPFRedirect,
+}
+
+func runEBPFRedirect(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// 203.0.113.0/24 is in the TEST-NET-3 documentation range —
+	// nothing real routes there, so any "successful" connect to
+	// 203.0.113.42 can only have come from the BPF redirect.
+	lines, err := env.RunEBPFProbe(ctx, []string{"redir"},
+		"--redirect-cidr=203.0.113.42/32", "--redirect-port=80",
+		"--sidecar-port=19999")
+	if err != nil {
+		t.Fatalf("RunEBPFProbe: %v", err)
+	}
+	assertProbeOK(t, lines, "redir")
 }
 
 var wgClient = Scenario{

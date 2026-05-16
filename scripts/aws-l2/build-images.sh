@@ -50,6 +50,7 @@ images=(
   "fake-gateway deploy/docker/fake-gateway.Dockerfile    ."
   "spire-shell  scripts/e2e/spire/Dockerfile.spire-shell scripts/e2e/spire"
   "spiffe-probe deploy/docker/spiffe-probe.Dockerfile    ."
+  "ebpf-probe   deploy/docker/ebpf-probe.Dockerfile      ."
   "bottlerocket-bootstrap scripts/aws-l2/bottlerocket-bootstrap/Dockerfile scripts/aws-l2/bottlerocket-bootstrap"
 )
 

@@ -146,6 +146,43 @@ func (e *l2Env) SPIFFEWorkloadAPI() string {
 	return "unix:///run/spire/agent-sockets/api.sock"
 }
 
+func (e *l2Env) RunEBPFProbe(ctx context.Context, scenarios []string, args ...string) ([]shared.ProbeLine, error) {
+	pod := fmt.Sprintf("ebpf-probe-%d", time.Now().UnixNano())
+	probeArgs := append([]string{"--scenarios=" + strings.Join(scenarios, ",")}, args...)
+
+	// Privileged + hostPID + hostNetwork so we can attach a cgroup
+	// program to a path that survives the pod-cgroup namespace and
+	// actually filters egress. /sys/fs/cgroup must be writable so
+	// link.AttachCgroup can open the cgroup dir; /sys/kernel/btf is
+	// the CO-RE source.
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata: { name: %s, namespace: tenant-a }
+spec:
+  restartPolicy: Never
+  hostPID: true
+  hostNetwork: false
+  containers:
+    - name: probe
+      image: %s/knative-agents/ebpf-probe:%s
+      args: %s
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - { name: cgroup,  mountPath: /sys/fs/cgroup }
+        - { name: bpffs,   mountPath: /sys/fs/bpf }
+        - { name: btf,     mountPath: /sys/kernel/btf, readOnly: true }
+  volumes:
+    - name: cgroup
+      hostPath: { path: /sys/fs/cgroup, type: Directory }
+    - name: bpffs
+      hostPath: { path: /sys/fs/bpf, type: DirectoryOrCreate }
+    - name: btf
+      hostPath: { path: /sys/kernel/btf, type: Directory }
+`, pod, ecrRegistry(), imageTag(), shared.JSONStringList(probeArgs))
+	return e.runOneShotProbe(ctx, pod, manifest)
+}
+
 func (e *l2Env) RunSpiffeProbe(ctx context.Context, scenarios []string, args ...string) ([]shared.ProbeLine, error) {
 	pod := fmt.Sprintf("spiffe-probe-%d", time.Now().UnixNano())
 	probeArgs := append([]string{"--scenarios=" + strings.Join(scenarios, ",")}, args...)
@@ -165,7 +202,14 @@ spec:
     - name: sockets
       hostPath: { path: /run/spire/agent-sockets, type: DirectoryOrCreate }
 `, pod, ecrRegistry(), imageTag(), shared.JSONStringList(probeArgs))
+	return e.runOneShotProbe(ctx, pod, manifest)
+}
 
+// runOneShotProbe applies a one-shot Pod, waits for it to Succeed,
+// returns the parsed OK/FAIL lines from its logs. Used by both
+// RunSpiffeProbe and RunEBPFProbe — the only difference between them
+// is the manifest.
+func (e *l2Env) runOneShotProbe(ctx context.Context, pod, manifest string) ([]shared.ProbeLine, error) {
 	if err := e.Apply(ctx, []byte(manifest)); err != nil {
 		return nil, fmt.Errorf("apply probe pod: %w", err)
 	}
@@ -175,8 +219,8 @@ spec:
 	}()
 
 	if _, err := e.runSSM(ctx,
-		fmt.Sprintf("k0s kubectl -n tenant-a wait --for=jsonpath='{.status.phase}'=Succeeded pod/%s --timeout=30s", pod),
-		60*time.Second); err != nil {
+		fmt.Sprintf("k0s kubectl -n tenant-a wait --for=jsonpath='{.status.phase}'=Succeeded pod/%s --timeout=60s", pod),
+		90*time.Second); err != nil {
 		out, _ := e.runSSM(ctx,
 			fmt.Sprintf("k0s kubectl -n tenant-a logs %s", pod), 30*time.Second)
 		return shared.ParseProbeLines(string(out)),

@@ -73,6 +73,18 @@ type Env interface {
 	// scenarios that depend on this self-skip via Capability gating
 	// before getting here.
 	RunSpiffeProbe(ctx context.Context, scenarios []string, args ...string) ([]ProbeLine, error)
+
+	// RunEBPFProbe launches a privileged in-cluster Pod running
+	// cmd/ebpf-probe with the requested scenarios. The probe
+	// loads bpf/programs/egress_redirect.bpf.o, attaches to its
+	// own cgroup, populates the LPM trie / hash maps with the
+	// args-driven policy, and verifies the kernel egress filter
+	// behaves as advertised. Returns the parsed OK/FAIL lines
+	// just like RunSpiffeProbe.
+	//
+	// Rings without privileged pod support (L0, kind without
+	// extra mounts) self-skip via the CapEBPF gate.
+	RunEBPFProbe(ctx context.Context, scenarios []string, args ...string) ([]ProbeLine, error)
 }
 
 // ProbeLine is one parsed result line from cmd/spiffe-probe's stdout.

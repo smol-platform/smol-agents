@@ -159,6 +159,10 @@ func (e *composeEnv) RunSpiffeProbe(_ context.Context, _ []string, _ ...string) 
 	return nil, errors.New("l0: in-cluster probe unavailable")
 }
 
+func (e *composeEnv) RunEBPFProbe(_ context.Context, _ []string, _ ...string) ([]shared.ProbeLine, error) {
+	return nil, errors.New("l0: in-cluster eBPF probe unavailable")
+}
+
 // run executes a command, streaming output to stderr on failure.
 func run(ctx context.Context, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)

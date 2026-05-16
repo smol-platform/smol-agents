@@ -5,6 +5,7 @@ package l1
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -352,6 +353,15 @@ func (e *kindEnv) canReachSPIREInCluster() bool {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "Running"
+}
+
+// RunEBPFProbe is not implemented at L1 yet — kind doesn't ship
+// the privileged volume mounts the probe needs (cgroupfs +
+// /sys/kernel/btf). Returning an error lets the scenario degrade
+// to t.Fatalf if it's invoked, but the EBPF scenarios already
+// self-skip on CapEBPF when the kind setup doesn't advertise it.
+func (e *kindEnv) RunEBPFProbe(_ context.Context, _ []string, _ ...string) ([]shared.ProbeLine, error) {
+	return nil, errors.New("l1: ebpf probe Pod not wired (TODO: privileged + bpffs/cgroup mounts)")
 }
 
 // RunSpiffeProbe applies a one-shot Pod running cmd/spiffe-probe
