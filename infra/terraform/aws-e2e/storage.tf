@@ -71,6 +71,26 @@ resource "aws_ecr_repository" "spire_shell" {
   image_tag_mutability = "MUTABLE"
 }
 
+# spiffe-probe + ebpf-probe: one-shot Pods that exercise the
+# SPIFFE workload-API and the cgroup-attached eBPF egress filter
+# respectively. Built from cmd/spiffe-probe and cmd/ebpf-probe.
+resource "aws_ecr_repository" "spiffe_probe" {
+  name                 = "knative-agents/spiffe-probe"
+  image_tag_mutability = "MUTABLE"
+}
+
+resource "aws_ecr_repository" "ebpf_probe" {
+  name                 = "knative-agents/ebpf-probe"
+  image_tag_mutability = "MUTABLE"
+}
+
+# bottlerocket-bootstrap is the kata-fc base bootstrap container
+# used by the Bottlerocket distro investigation.
+resource "aws_ecr_repository" "bottlerocket_bootstrap" {
+  name                 = "knative-agents/bottlerocket-bootstrap"
+  image_tag_mutability = "MUTABLE"
+}
+
 resource "aws_ecr_lifecycle_policy" "trim" {
   for_each = toset([
     aws_ecr_repository.operator.name,
@@ -80,6 +100,9 @@ resource "aws_ecr_lifecycle_policy" "trim" {
     aws_ecr_repository.fake_llm.name,
     aws_ecr_repository.fake_gateway.name,
     aws_ecr_repository.spire_shell.name,
+    aws_ecr_repository.spiffe_probe.name,
+    aws_ecr_repository.ebpf_probe.name,
+    aws_ecr_repository.bottlerocket_bootstrap.name,
   ])
   repository = each.value
   policy = jsonencode({

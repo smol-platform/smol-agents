@@ -45,13 +45,13 @@ func TestEncodeRedirect_NetworkByteOrder(t *testing.T) {
 	if k.PrefixLen != 16 {
 		t.Errorf("prefix = %d", k.PrefixLen)
 	}
-	// 10.42.0.0 in network byte order = 0x0a2a0000
-	if k.Addr != 0x0a2a0000 {
-		t.Errorf("addr = %#x", k.Addr)
+	// 10.42.0.0 in network byte order = bytes [0x0a, 0x2a, 0x00, 0x00]
+	if k.Addr != [4]byte{0x0a, 0x2a, 0x00, 0x00} {
+		t.Errorf("addr = %v", k.Addr)
 	}
-	// 127.0.0.1 = 0x7f000001
-	if v.SidecarIP != 0x7f000001 {
-		t.Errorf("sidecarIP = %#x", v.SidecarIP)
+	// 127.0.0.1 = bytes [0x7f, 0x00, 0x00, 0x01]
+	if v.SidecarIP != [4]byte{0x7f, 0x00, 0x00, 0x01} {
+		t.Errorf("sidecarIP = %v", v.SidecarIP)
 	}
 }
 

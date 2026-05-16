@@ -1,7 +1,6 @@
 package cgroup
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -13,24 +12,32 @@ import (
 // RedirectKey is the BPF LPM_TRIE key used by `redirect_cidrs`. The
 // layout matches the C struct in egress_redirect.bpf.c — the BPF
 // driver expects exactly this byte shape.
+//
+// IPv4 fields are [4]byte (network byte order) rather than uint32
+// so the cilium/ebpf marshaller, which serialises scalars in HOST
+// byte order, doesn't byte-swap them out from under the BPF
+// program. The BPF program copies ctx->user_ip4 (a __u32 whose
+// in-memory bytes are network order) directly; an LE-host uint32
+// with the same numeric value would serialise to the reverse byte
+// pattern and miss every LPM lookup.
 type RedirectKey struct {
 	PrefixLen uint32
-	Addr      uint32 // network byte order (big-endian)
+	Addr      [4]byte // network byte order
 }
 
 // RedirectValue is the LPM_TRIE value: where to redirect to.
 type RedirectValue struct {
-	SidecarIP   uint32 // network byte order
-	SidecarPort uint16 // host byte order; the BPF program htons-es
+	SidecarIP   [4]byte // network byte order
+	SidecarPort uint16  // host byte order; the BPF program htons-es
 	Pad         uint16
 }
 
 // AllowKey mirrors the C struct in egress_redirect.bpf.c.
 type AllowKey struct {
 	CgroupID uint64
-	DstIP    uint32 // network byte order
-	DstPort  uint16 // host byte order
-	Proto    uint8  // 6=tcp 17=udp
+	DstIP    [4]byte // network byte order
+	DstPort  uint16  // host byte order
+	Proto    uint8   // 6=tcp 17=udp
 	Pad      uint8
 }
 
@@ -109,13 +116,11 @@ func EncodeRedirect(e RedirectEntry) (RedirectKey, RedirectValue, error) {
 	if side == nil {
 		return RedirectKey{}, RedirectValue{}, errors.New("sidecarIP not IPv4")
 	}
-	return RedirectKey{
-			PrefixLen: uint32(mask),
-			Addr:      binary.BigEndian.Uint32(ip),
-		}, RedirectValue{
-			SidecarIP:   binary.BigEndian.Uint32(side),
-			SidecarPort: e.SidecarPort,
-		}, nil
+	k := RedirectKey{PrefixLen: uint32(mask)}
+	copy(k.Addr[:], ip)
+	v := RedirectValue{SidecarPort: e.SidecarPort}
+	copy(v.SidecarIP[:], side)
+	return k, v, nil
 }
 
 // EncodeAllow expands one CIDR-based AllowEntry into (key, value)
@@ -144,12 +149,13 @@ func EncodeAllow(e AllowEntry) ([]AllowKey, error) {
 	default:
 		return nil, fmt.Errorf("proto=%q invalid", e.Proto)
 	}
-	return []AllowKey{{
+	k := AllowKey{
 		CgroupID: e.CgroupID,
-		DstIP:    binary.BigEndian.Uint32(ip),
 		DstPort:  e.Port,
 		Proto:    proto,
-	}}, nil
+	}
+	copy(k.DstIP[:], ip)
+	return []AllowKey{k}, nil
 }
 
 // FakeDriver is an in-memory stand-in used by tests + envtest. Stores
