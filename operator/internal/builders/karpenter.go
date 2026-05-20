@@ -60,9 +60,9 @@ func KarpenterNames(anp *v1.AgentNodePool) (nodePool, nodeClass string) {
 	return "anp-" + anp.Name, "anp-" + anp.Name
 }
 
-// requiresKVM reports whether an isolation needs /dev/kvm (hence a
+// RequiresKVM reports whether an isolation needs /dev/kvm (hence a
 // bare-metal node). Only the kata variants run a real microVM.
-func requiresKVM(isolation string) bool {
+func RequiresKVM(isolation string) bool {
 	return strings.HasPrefix(isolation, "kata")
 }
 
@@ -75,7 +75,7 @@ func BuildKarpenterNodePool(anp *v1.AgentNodePool, nodeClassName string) *unstru
 	if len(anp.Spec.InstanceFamilies) > 0 {
 		reqs = append(reqs, requirement("karpenter.k8s.aws/instance-family", "In", anp.Spec.InstanceFamilies))
 	}
-	if requiresKVM(anp.Spec.Isolation) {
+	if RequiresKVM(anp.Spec.Isolation) {
 		// metal size is what exposes /dev/kvm on AWS.
 		reqs = append(reqs, requirement("karpenter.k8s.aws/instance-size", "In", []string{"metal"}))
 	}

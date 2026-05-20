@@ -39,7 +39,18 @@ func (r KnativeReconciler) Reconcile(ctx context.Context, env Env) (Result, []cl
 		gvr := schema.GroupVersionResource{Group: "serving.knative.dev", Version: "v1", Resource: "services"}
 		_ = gvr // we don't actually list here to avoid pulling dynamic client; presence is checked by builder + apply step
 	}
-	owned := []client.Object{builders.BuildKnativeService(cr)}
+	svc := builders.BuildKnativeService(cr)
+	// Bind kata agents to their node pool (auto-match by isolation). When
+	// no pool matches we still render the Service; the no-KVM fallback is
+	// handled by the Sandbox feature (R-PROV-2).
+	if p, ok, err := ResolvePlacement(ctx, env); err != nil {
+		res.Reason = "PlacementError"
+		res.Message = err.Error()
+		return res, nil, err
+	} else if ok {
+		builders.ApplyKnativePlacement(svc, *p)
+	}
+	owned := []client.Object{svc}
 	res.Ready = true
 	res.Reason = "Reconciled"
 	return res, owned, nil

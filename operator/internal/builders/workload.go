@@ -353,3 +353,110 @@ func toStringSlice(in []string) []any {
 	}
 	return out
 }
+
+// NodePlacement binds an agent's pod to its AgentNodePool: the pool's node
+// label (for nodeAffinity) and the isolation taint it must tolerate. The
+// controller resolves it (auto-match by isolation) and applies it to every
+// workload kind so kata pods land only on kata-capable nodes. R-PROV-2.
+type NodePlacement struct {
+	PoolName  string
+	Isolation string
+}
+
+// DoNotDisruptAnnotation tells Karpenter never to voluntarily disrupt the
+// node running this pod — a live Firecracker microVM must not be
+// consolidated out from under running work. R-PROV-5.
+const DoNotDisruptAnnotation = "karpenter.sh/do-not-disrupt"
+
+func placementNodeAffinity(p NodePlacement) *corev1.NodeAffinity {
+	return &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key:      PoolLabelKey,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{p.PoolName},
+				}},
+			}},
+		},
+	}
+}
+
+func placementToleration(p NodePlacement) corev1.Toleration {
+	return corev1.Toleration{
+		Key:      IsolationTaintKey,
+		Operator: corev1.TolerationOpEqual,
+		Value:    p.Isolation,
+		Effect:   corev1.TaintEffectNoSchedule,
+	}
+}
+
+// ApplyPodTemplatePlacement binds a typed pod template (Deployment /
+// StatefulSet) to its node pool. No-op when PoolName is empty.
+func ApplyPodTemplatePlacement(tpl *corev1.PodTemplateSpec, p NodePlacement) {
+	if p.PoolName == "" {
+		return
+	}
+	if tpl.Spec.Affinity == nil {
+		tpl.Spec.Affinity = &corev1.Affinity{}
+	}
+	tpl.Spec.Affinity.NodeAffinity = placementNodeAffinity(p)
+	tpl.Spec.Tolerations = append(tpl.Spec.Tolerations, placementToleration(p))
+	if tpl.ObjectMeta.Annotations == nil {
+		tpl.ObjectMeta.Annotations = map[string]string{}
+	}
+	tpl.ObjectMeta.Annotations[DoNotDisruptAnnotation] = "true"
+}
+
+// ApplyKnativePlacement binds a Knative Service revision template to its
+// node pool. Requires the Knative podspec-affinity / -tolerations feature
+// flags (the operator verifies them before relying on this). No-op when
+// PoolName is empty.
+func ApplyKnativePlacement(u *unstructured.Unstructured, p NodePlacement) {
+	if p.PoolName == "" {
+		return
+	}
+	spec, _ := u.Object["spec"].(map[string]any)
+	if spec == nil {
+		return
+	}
+	tpl, _ := spec["template"].(map[string]any)
+	if tpl == nil {
+		return
+	}
+	tplSpec, _ := tpl["spec"].(map[string]any)
+	if tplSpec == nil {
+		tplSpec = map[string]any{}
+		tpl["spec"] = tplSpec
+	}
+	tplSpec["affinity"] = map[string]any{
+		"nodeAffinity": map[string]any{
+			"requiredDuringSchedulingIgnoredDuringExecution": map[string]any{
+				"nodeSelectorTerms": []any{map[string]any{
+					"matchExpressions": []any{map[string]any{
+						"key":      PoolLabelKey,
+						"operator": "In",
+						"values":   []any{p.PoolName},
+					}},
+				}},
+			},
+		},
+	}
+	tplSpec["tolerations"] = []any{map[string]any{
+		"key":      IsolationTaintKey,
+		"operator": "Equal",
+		"value":    p.Isolation,
+		"effect":   "NoSchedule",
+	}}
+	meta, _ := tpl["metadata"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+		tpl["metadata"] = meta
+	}
+	ann, _ := meta["annotations"].(map[string]any)
+	if ann == nil {
+		ann = map[string]any{}
+		meta["annotations"] = ann
+	}
+	ann[DoNotDisruptAnnotation] = "true"
+}
