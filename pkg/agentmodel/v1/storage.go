@@ -144,7 +144,7 @@ type S3BackupSpec struct {
 
 	// SSEAlgorithm is one of "AES256" or "aws:kms". Empty disables
 	// server-side encryption (not recommended).
-	// +kubebuilder:validation:Enum=AES256;aws:kms;
+	// +kubebuilder:validation:Enum=AES256;"aws:kms"
 	// +kubebuilder:default:="AES256"
 	// +optional
 	SSEAlgorithm string `json:"sseAlgorithm,omitempty"`

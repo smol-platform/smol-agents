@@ -23,7 +23,7 @@ install-tools:
 
 .PHONY: manifests
 manifests: install-tools
-	$(CONTROLLER_GEN) crd:crdVersions=v1 paths=./operator/api/... output:crd:dir=operator/config/crd
+	$(CONTROLLER_GEN) crd:crdVersions=v1,allowDangerousTypes=true paths=./operator/api/... output:crd:dir=operator/config/crd
 	$(CONTROLLER_GEN) rbac:roleName=knative-agents-operator paths=./operator/internal/controllers/... output:rbac:dir=operator/config/rbac
 
 .PHONY: deepcopy
