@@ -153,14 +153,15 @@ func (e *kindEnv) stopPortForwards() {
 	e.portForwards = nil
 }
 
-// deployFakes builds the fake-llm + spire-shell + spiffe-probe
-// images, loads them into the kind cluster, and kubectl-applies all
-// e2e manifests (fakes + SPIRE). Idempotent.
+// deployFakes builds the fake-llm + fake-gateway + spiffe-probe +
+// spire-shell images, loads them into the kind cluster, and
+// kubectl-applies all e2e manifests (fakes + SPIRE). Idempotent.
 func (e *kindEnv) deployFakes(ctx context.Context) error {
 	root := repoFile("")
 	// 1. Build images we ship locally.
 	for _, img := range []struct{ tag, dockerfile, ctx string }{
 		{"smol-agents/fake-llm:dev", "deploy/docker/fake-llm.Dockerfile", root},
+		{"smol-agents/fake-gateway:dev", "deploy/docker/fake-gateway.Dockerfile", root},
 		{"smol-agents/spiffe-probe:dev", "deploy/docker/spiffe-probe.Dockerfile", root},
 		{"smol-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
 	} {
