@@ -240,7 +240,9 @@ func runCmd(ctx context.Context, name string, args ...string) error {
 
 func (e *kindEnv) Capabilities() shared.Caps {
 	caps := shared.CapKubernetes | shared.CapNetworkEgress | shared.CapInClusterProbe
-	caps |= shared.CapEBPF
+	// No CapEBPF: the L1 eBPF probe pod isn't wired yet (needs a privileged
+	// pod with bpffs/cgroup mounts), so the framework skips the EBPF
+	// scenarios on L1. They run + pass on L2 (real host eBPF).
 	if e.canReachSPIREInCluster() {
 		caps |= shared.CapSPIRE
 	}
