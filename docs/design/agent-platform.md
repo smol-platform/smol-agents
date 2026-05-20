@@ -8,9 +8,10 @@
 > Implementation (P1): `AgentNodePool` CRD + controller, the Karpenter
 > builder, workload coupling (auto-match pool by isolation + `do-not-disrupt`),
 > Platform `nodeProvisioning`, the per-distro kata recipe in userData, gVisor
-> fallback, kata `RuntimeClass` overhead, and an envtest all landed. Remaining:
-> the live e2e on a real Karpenter-on-k0s cluster (P1.6) and serverless
-> hardening (P2). Operations: `docs/runbooks/agent-node-pools.md`.
+> fallback, kata `RuntimeClass` overhead, an envtest, and a **second provider
+> (Cluster Autoscaler, `spec.provider`, R-PROV-3)** all landed. Remaining: the
+> live e2e on a real Karpenter-on-k0s cluster (P1.6) and serverless hardening
+> (P2). Operations: `docs/runbooks/agent-node-pools.md`.
 >
 > **Decided in review:**
 > - Substrate is **self-managed k0s on EC2** (EKS later, community nice-to-have).
@@ -349,7 +350,12 @@ afternoon, and tells us exactly what `nodeProvisioning` must reference.
   `aws_iid` trust path). Out of scope; the existing solution stands.
 - **EKS substrate** — a different `EC2NodeClass`/bootstrap behind the same
   `AgentNodePool` API (community nice-to-have).
-- **Second provisioner backend** (Cluster Autoscaler / static) — proves R-PROV-3.
+- **Second provisioner backend (Cluster Autoscaler) — IMPLEMENTED.**
+  `spec.provider: ClusterAutoscaler` proves R-PROV-3: CAS scales an external
+  ASG the operator can't create, so the operator emits the node-group spec
+  (CAS discovery tags + kata launch-template userData) as a ConfigMap for IaC
+  to apply; the workload coupling is identical to Karpenter. A `static` (no
+  autoscaler) backend remains a possible future addition.
 
 ## Phasing
 

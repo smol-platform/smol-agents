@@ -19,6 +19,18 @@ type AgentNodePoolSpec struct {
 	// +kubebuilder:validation:Enum=kata-fc;kata-clh;gvisor;runc
 	Isolation string `json:"isolation"`
 
+	// Provider selects the node-provisioning backend (R-PROV-3):
+	//   - Karpenter (default): the operator creates in-cluster
+	//     NodePool + EC2NodeClass objects.
+	//   - ClusterAutoscaler: CAS scales an externally-managed cloud ASG;
+	//     the operator can't create the node group, so it emits the
+	//     node-group spec (CAS discovery tags + kata userData) as a
+	//     ConfigMap for the cluster's IaC to apply. The workload coupling
+	//     (pool label + isolation taint) is identical for both.
+	// +kubebuilder:validation:Enum=Karpenter;ClusterAutoscaler
+	// +kubebuilder:default:=Karpenter
+	Provider string `json:"provider,omitempty"`
+
 	// Arch constrains the node architecture.
 	// +kubebuilder:validation:Enum=arm64;amd64
 	// +kubebuilder:default:=arm64

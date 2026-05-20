@@ -43,6 +43,26 @@ operator auto-matches `features.sandbox.runtimeClass` to the pool's
 `isolation`. Override with `features.sandbox.nodePoolRef` is not yet wired
 (P1 uses auto-match only).
 
+## Providers: Karpenter vs Cluster Autoscaler
+
+`spec.provider` selects the backend. The in-cluster workload coupling (pool
+label + isolation taint) is identical for both — only how nodes get created
+differs:
+
+- **Karpenter** (default): the operator creates owned `NodePool` +
+  `EC2NodeClass` objects and Karpenter launches metal nodes on demand.
+- **ClusterAutoscaler**: CAS scales a pre-existing cloud ASG, which the
+  operator cannot create. Instead it writes the node-group spec to a ConfigMap
+  for your IaC to apply to a matching ASG:
+  ```bash
+  kubectl -n knative-agents-system get cm anp-<name>-clusterautoscaler -o yaml
+  ```
+  The ConfigMap carries `requiredASGTags` (CAS auto-discovery + node-template
+  label/taint, so CAS scales the right ASG for a pending kata pod), the
+  `instanceFamilies` (must be metal for kata), and the kata launch-template
+  `userData`. Apply those to an ASG + launch template; CAS then scales it when
+  kata pods are pending.
+
 ## Verify
 
 ```bash

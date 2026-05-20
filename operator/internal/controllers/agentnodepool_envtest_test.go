@@ -5,6 +5,7 @@ package controllers_test
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -56,4 +57,40 @@ func condReason(a *v1.AgentNodePool, condType string) string {
 		}
 	}
 	return ""
+}
+
+// TestAgentNodePool_Reconcile_ClusterAutoscalerReady drives the CAS provider
+// path: it needs no Karpenter CRDs (CAS scales an external ASG), so the
+// operator just emits the node-group ConfigMap and the pool goes Ready —
+// a deterministic happy-path reconcile through envtest.
+func TestAgentNodePool_Reconcile_ClusterAutoscalerReady(t *testing.T) {
+	e := setupEnv(t)
+	applyPlatform(t, e)
+	makeNamespace(t, e, "knative-agents-system")
+
+	anp := &v1.AgentNodePool{
+		ObjectMeta: metav1.ObjectMeta{Name: "ca-kata"},
+		Spec: v1.AgentNodePoolSpec{
+			Isolation: "kata-fc",
+			Arch:      "arm64",
+			Provider:  "ClusterAutoscaler",
+			Bootstrap: v1.NodeBootstrap{Mode: "UserData", Distro: "al2023"},
+		},
+	}
+	if err := e.cli.Create(e.ctx, anp); err != nil {
+		t.Fatalf("create AgentNodePool: %v", err)
+	}
+
+	waitForANP(t, e, types.NamespacedName{Name: "ca-kata"}, func(a *v1.AgentNodePool) bool {
+		return a.Status.Phase == "Ready" && condReason(a, "NodeGroupRendered") == "ClusterAutoscaler"
+	})
+
+	cm := &corev1.ConfigMap{}
+	key := types.NamespacedName{Namespace: "knative-agents-system", Name: "anp-ca-kata-clusterautoscaler"}
+	if err := e.cli.Get(e.ctx, key, cm); err != nil {
+		t.Fatalf("CAS node-group ConfigMap not created: %v", err)
+	}
+	if cm.Data["provider"] != "cluster-autoscaler" {
+		t.Errorf("ConfigMap provider = %q", cm.Data["provider"])
+	}
 }

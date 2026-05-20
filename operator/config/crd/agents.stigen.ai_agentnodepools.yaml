@@ -26,6 +26,9 @@ spec:
     - jsonPath: .spec.isolation
       name: Isolation
       type: string
+    - jsonPath: .spec.provider
+      name: Provider
+      type: string
     - jsonPath: .spec.arch
       name: Arch
       type: string
@@ -161,6 +164,17 @@ spec:
                 - kata-clh
                 - gvisor
                 - runc
+                type: string
+              provider:
+                default: Karpenter
+                description: |-
+                  Provider selects the node-provisioning backend. Karpenter creates
+                  in-cluster NodePool/EC2NodeClass objects; ClusterAutoscaler emits the
+                  node-group spec (CAS discovery tags + kata userData) as a ConfigMap
+                  for an externally-managed ASG.
+                enum:
+                - Karpenter
+                - ClusterAutoscaler
                 type: string
               limits:
                 description: Limits caps total resources Karpenter will provision
