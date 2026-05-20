@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - knativeagents.stigen.ai_knativeagents.yaml
   - knativeagents.stigen.ai_knativeagentplatforms.yaml
+  - agents.stigen.ai_agentnodepools.yaml
   - runtime.agents.stigen.ai_agents.yaml
   - runtime.agents.stigen.ai_tools.yaml
   - runtime.agents.stigen.ai_modelproviders.yaml
