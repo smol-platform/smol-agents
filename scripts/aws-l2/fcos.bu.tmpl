@@ -1,0 +1,394 @@
+variant: fcos
+version: 1.5.0
+# Fedora CoreOS full L2 bootstrap via Ignition.
+#
+# Template vars: {{ .ArtifactBucket }} {{ .ECRRegistry }}
+#                {{ .ImageTag }} {{ .RunID }}
+#
+# Bring-up sequence (all via systemd units installed by Ignition):
+#   1. install-prereqs.service  — extracts AWS CLI + SSM agent from
+#                                  public container images via the
+#                                  built-in podman; FCOS has no
+#                                  docker.
+#   2. amazon-ssm-agent.service — runs the extracted agent.
+#   3. l2-bootstrap.service     — installs k0s, configures
+#                                  containerd ECR auth, pulls
+#                                  manifests + applies them, waits
+#                                  for the same health gate as
+#                                  AL2023 / Ubuntu / Flatcar,
+#                                  writes sentinel.
+#
+# FCOS specifics versus Flatcar:
+#   - Container runtime is podman (no docker on PATH).
+#   - SELinux is enforcing; bind-mount volumes into rootless
+#     containers need the `:Z` relabel suffix or the container
+#     will see EACCES on the mount target.
+#   - /etc, /var, /opt are writable; /usr is read-only (ostree).
+#   - rpm-ostree manages the base image; we do NOT layer packages
+#     since podman containers serve the same purpose for tool
+#     delivery.
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        # ed25519 debug key generated locally for L2 FCOS bring-up
+        # debugging. Private key lives in .l2-runs/fcos-debug.key
+        # on the test runner; rotate by regenerating both files
+        # together. Safe to commit because the corresponding private
+        # key never leaves the dev machine.
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBr54vVG27vV2VdI9Olw4L7Uitawhq1AdBJgoDDSuDfY l2-fcos-debug
+
+storage:
+  files:
+    - path: /opt/bin/l2-bootstrap.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -eo pipefail
+          log=/var/log/l2-bootstrap.log
+          : > "$log"
+          fail() {
+            echo "BOOTSTRAP FAILED: $*" >>"$log"
+            touch /var/log/l2-bootstrap.FAILED
+            tar -czf /tmp/bootstrap-fail-{{ .RunID }}.tgz \
+              /var/log/l2-bootstrap.log /var/log/journal 2>/dev/null || true
+            /opt/bin/aws s3 cp /tmp/bootstrap-fail-{{ .RunID }}.tgz \
+              s3://{{ .ArtifactBucket }}/bootstrap-fail/{{ .RunID }}.tgz \
+              --region us-east-2 || true
+            exit 0
+          }
+          exec >>"$log" 2>&1
+          echo "=== L2 bootstrap on fedora-coreos $(date -u) ==="
+
+          # Wait for IMDS-issued credentials to be picked up.
+          for i in $(seq 1 10); do
+            if /opt/bin/aws sts get-caller-identity --region us-east-2 >/dev/null 2>&1; then
+              break
+            fi
+            echo "waiting for IMDS credentials ($i/10)"
+            sleep 6
+          done
+
+          # k0s helper script writes to /usr/local/bin which is a
+          # symlink to /var/usrlocal/bin on FCOS (writable); install
+          # directly into /opt/bin so the path matches the other
+          # Ignition-bootstrapped distro (Flatcar).
+          mkdir -p /opt/bin
+          K0S_VERSION="v1.35.3+k0s.0"
+          curl -sSL --fail \
+            "https://github.com/k0sproject/k0s/releases/download/${K0S_VERSION}/k0s-${K0S_VERSION}-arm64" \
+            -o /opt/bin/k0s
+          chmod +x /opt/bin/k0s
+          # SSM-shipped command shells inherit a minimal PATH; expose
+          # k0s under /usr/local/bin so `k0s kubectl ...` works from
+          # the driver.
+          ln -sf /opt/bin/k0s /usr/local/bin/k0s 2>/dev/null || true
+
+          # Configure k0s containerd ECR auth BEFORE k0s starts.
+          mkdir -p /etc/k0s /etc/k0s/containerd.d \
+            /etc/containerd/certs.d/{{ .ECRRegistry }}
+          cat >/etc/k0s/k0s.yaml <<'YAML'
+          apiVersion: k0s.k0sproject.io/v1beta1
+          kind: ClusterConfig
+          spec:
+            network:
+              provider: kuberouter
+          YAML
+
+          pw=$(/opt/bin/aws ecr get-login-password --region us-east-2)
+          auth=$(printf 'AWS:%s' "$pw" | base64 -w0)
+          cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
+          [plugins."io.containerd.grpc.v1.cri".registry]
+            config_path = "/etc/containerd/certs.d"
+          TOML
+          cat >/etc/containerd/certs.d/{{ .ECRRegistry }}/hosts.toml <<TOML
+          server = "https://{{ .ECRRegistry }}"
+          [host."https://{{ .ECRRegistry }}"]
+            capabilities = ["pull", "resolve"]
+            [host."https://{{ .ECRRegistry }}".header]
+              authorization = "Basic $auth"
+          TOML
+
+          /opt/bin/k0s install controller --single -c /etc/k0s/k0s.yaml || fail "k0s install"
+          systemctl start k0scontroller || fail "k0s start"
+          timeout 300 sh -c 'until /opt/bin/k0s status >/dev/null 2>&1; do sleep 5; done' || fail "k0s status"
+          timeout 120 sh -c 'until [ -f /var/lib/k0s/pki/admin.conf ]; do sleep 2; done' || fail "k0s admin.conf"
+
+          # Bootstrap fakes / spire / operator from the S3 manifest tarball.
+          mkdir -p /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples,cert-manager}
+          for i in 1 2 3; do
+            if /opt/bin/aws s3 cp s3://{{ .ArtifactBucket }}/manifests-{{ .ImageTag }}.tar.gz \
+                 /tmp/manifests.tar.gz --region us-east-2; then
+              tar -xzf /tmp/manifests.tar.gz -C /var/lib/k0s/manifests/
+              chown -R root:root /var/lib/k0s/manifests/{spire,operator,tenant,runtime,samples}
+              find /var/lib/k0s/manifests -name '._*' -delete 2>/dev/null || true
+              rm /tmp/manifests.tar.gz
+              break
+            fi
+            echo "manifest tarball download failed, retry $i/3"
+            sleep 5
+          done
+          [ -f /var/lib/k0s/manifests/operator/00-operator.yaml ] || fail "manifest extract"
+
+          curl -sSL \
+            https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml \
+            > /var/lib/k0s/manifests/cert-manager/00-cert-manager.yaml \
+            || fail "cert-manager download"
+
+          # Health gate (same shape as al2023 / ubuntu / flatcar).
+          KCTL="/opt/bin/k0s kubectl"
+          wait_resource() {
+            local kind=$1 ns=$2 sel=$3 timeout=${4:-180}
+            local end=$(( $(date +%s) + timeout ))
+            while [ $(date +%s) -lt $end ]; do
+              n=$($KCTL -n "$ns" get "$kind" $sel -o name 2>/dev/null | wc -l)
+              if [ "$n" -gt 0 ]; then return 0; fi
+              sleep 3
+            done
+            return 1
+          }
+          wait_resource deployment cert-manager "" 180 || fail "cert-manager not appearing"
+          $KCTL wait --for=condition=Available --timeout=180s \
+            deployment -n cert-manager --all || fail "cert-manager deploys"
+          wait_resource pod spire-system "-l app=spire-server" 180 || fail "spire-server not appearing"
+          $KCTL wait --for=condition=Ready --timeout=180s \
+            pod -n spire-system -l app=spire-server || fail "spire-server pod"
+          wait_resource pod spire-system "-l app=spire-agent" 180 || fail "spire-agent not appearing"
+          $KCTL wait --for=condition=Ready --timeout=180s \
+            pod -n spire-system -l app=spire-agent || fail "spire-agent pods"
+          wait_resource deployment knative-agents-system "" 180 || fail "operator not appearing"
+          $KCTL wait --for=condition=Available --timeout=180s \
+            deployment -n knative-agents-system --all || fail "operator deploy"
+          $KCTL wait --for=condition=Established --timeout=60s \
+            crd/knativeagents.agents.stigen.ai \
+            crd/agentnetworks.runtime.agents.stigen.ai \
+            crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+
+          wait_resource deployment tenant-a "" 180 || fail "tenant-a deployments not appearing"
+          $KCTL wait --for=condition=Available --timeout=180s \
+            deployment -n tenant-a --all || fail "tenant-a deployments"
+
+          # k0s manifest applier gives up on samples/ after ~10
+          # retries if the operator's mutating webhook isn't
+          # reachable yet. By this point the operator deploy is
+          # Available, so an explicit re-apply will succeed where
+          # the watcher gave up. Without this, KA-PHASE fails on
+          # faster-booting distros because the `hello` CR was
+          # never created.
+          for i in 1 2 3 4 5; do
+            if $KCTL apply -f /var/lib/k0s/manifests/samples/; then
+              break
+            fi
+            echo "samples re-apply attempt $i failed, retrying in 10s"
+            sleep 10
+          done
+          $KCTL get -n tenant-a knativeagent hello >/dev/null 2>&1 || \
+            fail "KA hello sample missing after re-apply"
+
+          wait_ka_ready() {
+            local end=$(( $(date +%s) + 180 ))
+            while [ $(date +%s) -lt $end ]; do
+              phase=$($KCTL -n tenant-a get knativeagent hello -o jsonpath='{.status.phase}' 2>/dev/null)
+              if [ "$phase" = "Ready" ]; then return 0; fi
+              sleep 3
+            done
+            return 1
+          }
+          wait_ka_ready || echo "WARN: KnativeAgent hello not Ready in bootstrap; scenario will retry"
+
+          touch /var/log/l2-bootstrap.READY
+          echo "=== bootstrap complete ==="
+
+    - path: /opt/bin/install-ssm-and-aws.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          set -eo pipefail
+          # FCOS ships podman (no docker). The flow mirrors Flatcar's
+          # docker-based extractor: pull a couple of public images,
+          # copy binaries out, leave persistent artifacts in /opt.
+          #
+          # Image refs are fully-qualified — podman's default
+          # registries.conf on FCOS only auto-resolves to
+          # registry.fedoraproject.org / quay.io, so `amazon/aws-cli`
+          # without docker.io/ would fail to resolve.
+
+          log=/var/log/install-prereqs.log
+          : > "$log"
+          exec >>"$log" 2>&1
+          step() { printf '=== %s %s ===\n' "$(date -u +%H:%M:%S)" "$*"; }
+
+          # Upload this log to S3 on any unexpected exit (set -e
+          # propagated, podman crash, etc.). l2-bootstrap.sh has its
+          # own failure trap; this one is so we can post-mortem
+          # install-prereqs without SSM working.
+          on_exit() {
+            local rc=$?
+            if [ $rc -ne 0 ]; then
+              step "EXIT $rc — uploading log"
+              # Best-effort: AWS CLI may not exist yet if we failed
+              # before copying it out. Fall back to nothing.
+              if [ -x /opt/bin/aws ]; then
+                /opt/bin/aws s3 cp "$log" \
+                  "s3://{{ .ArtifactBucket }}/bootstrap-fail/{{ .RunID }}-install-prereqs.log" \
+                  --region us-east-2 || true
+              fi
+            fi
+          }
+          trap on_exit EXIT
+
+          step "podman pull aws-cli"
+          podman pull docker.io/amazon/aws-cli:latest
+
+          step "podman pull ubuntu"
+          podman pull docker.io/library/ubuntu:24.04
+
+          step "extract aws-cli"
+          mkdir -p /opt/aws-cli /opt/bin
+          cid=$(podman create docker.io/amazon/aws-cli:latest)
+          podman cp "$cid:/usr/local/aws-cli/v2/current/." /opt/aws-cli/
+          podman rm "$cid" >/dev/null
+          ln -sf /opt/aws-cli/bin/aws /opt/bin/aws
+
+          step "extract ssm-agent binaries (dpkg-deb inside ubuntu)"
+          # SSM Agent: same dpkg-extract trick as Flatcar.
+          #
+          # Why we extract all six binaries (not just amazon-ssm-agent
+          # and ssm-cli): the daemon forks ssm-agent-worker /
+          # ssm-document-worker / ssm-session-worker by HARDCODED
+          # path /usr/bin/<name>. There is no config knob to redirect
+          # these — the paths are baked into appconfig defaults at
+          # compile time. We must land all six in /usr/bin.
+          #
+          # Why /var/tmp/ssm-extract and not /tmp: podman's `:Z`
+          # SELinux relabel refuses to operate on /tmp ("SELinux
+          # relabeling of /tmp is not allowed"). /var/tmp is fine.
+          mkdir -p /var/tmp/ssm-extract
+          podman run --rm -v /var/tmp/ssm-extract:/out:Z \
+            --entrypoint /bin/bash \
+            docker.io/library/ubuntu:24.04 -c '
+              set -e
+              apt-get update -qq
+              apt-get install -y -qq curl dpkg
+              curl -sSL -o /tmp/ssm.deb \
+                https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_arm64/amazon-ssm-agent.deb
+              dpkg-deb -x /tmp/ssm.deb /tmp/ssm
+              cp /tmp/ssm/usr/bin/* /out/
+              chmod +x /out/*
+            '
+
+          step "install ssm binaries into /usr/bin via rpm-ostree usroverlay"
+          # FCOS keeps /usr read-only (ostree). `rpm-ostree usroverlay`
+          # mounts a writable overlayfs on /usr that survives until
+          # reboot — long enough for the agent to live. The overlay
+          # is transient, which is perfect for an e2e test rig: we
+          # never reboot, and any leak gets reset on the next launch.
+          rpm-ostree usroverlay
+          cp /var/tmp/ssm-extract/amazon-ssm-agent \
+             /var/tmp/ssm-extract/ssm-cli \
+             /var/tmp/ssm-extract/ssm-agent-worker \
+             /var/tmp/ssm-extract/ssm-document-worker \
+             /var/tmp/ssm-extract/ssm-session-worker \
+             /var/tmp/ssm-extract/ssm-session-logger \
+             /usr/bin/
+          chmod +x /usr/bin/amazon-ssm-agent /usr/bin/ssm-cli \
+                   /usr/bin/ssm-agent-worker /usr/bin/ssm-document-worker \
+                   /usr/bin/ssm-session-worker /usr/bin/ssm-session-logger
+          # restorecon picks up the bin_t context from SELinux's
+          # default policy for /usr/bin/*. Without this the binaries
+          # inherit container_file_t from the podman bind mount and
+          # systemd ExecStart fails with EACCES (status=203/EXEC).
+          restorecon -v /usr/bin/amazon-ssm-agent /usr/bin/ssm-cli \
+                        /usr/bin/ssm-agent-worker /usr/bin/ssm-document-worker \
+                        /usr/bin/ssm-session-worker /usr/bin/ssm-session-logger
+
+          step "relabel aws-cli (still under /opt for non-systemd use)"
+          # /opt/bin/aws is called from l2-bootstrap.sh (a shell
+          # context, not direct ExecStart), but relabel anyway so
+          # the binary is well-defined under SELinux.
+          chcon -R -t bin_t /opt/aws-cli
+
+          step "smoke-check installed binaries"
+          /opt/bin/aws --version
+          /usr/bin/amazon-ssm-agent --version 2>&1 | head -1
+          step "install-prereqs complete"
+
+systemd:
+  units:
+    - name: install-prereqs.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install AWS CLI + SSM agent
+        After=network-online.target
+        Wants=network-online.target
+        ConditionPathExists=!/opt/aws/ssm/amazon-ssm-agent
+        Before=amazon-ssm-agent.service l2-bootstrap.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/opt/bin/install-ssm-and-aws.sh
+        # Default DefaultTimeoutStartSec on FCOS is 90s; podman first-
+        # boot pull+extract of two images comfortably exceeds that on
+        # cold caches. Match l2-bootstrap.service's headroom.
+        TimeoutStartSec=20min
+        StandardOutput=journal
+        StandardError=journal
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: amazon-ssm-agent.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Amazon SSM Agent
+        Requires=install-prereqs.service
+        After=install-prereqs.service network-online.target
+
+        [Service]
+        Type=simple
+        # SSM commands inherit this PATH; without /opt/bin every
+        # `k0s kubectl ...` from the L2 driver dies with
+        # "command not found".
+        Environment=PATH=/opt/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+        # The agent forks /usr/bin/ssm-agent-worker by hardcoded
+        # path; install-prereqs lands all six SSM binaries into the
+        # rpm-ostree usroverlay at /usr/bin so the agent can find
+        # them.
+        ExecStart=/usr/bin/amazon-ssm-agent
+        Restart=always
+        RestartSec=10
+        TimeoutStartSec=20min
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: l2-bootstrap.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=L2 bootstrap (k0s + manifests + health gate)
+        # install-prereqs is a hard prerequisite (we genuinely cannot
+        # run without /opt/bin/aws). amazon-ssm-agent uses Wants=
+        # instead: Requires= would propagate its Restart=always loop
+        # to us per systemd semantics and kill the bootstrap mid-
+        # k0s-install.
+        Requires=install-prereqs.service
+        Wants=amazon-ssm-agent.service
+        After=install-prereqs.service amazon-ssm-agent.service network-online.target
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/opt/bin/l2-bootstrap.sh
+        StandardOutput=journal
+        StandardError=journal
+        TimeoutStartSec=20min
+
+        [Install]
+        WantedBy=multi-user.target

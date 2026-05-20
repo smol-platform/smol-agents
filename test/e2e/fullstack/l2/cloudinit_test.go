@@ -72,7 +72,8 @@ func TestRenderUserData_PerDistro(t *testing.T) {
 			"api-server",
 			"bootstrap-token",
 		},
-		DistroFlatcar: {`"ignition"`, "amazon-ssm-agent.service", "l2-bootstrap.service"},
+		DistroFlatcar:      {`"ignition"`, "amazon-ssm-agent.service", "l2-bootstrap.service"},
+		DistroFedoraCoreOS: {`"ignition"`, "amazon-ssm-agent.service", "l2-bootstrap.service"},
 	}
 	for d, mustContain := range cases {
 		t.Run(string(d), func(t *testing.T) {
@@ -100,6 +101,7 @@ func TestResolveDistro(t *testing.T) {
 		{"ubuntu", DistroUbuntu},
 		{"bottlerocket", DistroBottlerocket},
 		{"flatcar", DistroFlatcar},
+		{"fedora-coreos", DistroFedoraCoreOS},
 		{"unknown", DistroAL2023}, // default fallback
 	}
 	for _, c := range cases {

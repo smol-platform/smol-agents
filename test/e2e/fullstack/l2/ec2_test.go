@@ -49,6 +49,7 @@ func TestL2_Smoke_AllDistros(t *testing.T) {
 		DistroUbuntu,
 		DistroBottlerocket,
 		DistroFlatcar,
+		DistroFedoraCoreOS,
 	} {
 		t.Run(string(d), func(t *testing.T) {
 			t.Setenv("L2_DISTRO", string(d))
@@ -76,6 +77,7 @@ func TestL2_AllDistros(t *testing.T) {
 		DistroAL2023,
 		DistroUbuntu,
 		DistroFlatcar,
+		DistroFedoraCoreOS,
 	} {
 		t.Run(string(d), func(t *testing.T) {
 			t.Setenv("L2_DISTRO", string(d))
@@ -103,7 +105,7 @@ func TestL2_RegionGate(t *testing.T) {
 // than apt/dnf-based distros.
 func healthGateDeadline(d Distro) time.Duration {
 	switch d {
-	case DistroBottlerocket, DistroFlatcar:
+	case DistroBottlerocket, DistroFlatcar, DistroFedoraCoreOS:
 		return 12 * time.Minute
 	default:
 		return 8 * time.Minute

@@ -165,11 +165,12 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		}
 	}
 
-	// Wait for SSM to register the instance. Flatcar bootstraps the
-	// SSM agent itself so it takes longer than apt/dnf-based distros
+	// Wait for SSM to register the instance. Flatcar and Fedora
+	// CoreOS bootstrap the SSM agent themselves (no agent in the
+	// base image) so they take longer than apt/dnf-based distros
 	// where the agent ships pre-installed.
 	ssmTimeout := 5 * time.Minute
-	if distro == DistroFlatcar {
+	if distro == DistroFlatcar || distro == DistroFedoraCoreOS {
 		ssmTimeout = 12 * time.Minute
 	}
 	if err := waitSSMReady(ctx, ssmc, *inst.InstanceId, ssmTimeout); err != nil {

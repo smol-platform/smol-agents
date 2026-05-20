@@ -5,11 +5,14 @@ package l2
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -33,6 +36,7 @@ const (
 	DistroBottlerocket       Distro = "bottlerocket"
 	DistroFlatcar            Distro = "flatcar"
 	DistroBottlerocketWorker Distro = "bottlerocket-worker"
+	DistroFedoraCoreOS       Distro = "fedora-coreos"
 )
 
 // ResolveDistro reads L2_DISTRO from the environment; default
@@ -41,7 +45,8 @@ const (
 func ResolveDistro() Distro {
 	d := strings.ToLower(strings.TrimSpace(os.Getenv("L2_DISTRO")))
 	switch Distro(d) {
-	case DistroUbuntu, DistroBottlerocket, DistroFlatcar, DistroBottlerocketWorker:
+	case DistroUbuntu, DistroBottlerocket, DistroFlatcar,
+		DistroBottlerocketWorker, DistroFedoraCoreOS:
 		return Distro(d)
 	default:
 		return DistroAL2023
@@ -50,10 +55,11 @@ func ResolveDistro() Distro {
 
 // AMI resolves a current arm64 image ID for the distro. Each lookup
 // path is the canonical one for that distro:
-//   - AL2023:       SSM Parameter Store (Amazon-published)
-//   - Bottlerocket: SSM Parameter Store (general-purpose variant)
-//   - Ubuntu:       EC2 image search (Canonical owner ID)
-//   - Flatcar:      EC2 image search (Kinvolk/Microsoft owner ID)
+//   - AL2023:        SSM Parameter Store (Amazon-published)
+//   - Bottlerocket:  SSM Parameter Store (general-purpose variant)
+//   - Ubuntu:        EC2 image search (Canonical owner ID)
+//   - Flatcar:       EC2 image search (Kinvolk/Microsoft owner ID)
+//   - FedoraCoreOS:  EC2 image search (Fedora Project owner ID)
 func (d Distro) AMI(ctx context.Context, ec2c *ec2.Client, ssmc *ssm.Client) (string, error) {
 	switch d {
 	case DistroAL2023:
@@ -82,8 +88,66 @@ func (d Distro) AMI(ctx context.Context, ec2c *ec2.Client, ssmc *ssm.Client) (st
 	case DistroFlatcar:
 		return findAMI(ctx, ec2c, "075585003325", // Kinvolk/Flatcar
 			"Flatcar-stable-*-arm64-hvm")
+	case DistroFedoraCoreOS:
+		// Fedora Project publishes FCOS AMIs across stable, testing
+		// and next streams under the same `fedora-coreos-*-aarch64`
+		// name pattern with no tags or naming distinction. The
+		// canonical lookup is the streams JSON at
+		// builds.coreos.fedoraproject.org, which Fedora updates
+		// atomically when promoting a release.
+		return fcosStableAMI(ctx, "us-east-2")
 	}
 	return "", fmt.Errorf("unknown distro %q", d)
+}
+
+// fcosStableAMI returns the stable-stream aarch64 AMI ID for a
+// given AWS region from Fedora's published streams metadata. Set
+// FCOS_STREAM_URL to override the source (e.g. for testing or to
+// pin to a specific stream like testing/next).
+func fcosStableAMI(ctx context.Context, region string) (string, error) {
+	url := os.Getenv("FCOS_STREAM_URL")
+	if url == "" {
+		url = "https://builds.coreos.fedoraproject.org/streams/stable.json"
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("fcos stream request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
+	}
+	// Only the fields we need; the streams JSON is wider but
+	// strict decoding would break every time Fedora ships a new
+	// top-level key.
+	var doc struct {
+		Architectures struct {
+			Aarch64 struct {
+				Images struct {
+					AWS struct {
+						Regions map[string]struct {
+							Release string `json:"release"`
+							Image   string `json:"image"`
+						} `json:"regions"`
+					} `json:"aws"`
+				} `json:"images"`
+			} `json:"aarch64"`
+		} `json:"architectures"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", fmt.Errorf("decode fcos stream: %w", err)
+	}
+	r, ok := doc.Architectures.Aarch64.Images.AWS.Regions[region]
+	if !ok || r.Image == "" {
+		return "", fmt.Errorf("fcos stream has no aarch64 image for region %s", region)
+	}
+	return r.Image, nil
 }
 
 func ssmAMI(ctx context.Context, ssmc *ssm.Client, name string) (string, error) {
@@ -151,7 +215,7 @@ func (d Distro) UserData(in userDataInputs) (string, error) {
 	if err := t.Execute(&sb, in); err != nil {
 		return "", fmt.Errorf("execute %s template: %w", d, err)
 	}
-	if d == DistroFlatcar {
+	if d == DistroFlatcar || d == DistroFedoraCoreOS {
 		return butaneCompile(sb.String())
 	}
 	return sb.String(), nil
@@ -169,6 +233,8 @@ func (d Distro) userDataFilename() string {
 		return "bottlerocket-worker.toml.tmpl"
 	case DistroFlatcar:
 		return "flatcar.bu.tmpl"
+	case DistroFedoraCoreOS:
+		return "fcos.bu.tmpl"
 	}
 	return ""
 }
@@ -200,7 +266,7 @@ func butaneCompile(butaneSrc string) (string, error) {
 // so they're slower than apt/dnf-based AL2023 + Ubuntu.
 func (d Distro) HealthGateMaxWait() string {
 	switch d {
-	case DistroBottlerocket, DistroFlatcar:
+	case DistroBottlerocket, DistroFlatcar, DistroFedoraCoreOS:
 		return "12m"
 	default:
 		return "8m"

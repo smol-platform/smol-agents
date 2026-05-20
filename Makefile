@@ -107,7 +107,7 @@ e2e-l2: _check-l2-aws ## fullstack-e2e L2 ring (AWS Spot bare-metal, 12 min, USD
 # can reach in-cluster Services from the host. Without this wiring
 # scenarios like AGENTRUN self-skip.
 .PHONY: e2e-l2-alldistros
-e2e-l2-alldistros: _check-l2-aws ## fullstack-e2e L2 across AL2023+Ubuntu+Flatcar with NodePort ingress
+e2e-l2-alldistros: _check-l2-aws ## fullstack-e2e L2 across AL2023+Ubuntu+Flatcar+FCOS with NodePort ingress
 	@: $${L2_ARTIFACT_BUCKET:?must be set}
 	@: $${L2_ECR_REGISTRY:?must be set}
 	@cd infra/terraform/aws-e2e && \
