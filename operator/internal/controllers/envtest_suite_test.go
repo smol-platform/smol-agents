@@ -89,6 +89,11 @@ func setupEnv(t *testing.T) *envContext {
 	if err := r.SetupWithManager(mgr); err != nil {
 		t.Fatalf("SetupWithManager: %v", err)
 	}
+	if err := (&controllers.AgentNodePoolReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		t.Fatalf("AgentNodePool SetupWithManager: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := make(chan struct{})
