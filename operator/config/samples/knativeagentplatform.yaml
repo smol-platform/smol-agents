@@ -12,6 +12,20 @@ spec:
     capabilityMode: privileged
   canary:
     percent: 0
+  nodeProvisioning:
+    # Node→k0s join is owned by your existing Karpenter deployment; these
+    # fields tell the operator how to compose the kata layer onto it.
+    amiFamily: Custom
+    role: KarpenterNodeRole-k0s
+    subnetSelectorTags:
+      karpenter.sh/discovery: k0s
+    securityGroupSelectorTags:
+      karpenter.sh/discovery: k0s
+    baseAMISelector:
+      - tags:
+          k0s-join: "true"
+    # joinUserData: |
+    #   <existing k0s worker-join + kubelet providerID snippet>
   featurePolicy:
     - feature: transport.public
       allowed: false       # public mTLS is disabled cluster-wide by default

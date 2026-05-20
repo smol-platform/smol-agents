@@ -1,9 +1,13 @@
 package controllers
 
 import (
+	"context"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/stigen/knative-agents/operator/api/v1"
 )
@@ -46,5 +50,56 @@ func TestAgentNodePool_setCondition_UpsertStableTimestamp(t *testing.T) {
 	r.setCondition(anp, "KarpenterSynced", metav1.ConditionTrue, "Synced", "")
 	if len(anp.Status.Conditions) != 2 {
 		t.Fatalf("want 2 conditions after distinct type, got %d", len(anp.Status.Conditions))
+	}
+}
+
+// stubPlatformClient is a minimal client.Client that answers Get for the
+// singleton platform — enough to test resolveDefaults without envtest.
+type stubPlatformClient struct {
+	client.Client
+	platform *v1.KnativeAgentPlatform
+}
+
+func (s stubPlatformClient) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+	if s.platform == nil {
+		return apierrors.NewNotFound(schema.GroupResource{
+			Group: "agents.stigen.ai", Resource: "knativeagentplatforms",
+		}, key.Name)
+	}
+	if p, ok := obj.(*v1.KnativeAgentPlatform); ok {
+		s.platform.DeepCopyInto(p)
+	}
+	return nil
+}
+
+func TestAgentNodePool_resolveDefaults_FromPlatform(t *testing.T) {
+	plat := &v1.KnativeAgentPlatform{}
+	plat.Name = "default"
+	plat.Spec.NodeProvisioning = v1.NodeProvisioningSpec{
+		AMIFamily:          "Custom",
+		Role:               "KarpenterNodeRole-k0s",
+		SubnetSelectorTags: map[string]string{"karpenter.sh/discovery": "k0s"},
+		JoinUserData:       "#!/bin/bash\nk0s install worker\n",
+		BaseAMISelector:    []v1.AMISelectorTerm{{Tags: map[string]string{"k0s-join": "true"}}},
+	}
+	r := &AgentNodePoolReconciler{Client: stubPlatformClient{platform: plat}, PlatformName: "default"}
+
+	d := r.resolveDefaults(context.Background())
+	if d.Role != "KarpenterNodeRole-k0s" || d.JoinUserData == "" || len(d.BaseAMISelector) != 1 {
+		t.Errorf("defaults not sourced from platform: %+v", d)
+	}
+	if d.SubnetSelectorTags["karpenter.sh/discovery"] != "k0s" {
+		t.Errorf("subnet tags = %v", d.SubnetSelectorTags)
+	}
+}
+
+func TestAgentNodePool_resolveDefaults_PlatformAbsent(t *testing.T) {
+	r := &AgentNodePoolReconciler{Client: stubPlatformClient{}, PlatformName: "default"}
+	d := r.resolveDefaults(context.Background())
+	if d.AMIFamily != "Custom" {
+		t.Errorf("absent platform should still default amiFamily=Custom, got %q", d.AMIFamily)
+	}
+	if d.Role != "" {
+		t.Errorf("absent platform should yield empty role, got %q", d.Role)
 	}
 }

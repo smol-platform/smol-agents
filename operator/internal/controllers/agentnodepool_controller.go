@@ -25,6 +25,11 @@ const anpFieldOwner = "knative-agents-operator"
 type AgentNodePoolReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// PlatformName is the singleton KnativeAgentPlatform whose
+	// nodeProvisioning block supplies cluster-level defaults. Defaults to
+	// "default".
+	PlatformName string
 }
 
 // SetupWithManager wires the controller.
@@ -34,6 +39,9 @@ type AgentNodePoolReconciler struct {
 // Cascade deletion is handled by ownerReferences instead; reconcile is
 // triggered by changes to the AgentNodePool itself.
 func (r *AgentNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.PlatformName == "" {
+		r.PlatformName = "default"
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.AgentNodePool{}).
 		Complete(r)
@@ -90,13 +98,32 @@ func (r *AgentNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, r.statusUpdate(ctx, anp)
 }
 
-// resolveDefaults sources cluster-level provisioning defaults.
-// TODO(P1): read from KnativeAgentPlatform.spec.nodeProvisioning (subnet/SG
-// discovery tags, node IAM role, the existing join snippet / base AMI) once
-// that field is added. Until then the kata layer is composed onto an empty
-// join, which is enough to exercise the reconcile + status path.
-func (r *AgentNodePoolReconciler) resolveDefaults(_ context.Context) builders.KarpenterDefaults {
-	return builders.KarpenterDefaults{AMIFamily: "Custom"}
+// resolveDefaults sources cluster-level provisioning defaults from the
+// singleton KnativeAgentPlatform's nodeProvisioning block (subnet/SG
+// discovery tags, node IAM role, the existing join snippet / base AMI).
+// If the Platform is absent we return minimal defaults; the resulting
+// EC2NodeClass will lack selectors and Karpenter will reject it, surfaced
+// as ApplyFailed on the AgentNodePool.
+func (r *AgentNodePoolReconciler) resolveDefaults(ctx context.Context) builders.KarpenterDefaults {
+	d := builders.KarpenterDefaults{AMIFamily: "Custom"}
+	name := r.PlatformName
+	if name == "" {
+		name = "default"
+	}
+	p := &v1.KnativeAgentPlatform{}
+	if err := r.Get(ctx, client.ObjectKey{Name: name}, p); err != nil {
+		return d
+	}
+	np := p.Spec.NodeProvisioning
+	if np.AMIFamily != "" {
+		d.AMIFamily = np.AMIFamily
+	}
+	d.Role = np.Role
+	d.SubnetSelectorTags = np.SubnetSelectorTags
+	d.SecurityGroupSelectorTags = np.SecurityGroupSelectorTags
+	d.BaseAMISelector = np.BaseAMISelector
+	d.JoinUserData = np.JoinUserData
+	return d
 }
 
 func (r *AgentNodePoolReconciler) apply(ctx context.Context, o *unstructured.Unstructured) error {

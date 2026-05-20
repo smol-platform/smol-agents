@@ -76,6 +76,28 @@ spec:
                       minimum: 0
                       maximum: 100
                       default: 0
+                nodeProvisioning:
+                  type: object
+                  properties:
+                    amiFamily: { type: string, default: Custom }
+                    role: { type: string }
+                    subnetSelectorTags:
+                      type: object
+                      additionalProperties: { type: string }
+                    securityGroupSelectorTags:
+                      type: object
+                      additionalProperties: { type: string }
+                    baseAMISelector:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          tags:
+                            type: object
+                            additionalProperties: { type: string }
+                          id: { type: string }
+                          alias: { type: string }
+                    joinUserData: { type: string }
             status:
               type: object
               properties:

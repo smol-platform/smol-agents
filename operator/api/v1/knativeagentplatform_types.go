@@ -27,6 +27,11 @@ type KnativeAgentPlatformSpec struct {
 	// Canary controls the percentage of tenant CRs that pick up new
 	// non-Immediate rollouts.
 	Canary CanaryConfig `json:"canary,omitempty"`
+
+	// NodeProvisioning configures how AgentNodePool compiles to Karpenter:
+	// subnet/SG discovery, the node IAM role, and the existing node-join
+	// (base AMI / userData snippet) the kata layer composes onto. R-PROV-1.
+	NodeProvisioning NodeProvisioningSpec `json:"nodeProvisioning,omitempty"`
 }
 
 // EBPFLoaderSpec mirrors the chart's ebpfLoader values block.
@@ -54,6 +59,33 @@ type CanaryConfig struct {
 	// +kubebuilder:validation:Maximum=100
 	// +kubebuilder:default:=0
 	Percent int32 `json:"percent,omitempty"`
+}
+
+// NodeProvisioningSpec carries the cluster-level inputs AgentNodePool needs
+// to compile to Karpenter. Node→cluster join is owned by the existing
+// Karpenter deployment; these fields tell the operator how to compose the
+// kata layer onto it. See docs/design/agent-platform.md.
+type NodeProvisioningSpec struct {
+	// AMIFamily for generated EC2NodeClasses. "Custom" on k0s (we own all
+	// userData).
+	// +kubebuilder:default:=Custom
+	AMIFamily string `json:"amiFamily,omitempty"`
+
+	// Role is the node IAM role name set on generated EC2NodeClasses.
+	Role string `json:"role,omitempty"`
+
+	// SubnetSelectorTags / SecurityGroupSelectorTags drive Karpenter's
+	// subnet + security-group discovery.
+	SubnetSelectorTags        map[string]string `json:"subnetSelectorTags,omitempty"`
+	SecurityGroupSelectorTags map[string]string `json:"securityGroupSelectorTags,omitempty"`
+
+	// BaseAMISelector is the existing join-capable image, used for the
+	// AgentNodePool UserData bootstrap mode (kata appended at boot).
+	BaseAMISelector []AMISelectorTerm `json:"baseAMISelector,omitempty"`
+
+	// JoinUserData is the existing deployment's node-join snippet (k0s
+	// worker-join + providerID) the kata layer is appended to.
+	JoinUserData string `json:"joinUserData,omitempty"`
 }
 
 // KnativeAgentPlatformStatus reports operator health at cluster scope.
@@ -134,6 +166,29 @@ func (in *KnativeAgentPlatformSpec) DeepCopyInto(out *KnativeAgentPlatformSpec) 
 	in.Defaults.DeepCopyInto(&out.Defaults)
 	if in.FeaturePolicy != nil {
 		out.FeaturePolicy = append([]FeaturePolicyRow(nil), in.FeaturePolicy...)
+	}
+	in.NodeProvisioning.DeepCopyInto(&out.NodeProvisioning)
+}
+
+func (in *NodeProvisioningSpec) DeepCopyInto(out *NodeProvisioningSpec) {
+	*out = *in
+	if in.SubnetSelectorTags != nil {
+		out.SubnetSelectorTags = make(map[string]string, len(in.SubnetSelectorTags))
+		for k, v := range in.SubnetSelectorTags {
+			out.SubnetSelectorTags[k] = v
+		}
+	}
+	if in.SecurityGroupSelectorTags != nil {
+		out.SecurityGroupSelectorTags = make(map[string]string, len(in.SecurityGroupSelectorTags))
+		for k, v := range in.SecurityGroupSelectorTags {
+			out.SecurityGroupSelectorTags[k] = v
+		}
+	}
+	if in.BaseAMISelector != nil {
+		out.BaseAMISelector = make([]AMISelectorTerm, len(in.BaseAMISelector))
+		for i := range in.BaseAMISelector {
+			in.BaseAMISelector[i].DeepCopyInto(&out.BaseAMISelector[i])
+		}
 	}
 }
 
