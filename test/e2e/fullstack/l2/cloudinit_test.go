@@ -90,6 +90,46 @@ func TestRenderUserData_PerDistro(t *testing.T) {
 	}
 }
 
+// TestRenderUserData_DebugSSHKeyOptional verifies the Ignition
+// distros only emit an SSH user when DebugSSHKey is set, and
+// otherwise compile cleanly with no passwd block (SSM-only access,
+// debug via the native `toolbox` container).
+func TestRenderUserData_DebugSSHKeyOptional(t *testing.T) {
+	const testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBr54vVG27vV2VdI9Olw4L7Uitawhq1AdBJgoDDSuDfY l2-unit-test"
+	base := userDataInputs{
+		ArtifactBucket: "test-bucket",
+		ECRRegistry:    "123.dkr.ecr.us-east-2.amazonaws.com",
+		ImageTag:       "abc123",
+		RunID:          "deadbeef",
+	}
+	for _, d := range []Distro{DistroFlatcar, DistroFedoraCoreOS} {
+		t.Run(string(d)+"/with-key", func(t *testing.T) {
+			in := base
+			in.DebugSSHKey = testKey
+			out, err := d.UserData(in)
+			if err != nil {
+				t.Fatalf("render %s: %v", d, err)
+			}
+			if !strings.Contains(out, testKey) {
+				t.Errorf("%s: DebugSSHKey set but key absent from output", d)
+			}
+			if !strings.Contains(out, "sshAuthorizedKeys") {
+				t.Errorf("%s: expected sshAuthorizedKeys in Ignition output", d)
+			}
+		})
+		t.Run(string(d)+"/no-key", func(t *testing.T) {
+			in := base
+			out, err := d.UserData(in)
+			if err != nil {
+				t.Fatalf("render %s: %v", d, err)
+			}
+			if strings.Contains(out, "sshAuthorizedKeys") {
+				t.Errorf("%s: no DebugSSHKey set but sshAuthorizedKeys present", d)
+			}
+		})
+	}
+}
+
 func TestResolveDistro(t *testing.T) {
 	cases := []struct {
 		env  string

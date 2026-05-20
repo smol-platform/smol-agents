@@ -19,15 +19,19 @@ version: 1.1.0
 #     not the one k0s would prefer)
 #   - SSM agent isn't packaged; we extract from Amazon's .deb
 
+# Debug SSH is opt-in. Default bring-up ships NO key and is driven
+# entirely over SSM. For interactive debugging on Flatcar prefer the
+# native container path: `aws ssm start-session ...`, then run
+# `toolbox` (a host-privileged Fedora container; the host root is at
+# /media/root). Only set L2_DEBUG_SSH_KEY=<pubkey> and open tcp/22
+# ingress on the SG when you need a direct shell.
+{{- if .DebugSSHKey }}
 passwd:
   users:
     - name: core
       ssh_authorized_keys:
-        # ed25519 debug key, same one embedded in fcos.bu.tmpl.
-        # Private key lives in .l2-runs/fcos-debug.key (despite the
-        # name, used for both distros). The SG doesn't open tcp/22
-        # by default, so the key is dormant until ingress is added.
-        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBr54vVG27vV2VdI9Olw4L7Uitawhq1AdBJgoDDSuDfY l2-fcos-debug
+        - {{ .DebugSSHKey }}
+{{- end }}
 
 storage:
   files:

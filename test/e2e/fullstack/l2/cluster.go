@@ -89,6 +89,7 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		ClusterCABase64: os.Getenv("L2_K8S_CA_BASE64"),
 		BootstrapToken:  os.Getenv("L2_K8S_BOOTSTRAP_TOKEN"),
 		ClusterName:     envOrDefault("L2_K8S_CLUSTER_NAME", "knative-agents-l2-smoke"),
+		DebugSSHKey:     os.Getenv("L2_DEBUG_SSH_KEY"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("render user-data (%s): %w", distro, err)
@@ -305,6 +306,16 @@ type userDataInputs struct {
 	ClusterCABase64 string
 	BootstrapToken  string
 	ClusterName     string
+
+	// DebugSSHKey is an optional SSH public key (full
+	// "ssh-ed25519 AAAA... comment" line) injected into the
+	// Ignition-based distros (Flatcar, FCOS) for interactive
+	// debugging. Empty by default — normal bring-up is driven
+	// entirely over SSM, and those distros' native debug path is a
+	// host-privileged `toolbox` container reached via
+	// `aws ssm start-session`. Set L2_DEBUG_SSH_KEY (and open
+	// tcp/22 on the SG) only when you need a direct shell.
+	DebugSSHKey string
 }
 
 // renderCloudInit dispatches to the per-distro user-data renderer.
