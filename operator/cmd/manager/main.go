@@ -72,6 +72,12 @@ func main() {
 		setupLog.Error(err, "unable to register KnativeAgentPlatform controller")
 		os.Exit(1)
 	}
+	if err := (&controllers.AgentNodePoolReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register AgentNodePool controller")
+		os.Exit(1)
+	}
 
 	// runtime.agents.stigen.ai/v1 — agent-model CRDs.
 	if err := (&agentmodel.AgentReconciler{

@@ -1,0 +1,26 @@
+# Kata-capable node pool. The operator compiles this into a Karpenter
+# NodePool + EC2NodeClass that provisions bare-metal (KVM) nodes carrying the
+# kata/devmapper layer; agents with features.sandbox.runtimeClass=kata-fc are
+# scheduled onto it. Node→k0s join is supplied by the existing Karpenter
+# deployment (see docs/design/agent-platform.md).
+apiVersion: agents.stigen.ai/v1
+kind: AgentNodePool
+metadata:
+  name: kata-arm64
+spec:
+  isolation: kata-fc
+  arch: arm64
+  instanceFamilies: [c7gd, c6gd, m7gd] # metal families with local NVMe
+  capacityType: [on-demand, spot]
+  limits:
+    cpu: "512"
+  bootstrap:
+    mode: UserData # PrebakedAMI for prod (kata baked → faster node-Ready)
+    distro: al2023
+  thinPool:
+    backing: instance-store
+    dataSize: 50Gi
+    metaSize: 5Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: Never

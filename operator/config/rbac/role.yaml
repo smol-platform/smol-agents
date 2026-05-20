@@ -7,14 +7,22 @@ metadata:
 rules:
   # CR access — control-plane CRs.
   - apiGroups: [agents.stigen.ai]
-    resources: [knativeagents, knativeagentplatforms]
+    resources: [knativeagents, knativeagentplatforms, agentnodepools]
     verbs: [get, list, watch, update, patch]
   - apiGroups: [agents.stigen.ai]
-    resources: [knativeagents/status, knativeagentplatforms/status]
+    resources: [knativeagents/status, knativeagentplatforms/status, agentnodepools/status]
     verbs: [get, update, patch]
   - apiGroups: [agents.stigen.ai]
-    resources: [knativeagents/finalizers, knativeagentplatforms/finalizers]
+    resources: [knativeagents/finalizers, knativeagentplatforms/finalizers, agentnodepools/finalizers]
     verbs: [update]
+
+  # Karpenter objects owned by AgentNodePool (node provisioning).
+  - apiGroups: [karpenter.sh]
+    resources: [nodepools]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [karpenter.k8s.aws]
+    resources: [ec2nodeclasses]
+    verbs: [get, list, watch, create, update, patch, delete]
 
   # CR access — runtime CRs (Agent, AgentRun, AgentNetwork, etc).
   - apiGroups: [runtime.agents.stigen.ai]
