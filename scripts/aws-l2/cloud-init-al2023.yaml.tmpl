@@ -8,6 +8,12 @@ packages:
   - jq
   - tar
   - awscli
+  # devmapper snapshotter for kata-fc: lvm2 ships dmsetup,
+  # device-mapper-persistent-data ships thin_check which
+  # containerd's devmapper plugin calls to verify the thin
+  # pool before each use.
+  - lvm2
+  - device-mapper-persistent-data
 
 write_files:
   - path: /etc/containerd/config.toml
@@ -80,56 +86,36 @@ runcmd:
   - ln -sf /opt/kata/bin/kata-runtime /usr/local/bin/kata-runtime
   - ln -sf /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
 
-  # 2b. nydus + nydus-snapshotter blockdev/tarfs — kata-fc needs the
-  #     container rootfs as a block device; nydus rewrites OCI layers
-  #     into EROFS+verity images on the fly. Needs EROFS >=6.4 (pinned
-  #     via the kernel-6.12 AMI).
-  - mkdir -p /opt/nydus /opt/nydus-snapshotter /etc/nydus
+  # 2b. devmapper thin-pool for kata-fc.
+  #
+  # Kata-fc requires the container rootfs as a virtio-blk device
+  # (Firecracker doesn't speak shared-fs). containerd's built-in
+  # devmapper snapshotter satisfies that by allocating a thin
+  # volume per snapshot out of a thin-pool. We back the pool with
+  # two sparse loopback files — fine for the L2 sandbox, would
+  # need a real LV on a production node.
+  #
+  # The pool must exist BEFORE k0s's containerd starts; devmapper
+  # init only happens at containerd startup, and a missing pool
+  # makes the snapshotter dead for the lifetime of the daemon.
+  - mkdir -p /var/lib/containerd/devmapper
   - |
-    curl -sSL https://github.com/dragonflyoss/nydus/releases/download/v2.4.3/nydus-static-v2.4.3-linux-arm64.tgz \
-      | tar -xz -C /opt/nydus --strip-components=1
-    ln -sf /opt/nydus/nydusd      /usr/local/bin/nydusd
-    ln -sf /opt/nydus/nydus-image /usr/local/bin/nydus-image
-    curl -sSL https://github.com/containerd/nydus-snapshotter/releases/download/v0.15.15/nydus-snapshotter-v0.15.15-linux-arm64.tar.gz \
-      | tar -xz -C /opt/nydus-snapshotter --strip-components=1
-    ln -sf /opt/nydus-snapshotter/containerd-nydus-grpc /usr/local/bin/containerd-nydus-grpc
-  - |
-    cat >/etc/nydus/config.toml <<'TOML'
-    version = 1
-    root = "/var/lib/containerd/io.containerd.snapshotter.v1.nydus"
-    address = "/run/containerd-nydus/containerd-nydus-grpc.sock"
-    daemon_mode = "none"
-    [daemon]
-    fs_driver = "blockdev"
-    nydusimage_path = "/usr/local/bin/nydus-image"
-    recover_policy = "failover"
-    [remote]
-    skip_ssl_verify = true
-    [snapshot]
-    enable_kata_volume = true
-    [experimental.tarfs]
-    enable_tarfs = true
-    mount_tarfs_on_host = false
-    export_mode = "image_block_with_verity"
-    [log]
-    level = "info"
-    TOML
-    cat >/etc/systemd/system/nydus-snapshotter.service <<'UNIT'
-    [Unit]
-    Description=nydus snapshotter
-    After=network.target
-    Before=k0scontroller.service
-    [Service]
-    Type=simple
-    ExecStartPre=/bin/mkdir -p /run/containerd-nydus
-    ExecStart=/usr/local/bin/containerd-nydus-grpc --config /etc/nydus/config.toml
-    Restart=always
-    RestartSec=1
-    [Install]
-    WantedBy=multi-user.target
-    UNIT
-    systemctl daemon-reload
-    systemctl enable --now nydus-snapshotter
+    DATA=/var/lib/containerd/devmapper/data.img
+    META=/var/lib/containerd/devmapper/meta.img
+    # 50G data is enough for a few hundred kata pods at 8G base
+    # image size; 5G metadata is the standard 10% sizing.
+    [ -f "$DATA" ] || truncate -s 50G "$DATA"
+    [ -f "$META" ] || truncate -s 5G  "$META"
+    modprobe dm_thin_pool
+    DATA_LOOP=$(losetup --find --show "$DATA")
+    META_LOOP=$(losetup --find --show "$META")
+    SECTORS=$(blockdev --getsz "$DATA_LOOP")
+    # thin-pool target args: <metadev> <datadev> <block_size_sectors>
+    # <low_water_mark> <num_feature_args> <features...>. Block size
+    # 128 sectors = 64KB, the kata-recommended value. skip_block_
+    # zeroing is the performance default for ephemeral images.
+    dmsetup create kata-thinpool --table \
+      "0 $SECTORS thin-pool $META_LOOP $DATA_LOOP 128 32768 1 skip_block_zeroing"
 
   # 3. Restart containerd with Kata config.
   - systemctl daemon-reload
@@ -168,10 +154,17 @@ runcmd:
       cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
     [plugins."io.containerd.grpc.v1.cri".registry]
       config_path = "/etc/containerd/certs.d"
-    [proxy_plugins]
-      [proxy_plugins.nydus]
-        type = "snapshot"
-        address = "/run/containerd-nydus/containerd-nydus-grpc.sock"
+    TOML
+      # devmapper snapshotter plugin — k0s's bundled containerd
+      # ships the built-in but doesn't activate it without the
+      # pool_name. base_image_size = 8GB matches kata's default
+      # config and keeps thin-pool fragmentation reasonable.
+      cat >/etc/k0s/containerd.d/devmapper.toml <<TOML
+    [plugins."io.containerd.snapshotter.v1.devmapper"]
+      pool_name = "kata-thinpool"
+      root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.devmapper"
+      base_image_size = "8GB"
+      async_remove = true
     TOML
       cat >/etc/containerd/certs.d/{{ .ECRRegistry }}/hosts.toml <<TOML
     server = "https://{{ .ECRRegistry }}"
@@ -191,7 +184,10 @@ runcmd:
     [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
       runtime_type = "io.containerd.kata.v2"
       privileged_without_host_devices = true
-      snapshotter = "nydus"
+      # Per-runtime snapshotter selection: regular OCI workloads
+      # still use the default overlayfs; only kata-fc pods land on
+      # devmapper, getting their rootfs as a virtio-blk device.
+      snapshotter = "devmapper"
       [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
         ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
     TOML

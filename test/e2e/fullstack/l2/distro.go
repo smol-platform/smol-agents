@@ -63,9 +63,10 @@ func ResolveDistro() Distro {
 func (d Distro) AMI(ctx context.Context, ec2c *ec2.Client, ssmc *ssm.Client) (string, error) {
 	switch d {
 	case DistroAL2023:
-		// Pin to kernel-6.12 AMI: kata-fc + nydus-snapshotter
-		// (blockdev/tarfs mode) needs EROFS tarfs support which only
-		// landed in 6.4. The default kernel image still ships 6.1.
+		// Pin to kernel-6.12 AMI. Historically picked for nydus
+		// tarfs (needs EROFS >=6.4); devmapper replaced nydus and
+		// works on any modern kernel, but we keep the pin to avoid
+		// e2e drift across AL2023 default-AMI rolls.
 		return ssmAMI(ctx, ssmc,
 			"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.12-arm64")
 	case DistroBottlerocket:

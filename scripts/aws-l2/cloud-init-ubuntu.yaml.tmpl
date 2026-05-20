@@ -20,6 +20,11 @@ packages:
   - curl
   - unzip
   - ca-certificates
+  # devmapper snapshotter for kata-fc: lvm2 ships dmsetup,
+  # thin-provisioning-tools ships thin_check which containerd's
+  # devmapper plugin calls to verify the thin pool before use.
+  - lvm2
+  - thin-provisioning-tools
 
 write_files:
   - path: /etc/containerd/config.toml
@@ -91,14 +96,47 @@ runcmd:
   # 1. BPF FS (cgroup_skb/egress and cgroup/connect4 need this).
   - mount bpffs /sys/fs/bpf -t bpf || true
 
-  # 2. Install Kata-Containers static bundle.
+  # 2. Install Kata-Containers static bundle. Tarball layout has
+  #    an `opt/kata/{bin,share,libexec}` prefix; --strip-components=3
+  #    drops `opt/kata/bin/` so files land at /opt/kata/bin/... after
+  #    we re-mkdir the bin/share/libexec tree. Mirror AL2023's exact
+  #    invocation so both distros end up with identical /opt/kata.
   - mkdir -p /opt/kata
   - |
     curl -sSL \
       https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
-      | tar -xJ -C /opt/kata --strip-components=1
+      | tar -xJ -C /opt/kata --strip-components=3
   - ln -sf /opt/kata/bin/kata-runtime /usr/local/bin/kata-runtime
-  - ln -sf /opt/kata/bin/containerd-shim-kata-fc-v2 /usr/local/bin/containerd-shim-kata-fc-v2
+  # Kata 3.10 ships a single unified shim. The `kata-fc` runtime is
+  # selected via the per-runtime ConfigPath in the k0s containerd
+  # drop-in below, NOT by a separate binary. (The old `kata-fc-v2`
+  # name was from Kata 2.x.)
+  - ln -sf /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
+
+  # 2b. devmapper thin-pool for kata-fc rootfs.
+  #
+  # Kata-fc requires the container rootfs as a virtio-blk device
+  # (Firecracker doesn't speak shared-fs). containerd's built-in
+  # devmapper snapshotter satisfies that by allocating a thin
+  # volume per snapshot out of a thin-pool. Loopback files behind
+  # the pool — fine for the L2 sandbox, would need a real LV on
+  # a production node.
+  #
+  # The pool must exist BEFORE k0s's containerd starts; devmapper
+  # init only happens at containerd startup, and a missing pool
+  # makes the snapshotter dead for the lifetime of the daemon.
+  - mkdir -p /var/lib/containerd/devmapper
+  - |
+    DATA=/var/lib/containerd/devmapper/data.img
+    META=/var/lib/containerd/devmapper/meta.img
+    [ -f "$DATA" ] || truncate -s 50G "$DATA"
+    [ -f "$META" ] || truncate -s 5G  "$META"
+    modprobe dm_thin_pool
+    DATA_LOOP=$(losetup --find --show "$DATA")
+    META_LOOP=$(losetup --find --show "$META")
+    SECTORS=$(blockdev --getsz "$DATA_LOOP")
+    dmsetup create kata-thinpool --table \
+      "0 $SECTORS thin-pool $META_LOOP $DATA_LOOP 128 32768 1 skip_block_zeroing"
 
   # 3. Restart containerd with Kata config.
   - systemctl daemon-reload
@@ -144,6 +182,29 @@ runcmd:
       capabilities = ["pull", "resolve"]
       [host."https://{{ .ECRRegistry }}".header]
         authorization = "Basic $auth"
+    TOML
+      # devmapper snapshotter plugin — k0s's bundled containerd
+      # ships the built-in but doesn't activate it without the
+      # pool_name. base_image_size = 8GB matches kata's default
+      # config and keeps thin-pool fragmentation reasonable.
+      cat >/etc/k0s/containerd.d/devmapper.toml <<TOML
+    [plugins."io.containerd.snapshotter.v1.devmapper"]
+      pool_name = "kata-thinpool"
+      root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.devmapper"
+      base_image_size = "8GB"
+      async_remove = true
+    TOML
+      # kata-fc runtime drop-in. Per-runtime snapshotter selection:
+      # regular OCI workloads still use overlayfs; only kata-fc
+      # pods land on devmapper, getting their rootfs as a
+      # virtio-blk device.
+      cat >/etc/k0s/containerd.d/kata-fc.toml <<TOML
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
+      runtime_type = "io.containerd.kata.v2"
+      privileged_without_host_devices = true
+      snapshotter = "devmapper"
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
+        ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
     TOML
       systemctl restart k0scontroller
       timeout 180 sh -c 'until k0s kubectl get ns >/dev/null 2>&1; do sleep 3; done'
