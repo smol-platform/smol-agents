@@ -1,9 +1,16 @@
 # Design Document — Agent Platform: Node Provisioning & Karpenter Integration
 
-> Status: **DRAFT for review.** Scope is the node-provisioning layer that
-> lets the operator ship as a self-contained platform. Workload modelling
-> (durable/serverless, isolation, scale) already exists; this document does
+> Status: **P1 implemented.** Scope is the node-provisioning layer that lets
+> the operator ship as a self-contained platform. Workload modelling
+> (durable/serverless, isolation, scale) already existed; this document does
 > **not** re-design it.
+>
+> Implementation (P1): `AgentNodePool` CRD + controller, the Karpenter
+> builder, workload coupling (auto-match pool by isolation + `do-not-disrupt`),
+> Platform `nodeProvisioning`, the per-distro kata recipe in userData, gVisor
+> fallback, kata `RuntimeClass` overhead, and an envtest all landed. Remaining:
+> the live e2e on a real Karpenter-on-k0s cluster (P1.6) and serverless
+> hardening (P2). Operations: `docs/runbooks/agent-node-pools.md`.
 >
 > **Decided in review:**
 > - Substrate is **self-managed k0s on EC2** (EKS later, community nice-to-have).
