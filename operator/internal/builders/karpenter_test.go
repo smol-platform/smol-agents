@@ -133,7 +133,7 @@ func TestBuildKarpenterEC2NodeClass_UserDataComposesJoinPlusKata(t *testing.T) {
 	for _, want := range []string{
 		"k0s install worker",           // existing join snippet preserved
 		"dmsetup create kata-thinpool", // thin-pool layer
-		"kata-static install",          // UserData mode installs kata at boot
+		"kata-static-3.10.0",           // UserData mode downloads + installs kata
 	} {
 		if !strings.Contains(ud, want) {
 			t.Errorf("userData missing %q\n---\n%s", want, ud)
@@ -161,8 +161,8 @@ func TestBuildKarpenterEC2NodeClass_PrebakedSkipsKataInstall(t *testing.T) {
 	if !strings.Contains(ud, "dmsetup create kata-thinpool") {
 		t.Error("prebaked still needs the per-launch thin-pool")
 	}
-	if strings.Contains(ud, "kata-static install") {
-		t.Error("prebaked AMI must not re-install kata at boot")
+	if strings.Contains(ud, "kata-static-3.10.0") {
+		t.Error("prebaked AMI must not re-download/install kata at boot")
 	}
 	terms, _, _ := unstructured.NestedSlice(nc.Object, "spec", "amiSelectorTerms")
 	tags, _, _ := unstructured.NestedStringMap(map[string]interface{}{"t": terms[0]}, "t", "tags")

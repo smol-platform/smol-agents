@@ -1,7 +1,6 @@
 package builders
 
 import (
-	"fmt"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -142,41 +141,23 @@ func BuildKarpenterEC2NodeClass(anp *v1.AgentNodePool, defaults KarpenterDefault
 	return newKarpenterObject(ec2NodeClassGVK, nodeClassName, anp.Name, spec)
 }
 
-// composeUserData appends the kata layer after the existing join snippet.
-// For PrebakedAMI the kata binaries are already in the image, so only the
-// per-launch thin-pool is created; for UserData the full kata recipe runs.
+// composeUserData appends the kata layer (BuildKataLayer) after the
+// existing node-join snippet. For PrebakedAMI the kata binaries are already
+// baked, so only the per-launch thin-pool + drop-ins are emitted.
 func composeUserData(anp *v1.AgentNodePool, defaults KarpenterDefaults) string {
 	var b strings.Builder
 	if defaults.JoinUserData != "" {
 		b.WriteString(defaults.JoinUserData)
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "# --- knative-agents kata layer (AgentNodePool/%s) ---\n", anp.Name)
-	b.WriteString("set -euo pipefail\n")
-	b.WriteString(thinPoolScript(anp.Spec.ThinPool))
-	if anp.Spec.Bootstrap.Mode != "PrebakedAMI" {
-		// TODO(P1): template the hardened recipe from
-		// scripts/aws-l2/cloud-init-<distro>.yaml.tmpl (kata-static →
-		// /opt/kata + containerd drop-ins). Marker kept so the controller
-		// path and golden tests are exercised before the recipe is wired.
-		fmt.Fprintf(&b, "# kata-static install (distro=%s) — TODO: from scripts/aws-l2\n",
-			orDefault(anp.Spec.Bootstrap.Distro, "al2023"))
-	}
+	installKata := anp.Spec.Bootstrap.Mode != "PrebakedAMI"
+	b.WriteString(BuildKataLayer(
+		orDefault(anp.Spec.Bootstrap.Distro, "al2023"),
+		orDefault(anp.Spec.Arch, "arm64"),
+		anp.Spec.ThinPool,
+		installKata,
+	))
 	return b.String()
-}
-
-// thinPoolScript creates the devmapper thin-pool kata-fc needs. On metal
-// nodes the backing is raw instance-store NVMe (blank per launch), so this
-// runs at firstboot regardless of PrebakedAMI vs UserData.
-func thinPoolScript(tp v1.ThinPoolConfig) string {
-	data := orDefault(tp.DataSize, "50Gi")
-	meta := orDefault(tp.MetaSize, "5Gi")
-	backing := orDefault(tp.Backing, "instance-store")
-	return fmt.Sprintf(""+
-		"# devmapper thin-pool (backing=%s data=%s meta=%s)\n"+
-		"modprobe dm_thin_pool\n"+
-		"dmsetup create kata-thinpool --table \"0 $SECTORS thin-pool $META_LOOP $DATA_LOOP 128 32768 1 skip_block_zeroing\"\n",
-		backing, data, meta)
 }
 
 // --- helpers -------------------------------------------------------------
