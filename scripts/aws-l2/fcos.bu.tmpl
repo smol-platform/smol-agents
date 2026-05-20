@@ -97,6 +97,37 @@ storage:
               provider: kuberouter
           YAML
 
+          # Install kata-static 3.10 + devmapper thin-pool for kata-fc
+          # rootfs. lvm2 + device-mapper-persistent-data were installed
+          # via rpm-ostree apply-live in install-prereqs (so dmsetup
+          # and thin_check are on PATH).
+          #
+          # /opt on FCOS is a symlink to /var/opt with var_t SELinux
+          # label, which makes systemd refuse to ExecStart binaries
+          # there. `chcon -t usr_t` on the kata tree is what makes
+          # containerd-shim-kata-v2 launchable. DO NOT use restorecon
+          # here — it would re-stamp var_t and silently break kata.
+          mkdir -p /opt/kata
+          curl -sSL https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
+            | tar -xJ -C /opt/kata --strip-components=3 || fail "kata-static download"
+          chcon -R -t usr_t /opt/kata
+          # No /usr/local/bin symlinks needed — containerd finds the
+          # shim via the k0scontroller PATH drop-in we write below
+          # (Environment=PATH=...:/opt/kata/bin:...).
+
+          mkdir -p /var/lib/containerd/devmapper
+          DATA=/var/lib/containerd/devmapper/data.img
+          META=/var/lib/containerd/devmapper/meta.img
+          [ -f "$DATA" ] || truncate -s 50G "$DATA"
+          [ -f "$META" ] || truncate -s 5G  "$META"
+          modprobe dm_thin_pool || fail "modprobe dm_thin_pool"
+          DATA_LOOP=$(losetup --find --show "$DATA")
+          META_LOOP=$(losetup --find --show "$META")
+          SECTORS=$(blockdev --getsz "$DATA_LOOP")
+          dmsetup create kata-thinpool --table \
+            "0 $SECTORS thin-pool $META_LOOP $DATA_LOOP 128 32768 1 skip_block_zeroing" \
+            || fail "dmsetup create kata-thinpool"
+
           pw=$(/opt/bin/aws ecr get-login-password --region us-east-2)
           auth=$(printf 'AWS:%s' "$pw" | base64 -w0)
           cat >/etc/k0s/containerd.d/registry-config-path.toml <<TOML
@@ -110,8 +141,40 @@ storage:
             [host."https://{{ .ECRRegistry }}".header]
               authorization = "Basic $auth"
           TOML
+          # devmapper snapshotter plugin — k0s's bundled containerd
+          # ships the built-in but doesn't activate it without
+          # pool_name. base_image_size = 8GB matches kata's default.
+          cat >/etc/k0s/containerd.d/devmapper.toml <<TOML
+          [plugins."io.containerd.snapshotter.v1.devmapper"]
+            pool_name = "kata-thinpool"
+            root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.devmapper"
+            base_image_size = "8GB"
+            async_remove = true
+          TOML
+          # kata-fc runtime: per-runtime snapshotter selection so
+          # default OCI workloads still use overlayfs; only kata-fc
+          # pods land on devmapper, getting their rootfs as a
+          # virtio-blk device.
+          cat >/etc/k0s/containerd.d/kata-fc.toml <<TOML
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
+            runtime_type = "io.containerd.kata.v2"
+            privileged_without_host_devices = true
+            snapshotter = "devmapper"
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
+              ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+          TOML
 
           /opt/bin/k0s install controller --single -c /etc/k0s/k0s.yaml || fail "k0s install"
+          # k0scontroller (and its bundled containerd) inherit
+          # systemd's default PATH which doesn't include /opt/kata/bin.
+          # Without this drop-in containerd fails to spawn the kata
+          # shim with "containerd-shim-kata-v2 not found in PATH".
+          mkdir -p /etc/systemd/system/k0scontroller.service.d
+          cat >/etc/systemd/system/k0scontroller.service.d/path.conf <<'CONF'
+          [Service]
+          Environment=PATH=/opt/bin:/opt/kata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          CONF
+          systemctl daemon-reload
           systemctl start k0scontroller || fail "k0s start"
           timeout 300 sh -c 'until /opt/bin/k0s status >/dev/null 2>&1; do sleep 5; done' || fail "k0s status"
           timeout 120 sh -c 'until [ -f /var/lib/k0s/pki/admin.conf ]; do sleep 2; done' || fail "k0s admin.conf"
@@ -240,6 +303,16 @@ storage:
           }
           trap on_exit EXIT
 
+          # NB: rpm-ostree apply-live is the documented way to add
+          # packages to FCOS without rebooting, BUT it leaves /usr as
+          # a read-only overlay (the "Unlocked: transient" state is
+          # internal to apply-live's atomicity; the resulting mount
+          # is still ro). That conflicts with usroverlay below which
+          # we need for the SSM-agent /usr/bin copy. Instead we
+          # extract dmsetup + thin_check from the ubuntu container —
+          # dmsetup is in the FCOS base anyway, but thin_check is
+          # not, so a one-off extraction is the cleanest path.
+
           step "podman pull aws-cli"
           podman pull docker.io/amazon/aws-cli:latest
 
@@ -253,15 +326,21 @@ storage:
           podman rm "$cid" >/dev/null
           ln -sf /opt/aws-cli/bin/aws /opt/bin/aws
 
-          step "extract ssm-agent binaries (dpkg-deb inside ubuntu)"
+          step "extract ssm-agent + thin_check binaries (dpkg-deb inside ubuntu)"
           # SSM Agent: same dpkg-extract trick as Flatcar.
           #
-          # Why we extract all six binaries (not just amazon-ssm-agent
-          # and ssm-cli): the daemon forks ssm-agent-worker /
+          # Why we extract all six SSM binaries (not just amazon-ssm-
+          # agent and ssm-cli): the daemon forks ssm-agent-worker /
           # ssm-document-worker / ssm-session-worker by HARDCODED
           # path /usr/bin/<name>. There is no config knob to redirect
           # these — the paths are baked into appconfig defaults at
           # compile time. We must land all six in /usr/bin.
+          #
+          # We also extract thin_check (from thin-provisioning-tools)
+          # in the same container pass — containerd's devmapper
+          # snapshotter shells out to thin_check at startup. dmsetup
+          # itself is in the FCOS base image (device-mapper rpm); only
+          # thin_check is missing.
           #
           # Why /var/tmp/ssm-extract and not /tmp: podman's `:Z`
           # SELinux relabel refuses to operate on /tmp ("SELinux
@@ -272,38 +351,53 @@ storage:
             docker.io/library/ubuntu:24.04 -c '
               set -e
               apt-get update -qq
-              apt-get install -y -qq curl dpkg
+              apt-get install -y -qq curl dpkg thin-provisioning-tools
               curl -sSL -o /tmp/ssm.deb \
                 https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_arm64/amazon-ssm-agent.deb
               dpkg-deb -x /tmp/ssm.deb /tmp/ssm
               cp /tmp/ssm/usr/bin/* /out/
+              # thin_check lands in /usr/sbin/thin_check from the
+              # ubuntu pkg; bring it over too.
+              cp /usr/sbin/thin_check /out/
               chmod +x /out/*
             '
 
-          step "install ssm binaries into /usr/bin via rpm-ostree usroverlay"
-          # FCOS keeps /usr read-only (ostree). `rpm-ostree usroverlay`
-          # mounts a writable overlayfs on /usr that survives until
-          # reboot — long enough for the agent to live. The overlay
-          # is transient, which is perfect for an e2e test rig: we
-          # never reboot, and any leak gets reset on the next launch.
+          step "install ssm binaries + thin_check into /usr/bin via usroverlay"
+          # FCOS keeps /usr read-only (ostree). usroverlay mounts a
+          # writable tmpfs+overlay on /usr that survives until reboot
+          # — long enough for the agent + containerd-devmapper to
+          # live. We previously tried rpm-ostree install --apply-live
+          # instead; it's documented as usroverlay-equivalent but the
+          # resulting /usr mount is in practice still ro (apply-live
+          # only opens write access for its own transaction). For
+          # free `cp` writes we need real usroverlay.
           rpm-ostree usroverlay
+          # thin_check from ubuntu's thin-provisioning-tools is linked
+          # against libaio.so.1t64 (Ubuntu's time64-transition rename
+          # of libaio.so.1). FCOS ships libaio.so.1 (binary-compatible).
+          # A symlink is enough to satisfy the runtime loader.
+          [ -e /lib64/libaio.so.1t64 ] || \
+            ln -sf libaio.so.1 /lib64/libaio.so.1t64
           cp /var/tmp/ssm-extract/amazon-ssm-agent \
              /var/tmp/ssm-extract/ssm-cli \
              /var/tmp/ssm-extract/ssm-agent-worker \
              /var/tmp/ssm-extract/ssm-document-worker \
              /var/tmp/ssm-extract/ssm-session-worker \
              /var/tmp/ssm-extract/ssm-session-logger \
+             /var/tmp/ssm-extract/thin_check \
              /usr/bin/
           chmod +x /usr/bin/amazon-ssm-agent /usr/bin/ssm-cli \
                    /usr/bin/ssm-agent-worker /usr/bin/ssm-document-worker \
-                   /usr/bin/ssm-session-worker /usr/bin/ssm-session-logger
+                   /usr/bin/ssm-session-worker /usr/bin/ssm-session-logger \
+                   /usr/bin/thin_check
           # restorecon picks up the bin_t context from SELinux's
           # default policy for /usr/bin/*. Without this the binaries
           # inherit container_file_t from the podman bind mount and
           # systemd ExecStart fails with EACCES (status=203/EXEC).
           restorecon -v /usr/bin/amazon-ssm-agent /usr/bin/ssm-cli \
                         /usr/bin/ssm-agent-worker /usr/bin/ssm-document-worker \
-                        /usr/bin/ssm-session-worker /usr/bin/ssm-session-logger
+                        /usr/bin/ssm-session-worker /usr/bin/ssm-session-logger \
+                        /usr/bin/thin_check
 
           step "relabel aws-cli (still under /opt for non-systemd use)"
           # /opt/bin/aws is called from l2-bootstrap.sh (a shell
@@ -314,6 +408,8 @@ storage:
           step "smoke-check installed binaries"
           /opt/bin/aws --version
           /usr/bin/amazon-ssm-agent --version 2>&1 | head -1
+          /usr/bin/dmsetup --version 2>&1 | head -1
+          /usr/bin/thin_check --version 2>&1 | head -1
           step "install-prereqs complete"
 
 systemd:

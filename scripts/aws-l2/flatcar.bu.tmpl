@@ -19,6 +19,16 @@ version: 1.1.0
 #     not the one k0s would prefer)
 #   - SSM agent isn't packaged; we extract from Amazon's .deb
 
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        # ed25519 debug key, same one embedded in fcos.bu.tmpl.
+        # Private key lives in .l2-runs/fcos-debug.key (despite the
+        # name, used for both distros). The SG doesn't open tcp/22
+        # by default, so the key is dormant until ingress is added.
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBr54vVG27vV2VdI9Olw4L7Uitawhq1AdBJgoDDSuDfY l2-fcos-debug
+
 storage:
   files:
     - path: /opt/bin/l2-bootstrap.sh
@@ -75,6 +85,42 @@ storage:
               provider: kuberouter
           YAML
 
+          # Install kata-static 3.10 + set up devmapper thin-pool for
+          # kata-fc rootfs. Flatcar ships dmsetup + thin_check +
+          # dm_thin_pool kernel module in the base (no extra install
+          # step like AL2023's lvm2 dnf install). /opt is writable so
+          # we untar there same as AL2023.
+          #
+          # On Flatcar /usr/local/bin is read-only (it's part of the
+          # ro /usr btrfs subvolume, NOT a symlink to /var as the
+          # older comment elsewhere in this template claimed). So we
+          # land symlinks in /opt/bin (already writable, in k0s's
+          # systemd-default PATH thanks to the agent unit override)
+          # and add a k0scontroller drop-in below to ensure the
+          # containerd shim is also findable on PATH.
+          mkdir -p /opt/kata
+          curl -sSL https://github.com/kata-containers/kata-containers/releases/download/3.10.0/kata-static-3.10.0-arm64.tar.xz \
+            | tar -xJ -C /opt/kata --strip-components=3 || fail "kata-static download"
+          ln -sf /opt/kata/bin/kata-runtime /opt/bin/kata-runtime
+          ln -sf /opt/kata/bin/containerd-shim-kata-v2 /opt/bin/containerd-shim-kata-v2
+
+          mkdir -p /var/lib/containerd/devmapper
+          DATA=/var/lib/containerd/devmapper/data.img
+          META=/var/lib/containerd/devmapper/meta.img
+          [ -f "$DATA" ] || truncate -s 50G "$DATA"
+          [ -f "$META" ] || truncate -s 5G  "$META"
+          modprobe dm_thin_pool || fail "modprobe dm_thin_pool"
+          DATA_LOOP=$(losetup --find --show "$DATA")
+          META_LOOP=$(losetup --find --show "$META")
+          SECTORS=$(blockdev --getsz "$DATA_LOOP")
+          # thin-pool target args: <metadev> <datadev> <block_size_sectors>
+          # <low_water_mark> <num_feature_args> <features...>. 64KB blocks
+          # match kata's recommended config; skip_block_zeroing keeps
+          # snapshot creation cheap for ephemeral images.
+          dmsetup create kata-thinpool --table \
+            "0 $SECTORS thin-pool $META_LOOP $DATA_LOOP 128 32768 1 skip_block_zeroing" \
+            || fail "dmsetup create kata-thinpool"
+
           # Configure k0s containerd ECR auth BEFORE k0s starts.
           mkdir -p /etc/k0s/containerd.d /etc/containerd/certs.d/{{ .ECRRegistry }}
           pw=$(/opt/bin/aws ecr get-login-password --region us-east-2)
@@ -90,8 +136,40 @@ storage:
             [host."https://{{ .ECRRegistry }}".header]
               authorization = "Basic $auth"
           TOML
+          # devmapper snapshotter plugin — k0s's bundled containerd
+          # ships the built-in but doesn't activate it without
+          # pool_name. base_image_size = 8GB matches kata's default.
+          cat >/etc/k0s/containerd.d/devmapper.toml <<TOML
+          [plugins."io.containerd.snapshotter.v1.devmapper"]
+            pool_name = "kata-thinpool"
+            root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.devmapper"
+            base_image_size = "8GB"
+            async_remove = true
+          TOML
+          # kata-fc runtime: per-runtime snapshotter selection so
+          # default OCI workloads still use overlayfs; only kata-fc
+          # pods land on devmapper, getting their rootfs as a
+          # virtio-blk device.
+          cat >/etc/k0s/containerd.d/kata-fc.toml <<TOML
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc]
+            runtime_type = "io.containerd.kata.v2"
+            privileged_without_host_devices = true
+            snapshotter = "devmapper"
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-fc.options]
+              ConfigPath = "/opt/kata/share/defaults/kata-containers/configuration-fc.toml"
+          TOML
 
           /opt/bin/k0s install controller --single -c /etc/k0s/k0s.yaml || fail "/opt/bin/k0s install"
+          # k0scontroller (and its bundled containerd) inherit
+          # systemd's default PATH which doesn't include /opt/bin.
+          # Without this drop-in containerd fails to spawn the kata
+          # shim with "containerd-shim-kata-v2 not found in PATH".
+          mkdir -p /etc/systemd/system/k0scontroller.service.d
+          cat >/etc/systemd/system/k0scontroller.service.d/path.conf <<'CONF'
+          [Service]
+          Environment=PATH=/opt/bin:/opt/kata/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          CONF
+          systemctl daemon-reload
           systemctl start k0scontroller || fail "k0s start"
           timeout 300 sh -c 'until /opt/bin/k0s status >/dev/null 2>&1; do sleep 5; done' || fail "/opt/bin/k0s status"
           timeout 120 sh -c 'until [ -f /var/lib/k0s/pki/admin.conf ]; do sleep 2; done' || fail "k0s admin.conf"
