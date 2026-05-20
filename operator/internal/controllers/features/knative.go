@@ -2,6 +2,7 @@ package features
 
 import (
 	"context"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,6 +50,11 @@ func (r KnativeReconciler) Reconcile(ctx context.Context, env Env) (Result, []cl
 		return res, nil, err
 	} else if ok {
 		builders.ApplyKnativePlacement(svc, *p)
+		if missing := MissingKnativePodspecFlags(ctx, env.Reader); len(missing) > 0 {
+			res.Message = "Knative podspec feature-flags not enabled (" +
+				strings.Join(missing, ", ") +
+				"); placement is ignored until they are enabled in knative-serving/config-features"
+		}
 	}
 	owned := []client.Object{svc}
 	res.Ready = true

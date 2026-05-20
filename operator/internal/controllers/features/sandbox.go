@@ -42,6 +42,31 @@ func (r SandboxReconciler) Reconcile(ctx context.Context, env Env) (Result, []cl
 		return res, nil, fmt.Errorf("sandbox: %s", res.Message)
 	}
 
+	// gVisor fallback (R-PROV-2): a kata isolation needs a metal node from a
+	// matching AgentNodePool. If none exists, either fall back to gVisor
+	// (when the platform allows it) or hold the agent NotReady — never
+	// schedule a "kata" pod with no microVM-capable node behind it.
+	if builders.RequiresKVM(rc) && env.Reader != nil {
+		_, hasPool, err := ResolvePlacement(ctx, env)
+		if err != nil {
+			return res, nil, err
+		}
+		if !hasPool {
+			if env.Platform == nil || !env.Platform.Spec.NodeProvisioning.AllowGvisorFallback {
+				res.Reason = "NoKVMCapacity"
+				res.Message = fmt.Sprintf("no AgentNodePool provides isolation %q and gVisor fallback is disabled", rc)
+				return res, nil, fmt.Errorf("sandbox: %s", res.Message)
+			}
+			// Switch the effective runtimeClass in-memory so downstream
+			// feature reconcilers (Knative runs after Sandbox) render gvisor
+			// and skip the kata node placement.
+			rc = string(pkgsandbox.KindGVisor)
+			cr.Spec.Features.Sandbox.RuntimeClass = rc
+			kind = pkgsandbox.KindGVisor
+			res.Message = "no kata AgentNodePool; fell back to gVisor (R-PROV-2)"
+		}
+	}
+
 	// Auto-provision the RuntimeClass for kinds we know how to install.
 	if env.Reader != nil {
 		var owned client.Object

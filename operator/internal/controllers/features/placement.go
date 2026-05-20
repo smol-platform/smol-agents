@@ -4,6 +4,10 @@ import (
 	"context"
 	"sort"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	v1 "github.com/stigen/knative-agents/operator/api/v1"
 	"github.com/stigen/knative-agents/operator/internal/builders"
 )
@@ -44,4 +48,37 @@ func ResolvePlacement(ctx context.Context, env Env) (*builders.NodePlacement, bo
 	}
 	sort.Strings(matches)
 	return &builders.NodePlacement{PoolName: matches[0], Isolation: rc}, true, nil
+}
+
+// knativePodspecFlags are the config-features flags Knative requires before
+// it honours the runtimeClassName / affinity / tolerations / nodeSelector
+// our placement stamps onto a revision template. Without them Knative
+// silently drops those fields and the kata pod schedules unisolated.
+var knativePodspecFlags = []string{
+	"kubernetes.podspec-runtimeclassname",
+	"kubernetes.podspec-affinity",
+	"kubernetes.podspec-tolerations",
+	"kubernetes.podspec-nodeselector",
+}
+
+// MissingKnativePodspecFlags returns the required Knative feature flags not
+// set to "enabled" in knative-serving/config-features. Best-effort: returns
+// nil when the ConfigMap can't be read (Knative absent or a non-standard
+// namespace), so the operator never blocks on a check it cannot make.
+func MissingKnativePodspecFlags(ctx context.Context, reader client.Reader) []string {
+	if reader == nil {
+		return nil
+	}
+	cm := &corev1.ConfigMap{}
+	key := types.NamespacedName{Namespace: "knative-serving", Name: "config-features"}
+	if err := reader.Get(ctx, key, cm); err != nil {
+		return nil
+	}
+	var missing []string
+	for _, f := range knativePodspecFlags {
+		if cm.Data[f] != "enabled" {
+			missing = append(missing, f)
+		}
+	}
+	return missing
 }

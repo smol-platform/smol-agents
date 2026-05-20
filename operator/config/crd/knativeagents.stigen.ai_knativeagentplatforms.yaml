@@ -98,6 +98,7 @@ spec:
                           id: { type: string }
                           alias: { type: string }
                     joinUserData: { type: string }
+                    allowGvisorFallback: { type: boolean }
             status:
               type: object
               properties:

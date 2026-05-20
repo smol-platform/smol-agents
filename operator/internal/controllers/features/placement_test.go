@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/stigen/knative-agents/operator/api/v1"
@@ -12,9 +15,19 @@ import (
 // stubReader is a minimal client.Reader returning a fixed AgentNodePool
 // list — avoids pulling the controller-runtime fake client for a pure
 // resolution test.
-type stubReader struct{ pools []v1.AgentNodePool }
+type stubReader struct {
+	pools []v1.AgentNodePool
+	cm    *corev1.ConfigMap
+}
 
-func (s stubReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+func (s stubReader) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+	if c, ok := obj.(*corev1.ConfigMap); ok {
+		if s.cm == nil {
+			return apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, key.Name)
+		}
+		s.cm.DeepCopyInto(c)
+		return nil
+	}
 	return nil
 }
 
@@ -82,5 +95,33 @@ func TestResolvePlacement_NoPoolNoMatch(t *testing.T) {
 func TestResolvePlacement_NilReader(t *testing.T) {
 	if _, ok, err := ResolvePlacement(context.Background(), Env{CR: kataAgent("kata-fc")}); err != nil || ok {
 		t.Errorf("nil reader → no placement: ok=%v err=%v", ok, err)
+	}
+}
+
+func enabledFlags() *corev1.ConfigMap {
+	return &corev1.ConfigMap{Data: map[string]string{
+		"kubernetes.podspec-runtimeclassname": "enabled",
+		"kubernetes.podspec-affinity":         "enabled",
+		"kubernetes.podspec-tolerations":      "enabled",
+		"kubernetes.podspec-nodeselector":     "enabled",
+	}}
+}
+
+func TestMissingKnativePodspecFlags_AllEnabled(t *testing.T) {
+	if m := MissingKnativePodspecFlags(context.Background(), stubReader{cm: enabledFlags()}); len(m) != 0 {
+		t.Errorf("want none missing, got %v", m)
+	}
+}
+
+func TestMissingKnativePodspecFlags_SomeMissing(t *testing.T) {
+	cm := &corev1.ConfigMap{Data: map[string]string{"kubernetes.podspec-runtimeclassname": "enabled"}}
+	if m := MissingKnativePodspecFlags(context.Background(), stubReader{cm: cm}); len(m) != 3 {
+		t.Errorf("want 3 missing, got %v", m)
+	}
+}
+
+func TestMissingKnativePodspecFlags_AbsentIsBestEffort(t *testing.T) {
+	if m := MissingKnativePodspecFlags(context.Background(), stubReader{}); m != nil {
+		t.Errorf("absent config-features → nil (best-effort), got %v", m)
 	}
 }

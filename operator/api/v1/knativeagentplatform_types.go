@@ -86,6 +86,12 @@ type NodeProvisioningSpec struct {
 	// JoinUserData is the existing deployment's node-join snippet (k0s
 	// worker-join + providerID) the kata layer is appended to.
 	JoinUserData string `json:"joinUserData,omitempty"`
+
+	// AllowGvisorFallback lets a kata agent fall back to the gVisor runtime
+	// when no kata AgentNodePool exists (e.g. managed k8s without KVM).
+	// When false such an agent is held NotReady with reason NoKVMCapacity
+	// rather than silently scheduling without isolation. R-PROV-2.
+	AllowGvisorFallback bool `json:"allowGvisorFallback,omitempty"`
 }
 
 // KnativeAgentPlatformStatus reports operator health at cluster scope.
