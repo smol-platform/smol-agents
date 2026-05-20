@@ -329,6 +329,22 @@ runcmd:
       $KCTL wait --for=condition=Available --timeout=180s \
         deployment -n tenant-a --all || fail "tenant-a deployments"
 
+      # k0s manifest applier gives up on samples/ after ~10 retries
+      # if the operator's mutating webhook isn't reachable yet. By
+      # this point the operator deploy is Available, so an explicit
+      # re-apply will succeed where the watcher gave up. Without
+      # this, KA-PHASE fails on faster-booting distros because the
+      # `hello` CR was never created.
+      for i in 1 2 3 4 5; do
+        if $KCTL apply -f /var/lib/k0s/manifests/samples/; then
+          break
+        fi
+        echo "samples re-apply attempt $i failed, retrying in 10s"
+        sleep 10
+      done
+      $KCTL get -n tenant-a knativeagent hello >/dev/null 2>&1 || \
+        fail "KA hello sample missing after re-apply"
+
       # Sample KnativeAgent: block until operator reconciles to
       # phase=Ready so KA-PHASE doesn't race the controller.
       wait_ka_ready() {
