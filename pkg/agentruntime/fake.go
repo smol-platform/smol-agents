@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	rt "github.com/stigen/knative-agents/pkg/agentmodel/runtime"
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // FakeLLM replays a scripted sequence of decisions. Useful in tests +

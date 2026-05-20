@@ -6,8 +6,8 @@ provider "aws" {
   # rejected. Belt + suspenders for R-E2E-L2-1 ("us-east-2 only").
   default_tags {
     tags = {
-      Project              = "knative-agents"
-      "knative-agents-e2e" = "infra"
+      Project              = "smol-agents"
+      "smol-agents-e2e" = "infra"
       ManagedBy            = "terraform"
     }
   }

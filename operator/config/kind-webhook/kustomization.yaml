@@ -9,7 +9,7 @@
 #     `cert-manager.io/inject-ca-from` annotation expects
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: knative-agents-system
+namespace: smol-agents-system
 resources:
   - ../crd
   - ../rbac
@@ -19,7 +19,7 @@ resources:
 patches:
   - target:
       kind: Deployment
-      name: knative-agents-operator
+      name: smol-agents-operator
     patch: |
       - op: replace
         path: /spec/replicas
@@ -46,8 +46,8 @@ patches:
         value:
           - name: webhook-cert
             secret:
-              secretName: knative-agents-operator-serving-cert
+              secretName: smol-agents-operator-serving-cert
 labels:
   - includeSelectors: false
     pairs:
-      app.kubernetes.io/managed-by: knative-agents-operator
+      app.kubernetes.io/managed-by: smol-agents-operator

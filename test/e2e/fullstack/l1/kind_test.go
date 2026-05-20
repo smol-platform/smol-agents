@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // TestL1 brings up a kind cluster (reuses scripts/kind-verify.sh)

@@ -1,4 +1,4 @@
-# Technology Stack — knative-agents
+# Technology Stack — smol-agents
 
 ## Project Type
 Multi-binary Go platform (agent runtime, secret-proxy sidecar, agentctl)

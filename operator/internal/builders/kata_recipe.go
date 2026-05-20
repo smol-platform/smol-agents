@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // kataVersion is the kata-containers static bundle we ship. Mirrors
@@ -51,7 +51,7 @@ func BuildKataLayer(distro, arch string, tp v1.ThinPoolConfig, installKata bool)
 	meta := truncateSize(orDefault(tp.MetaSize, "5Gi"))
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# --- knative-agents kata layer (distro=%s arch=%s) ---\n", distro, arch)
+	fmt.Fprintf(&b, "# --- smol-agents kata layer (distro=%s arch=%s) ---\n", distro, arch)
 	b.WriteString("set -euo pipefail\n")
 
 	if installKata {

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // TestL0 brings up the docker-compose stack and runs every scenario

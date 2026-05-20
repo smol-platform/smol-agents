@@ -1,22 +1,22 @@
-{{- include "knative-agents.validateSandbox" . -}}
+{{- include "smol-agents.validateSandbox" . -}}
 {{- if eq .Values.mode "statefulset" -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "knative-agents.fullname" . }}
+  name: {{ include "smol-agents.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
 spec:
-  serviceName: {{ include "knative-agents.fullname" . }}
+  serviceName: {{ include "smol-agents.fullname" . }}
   replicas: {{ .Values.agent.replicas }}
   selector:
     matchLabels:
-      {{- include "knative-agents.selectorLabels" . | nindent 6 }}
+      {{- include "smol-agents.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "knative-agents.selectorLabels" . | nindent 8 }}
+        {{- include "smol-agents.selectorLabels" . | nindent 8 }}
     spec:
       runtimeClassName: {{ .Values.sandbox.runtimeClass }}    # R-SBX-1
       serviceAccountName: {{ .Values.serviceAccount.name }}
@@ -25,7 +25,7 @@ spec:
       containers:
         - name: agent
           image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
-          args: ["--config=/etc/knative-agents/agent.yaml"]
+          args: ["--config=/etc/smol-agents/agent.yaml"]
           ports:
             - name: http
               containerPort: 8080
@@ -50,10 +50,10 @@ spec:
             - name: secret-broker
               mountPath: /run/secret-broker
             - name: config
-              mountPath: /etc/knative-agents
+              mountPath: /etc/smol-agents
               readOnly: true
             - name: state
-              mountPath: /var/lib/knative-agents
+              mountPath: /var/lib/smol-agents
             - name: tmp
               mountPath: /tmp
         - name: secret-proxy
@@ -81,7 +81,7 @@ spec:
           emptyDir: {}
         - name: config
           configMap:
-            name: {{ include "knative-agents.fullname" . }}-config
+            name: {{ include "smol-agents.fullname" . }}-config
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:

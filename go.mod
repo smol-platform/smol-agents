@@ -1,4 +1,4 @@
-module github.com/stigen/knative-agents
+module github.com/stigen/smol-agents
 
 go 1.26.0
 

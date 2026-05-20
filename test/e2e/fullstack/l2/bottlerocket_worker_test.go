@@ -79,7 +79,7 @@ func TestL2_BottlerocketWorker(t *testing.T) {
 	t.Setenv("L2_K8S_API_SERVER", api)
 	t.Setenv("L2_K8S_CA_BASE64", base64.StdEncoding.EncodeToString([]byte(ca)))
 	t.Setenv("L2_K8S_BOOTSTRAP_TOKEN", token)
-	t.Setenv("L2_K8S_CLUSTER_NAME", "knative-agents-l2")
+	t.Setenv("L2_K8S_CLUSTER_NAME", "smol-agents-l2")
 
 	worker, err := Provision(ctx)
 	if err != nil {
@@ -219,7 +219,7 @@ func waitForBottlerocketWorkerReady(ctx context.Context, controller *l2Env, t *t
 	defer tick.Stop()
 	for {
 		out, _ := controller.runSSM(dctx,
-			`k0s kubectl get nodes -l knative-agents.stigen.ai/distro=bottlerocket -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'`,
+			`k0s kubectl get nodes -l smol-agents.stigen.ai/distro=bottlerocket -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'`,
 			30*time.Second)
 		if bytes.Contains(out, []byte("=True")) {
 			t.Logf("worker node observed: %s", strings.TrimSpace(string(out)))

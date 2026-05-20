@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // TestL2 is the full L2 integration: provision Spot c6gd.metal,

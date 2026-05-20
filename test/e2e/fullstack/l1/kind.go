@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // kindEnv is the L1 Env impl. It runs kind-verify.sh for setup
@@ -44,7 +44,7 @@ func kindUp(ctx context.Context) (*kindEnv, error) {
 
 	cluster := os.Getenv("CLUSTER")
 	if cluster == "" {
-		cluster = "knative-agents-kind"
+		cluster = "smol-agents-kind"
 	}
 
 	env := &kindEnv{
@@ -160,9 +160,9 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 	root := repoFile("")
 	// 1. Build images we ship locally.
 	for _, img := range []struct{ tag, dockerfile, ctx string }{
-		{"knative-agents/fake-llm:dev", "deploy/docker/fake-llm.Dockerfile", root},
-		{"knative-agents/spiffe-probe:dev", "deploy/docker/spiffe-probe.Dockerfile", root},
-		{"knative-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
+		{"smol-agents/fake-llm:dev", "deploy/docker/fake-llm.Dockerfile", root},
+		{"smol-agents/spiffe-probe:dev", "deploy/docker/spiffe-probe.Dockerfile", root},
+		{"smol-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
 	} {
 		if err := runCmd(ctx, "docker", "build",
 			"-f", filepath.Join(root, img.dockerfile),
@@ -205,8 +205,8 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 	}
 	// 3d. Wait for the rolled-out operator pod to be Ready.
 	if err := runCmd(ctx, "kubectl", "--context", e.context,
-		"-n", "knative-agents-system", "rollout", "status",
-		"deployment/knative-agents-operator", "--timeout=120s"); err != nil {
+		"-n", "smol-agents-system", "rollout", "status",
+		"deployment/smol-agents-operator", "--timeout=120s"); err != nil {
 		return fmt.Errorf("wait operator rollout: %w", err)
 	}
 	// 4. Wait for fakes ready.
@@ -253,7 +253,7 @@ func (e *kindEnv) Capabilities() shared.Caps {
 // installed. Used to gate the S-WEBHOOK scenario.
 func (e *kindEnv) hasWebhook() bool {
 	out, err := exec.Command("kubectl", "--context", e.context, "get",
-		"validatingwebhookconfiguration", "knative-agents-operator-validating",
+		"validatingwebhookconfiguration", "smol-agents-operator-validating",
 		"--ignore-not-found", "-o", "name").Output()
 	if err != nil {
 		return false
@@ -379,7 +379,7 @@ spec:
   restartPolicy: Never
   containers:
     - name: probe
-      image: knative-agents/spiffe-probe:dev
+      image: smol-agents/spiffe-probe:dev
       imagePullPolicy: Never
       args: %s
       volumeMounts:

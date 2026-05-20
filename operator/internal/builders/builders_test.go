@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
-func sample() *v1.KnativeAgent {
-	cr := &v1.KnativeAgent{}
+func sample() *v1.SmolAgent {
+	cr := &v1.SmolAgent{}
 	cr.Name = "alice"
 	cr.Namespace = "tenant-a"
 	cr.Spec.TrustDomain = "stigen.ai"

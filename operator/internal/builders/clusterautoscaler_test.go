@@ -7,12 +7,12 @@ import (
 
 func TestBuildClusterAutoscalerConfigMap(t *testing.T) {
 	anp := sampleANP() // kata-fc, arm64, UserData/al2023, families c7gd,m7gd
-	cm := BuildClusterAutoscalerConfigMap(anp, "knative-agents-system", sampleDefaults())
+	cm := BuildClusterAutoscalerConfigMap(anp, "smol-agents-system", sampleDefaults())
 
 	if cm.Name != "anp-kata-arm64-clusterautoscaler" {
 		t.Errorf("name = %q", cm.Name)
 	}
-	if cm.Namespace != "knative-agents-system" {
+	if cm.Namespace != "smol-agents-system" {
 		t.Errorf("namespace = %q", cm.Namespace)
 	}
 	if cm.Kind != "ConfigMap" {

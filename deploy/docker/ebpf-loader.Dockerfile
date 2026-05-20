@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 # kernel-side-of-the-world for a given release.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ebpf-loader /ebpf-loader
-COPY bpf/build/*.bpf.o /usr/share/knative-agents/bpf/
+COPY bpf/build/*.bpf.o /usr/share/smol-agents/bpf/
 # DaemonSet needs to write to /sys/fs/bpf and host paths; running as
 # nonroot keeps userland boundaries even when CAP_BPF/CAP_SYS_ADMIN
 # are granted at the container level.

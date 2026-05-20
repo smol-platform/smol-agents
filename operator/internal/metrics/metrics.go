@@ -7,7 +7,7 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-const subsystem = "knative_agents_operator"
+const subsystem = "smol_agents_operator"
 
 var (
 	// FeatureEnabled is 1 when a feature is enabled on a CR, 0 otherwise.

@@ -24,7 +24,7 @@ resource "aws_vpc" "main" {
   enable_dns_hostnames = true
   enable_dns_support   = true
   tags = {
-    Name = "knative-agents-e2e"
+    Name = "smol-agents-e2e"
   }
 }
 
@@ -32,7 +32,7 @@ resource "aws_internet_gateway" "main" {
   count  = local.byo_vpc ? 0 : 1
   vpc_id = aws_vpc.main[0].id
   tags = {
-    Name = "knative-agents-e2e"
+    Name = "smol-agents-e2e"
   }
 }
 
@@ -43,7 +43,7 @@ resource "aws_subnet" "public" {
   availability_zone       = data.aws_availability_zones.available[0].names[0]
   map_public_ip_on_launch = true
   tags = {
-    Name = "knative-agents-e2e-public-a"
+    Name = "smol-agents-e2e-public-a"
   }
 }
 
@@ -55,7 +55,7 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.main[0].id
   }
   tags = {
-    Name = "knative-agents-e2e-public"
+    Name = "smol-agents-e2e-public"
   }
 }
 
@@ -76,7 +76,7 @@ locals {
 }
 
 resource "aws_security_group" "l2" {
-  name        = "knative-agents-e2e-l2"
+  name        = "smol-agents-e2e-l2"
   description = "L2 e2e: full egress, intra-SG full ingress, NodePort 30080/30443 from caller IP."
   vpc_id      = local.vpc_id
 
@@ -89,13 +89,13 @@ resource "aws_security_group" "l2" {
   }
 
   tags = {
-    Name = "knative-agents-e2e-l2"
+    Name = "smol-agents-e2e-l2"
   }
 }
 
 # Intra-SG: every instance in this SG can talk to every other on
 # any port. Replaces the default-VPC SG behaviour for instances we
-# launch with knative-agents-e2e-l2 attached.
+# launch with smol-agents-e2e-l2 attached.
 resource "aws_security_group_rule" "l2_intra" {
   type              = "ingress"
   description       = "intra-SG: all traffic"

@@ -18,7 +18,7 @@ data:
       KeyManager "memory" {}
       NodeAttestor "k8s_psat" {
         plugin_data {
-          cluster = "knative-agents-kind"
+          cluster = "smol-agents-kind"
         }
       }
       WorkloadAttestor "k8s" {

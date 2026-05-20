@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // ClusterSPIFFEIDGVR is the cluster-scoped CRD shipped by spiffe.io.
@@ -22,7 +22,7 @@ var ClusterSPIFFEIDGVR = schema.GroupVersionKind{
 // runtime.Object DeepCopy happy (Unstructured's DeepCopy refuses to
 // recurse into typed maps like map[string]string nested inside a
 // map[string]any).
-func BuildClusterSPIFFEID(cr *v1.KnativeAgent) *unstructured.Unstructured {
+func BuildClusterSPIFFEID(cr *v1.SmolAgent) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(ClusterSPIFFEIDGVR)
 	u.SetName(cr.Namespace + "-" + cr.Name)

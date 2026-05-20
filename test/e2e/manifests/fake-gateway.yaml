@@ -36,7 +36,7 @@ spec:
     spec:
       containers:
         - name: fake-gateway
-          image: knative-agents/fake-gateway:dev
+          image: smol-agents/fake-gateway:dev
           imagePullPolicy: Never
           args:
             - "-tcp-addr=:8443"

@@ -11,6 +11,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/agent /agent
-COPY bpf/build/*.bpf.o /usr/share/knative-agents/bpf/
+COPY bpf/build/*.bpf.o /usr/share/smol-agents/bpf/
 USER nonroot:nonroot
 ENTRYPOINT ["/agent"]

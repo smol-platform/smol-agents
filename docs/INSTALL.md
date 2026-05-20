@@ -1,4 +1,4 @@
-# Installing knative-agents
+# Installing smol-agents
 
 This guide covers four install paths, in order of how much infrastructure you
 already have:
@@ -10,7 +10,7 @@ already have:
    gVisor, SPIRE, and Knative already running.
 
 If you just want to read the system end-to-end first, the source of truth is
-`.spec-workflow/specs/knative-agents-platform/{product,requirements,design}.md`.
+`.spec-workflow/specs/smol-agents-platform/{product,requirements,design}.md`.
 
 ---
 
@@ -53,7 +53,7 @@ bpftool feature probe kernel | grep -E "ring_buf|BTF|raw_tracepoint"
 
 ### 1.3 Toolchain prerequisites
 
-#### Required for *building* knative-agents
+#### Required for *building* smol-agents
 
 | Tool        | Min version | Purpose                                              |
 |-------------|-------------|------------------------------------------------------|
@@ -64,7 +64,7 @@ bpftool feature probe kernel | grep -E "ring_buf|BTF|raw_tracepoint"
 | make        | any         | Drives the build                                     |
 | git         | any         | Source control                                       |
 
-#### Required for *deploying* knative-agents
+#### Required for *deploying* smol-agents
 
 | Tool        | Min version | Purpose                                              |
 |-------------|-------------|------------------------------------------------------|
@@ -132,7 +132,7 @@ Notes:
 
 ### 1.5 Identity prerequisites (SPIRE)
 
-knative-agents expects:
+smol-agents expects:
 
 - **Trust domain** matches the value of `trustDomain` in `values.yaml`
   (default `stigen.ai`).
@@ -146,7 +146,7 @@ knative-agents expects:
 - **Selectors** include `k8s:ns:<namespace>` and
   `k8s:sa:<serviceaccount>`. The chart renders these by default.
 
-Verify SPIRE is healthy before installing knative-agents:
+Verify SPIRE is healthy before installing smol-agents:
 
 ```bash
 kubectl exec -n spire-server -it deploy/spire-server -- /opt/spire/bin/spire-server agent list
@@ -163,7 +163,7 @@ For local development of agents *and* the platform itself.
 # Install devenv (one-time):
 #   https://devenv.sh/getting-started/
 
-cd knative-agents
+cd smol-agents
 devenv shell           # drops you into a shell with Go, clang, kubectl, helm, kind, quint pre-installed
 make all               # tidy + fmt + vet + lint + build + test
 make verify-formal     # run the Quint model checker
@@ -206,7 +206,7 @@ sudo npm install -g @informalsystems/quint
 ### 3.3 Build
 
 ```bash
-cd knative-agents
+cd smol-agents
 go mod download              # fetch deps
 make tidy                    # ensure go.mod is consistent
 make build                   # → bin/{agent,secret-proxy,agentctl}
@@ -219,9 +219,9 @@ make verify-formal           # Quint
 ### 3.4 Build container images
 
 ```bash
-docker build -f deploy/docker/agent.Dockerfile         -t knative-agents/agent:0.1.0 .
-docker build -f deploy/docker/secret-proxy.Dockerfile  -t knative-agents/secret-proxy:0.1.0 .
-docker build -f deploy/docker/agentctl.Dockerfile      -t knative-agents/agentctl:0.1.0 .
+docker build -f deploy/docker/agent.Dockerfile         -t smol-agents/agent:0.1.0 .
+docker build -f deploy/docker/secret-proxy.Dockerfile  -t smol-agents/secret-proxy:0.1.0 .
+docker build -f deploy/docker/agentctl.Dockerfile      -t smol-agents/agentctl:0.1.0 .
 ```
 
 For multi-arch with Buildx:
@@ -229,7 +229,7 @@ For multi-arch with Buildx:
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
     -f deploy/docker/agent.Dockerfile \
-    -t your-registry/knative-agents/agent:0.1.0 --push .
+    -t your-registry/smol-agents/agent:0.1.0 --push .
 ```
 
 ---
@@ -243,7 +243,7 @@ Use this to validate the entire stack on a laptop.
 - 3-node kind cluster
 - Knative Serving + Kourier networking
 - SPIRE server + agent (DaemonSet) with trust domain `stigen.ai`
-- knative-agents chart installed in namespace `knative-agents`
+- smol-agents chart installed in namespace `smol-agents`
 - A working agent reachable via Knative
 
 ### 4.2 Caveat about Kata + Firecracker on kind
@@ -257,7 +257,7 @@ This relaxes R-SBX-1 — fine for development, never for production.
 
 ```bash
 helm upgrade --install agents deploy/helm \
-    --namespace knative-agents --create-namespace \
+    --namespace smol-agents --create-namespace \
     --set sandbox.runtimeClass=runc \
     --set sandbox.allowHostRuntime=true
 ```
@@ -280,29 +280,29 @@ without provisioning KVM.
 
 This script (read it before running — it makes destructive cluster changes):
 
-1. `kind create cluster --name knative-agents`
+1. `kind create cluster --name smol-agents`
 2. Installs Knative Serving CRDs, core, and Kourier
 3. Installs SPIRE CRDs and the SPIRE chart with `trustDomain=stigen.ai`
-4. `helm upgrade --install agents deploy/helm --namespace knative-agents --create-namespace`
+4. `helm upgrade --install agents deploy/helm --namespace smol-agents --create-namespace`
 5. Waits for the Knative Service to be Ready
 
 Tear down with:
 
 ```bash
-kind delete cluster --name knative-agents
+kind delete cluster --name smol-agents
 ```
 
 ### 4.4 Verify
 
 ```bash
 # 1. Pod is Running and Ready
-kubectl get pods -n knative-agents -o wide
+kubectl get pods -n smol-agents -o wide
 
 # 2. The Pod has a SPIFFE SVID issued
-kubectl exec -n knative-agents <agent-pod> -c agent -- /agentctl status
+kubectl exec -n smol-agents <agent-pod> -c agent -- /agentctl status
 
 # 3. Knative Service URL responds
-SVC=$(kubectl get ksvc -n knative-agents -o jsonpath='{.items[0].status.url}')
+SVC=$(kubectl get ksvc -n smol-agents -o jsonpath='{.items[0].status.url}')
 curl -k $SVC/healthz   # expects 200 ok
 curl -k $SVC/readyz    # expects 200 ok
 ```
@@ -323,15 +323,15 @@ TAG=0.1.0
 for cmd in agent secret-proxy agentctl; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f deploy/docker/$cmd.Dockerfile \
-    -t $REG/knative-agents/$cmd:$TAG --push .
+    -t $REG/smol-agents/$cmd:$TAG --push .
 done
 ```
 
 For SLSA L3-style provenance, sign with `cosign`:
 
 ```bash
-cosign sign --yes $REG/knative-agents/agent:$TAG
-cosign sign --yes $REG/knative-agents/secret-proxy:$TAG
+cosign sign --yes $REG/smol-agents/agent:$TAG
+cosign sign --yes $REG/smol-agents/secret-proxy:$TAG
 ```
 
 ### 5.2 Configure values
@@ -344,7 +344,7 @@ trustDomain: example.test                    # match your SPIRE deployment
 
 agent:
   image:
-    repository: your-registry.example.com/knative-agents/agent
+    repository: your-registry.example.com/smol-agents/agent
     tag: 0.1.0
   config:
     mode: strict
@@ -361,7 +361,7 @@ agent:
 
 secretProxy:
   image:
-    repository: your-registry.example.com/knative-agents/secret-proxy
+    repository: your-registry.example.com/smol-agents/secret-proxy
     tag: 0.1.0
   config:
     backend:
@@ -386,7 +386,7 @@ knative:
 
 ```bash
 helm template agents deploy/helm \
-    --namespace knative-agents \
+    --namespace smol-agents \
     --values my-values.yaml > /tmp/render.yaml
 
 # Review:
@@ -400,9 +400,9 @@ grep "spiffeIDTemplate" /tmp/render.yaml      # confirm trust domain
 ### 5.4 Install
 
 ```bash
-kubectl create namespace knative-agents
+kubectl create namespace smol-agents
 helm upgrade --install agents deploy/helm \
-    --namespace knative-agents \
+    --namespace smol-agents \
     --values my-values.yaml \
     --wait --timeout 5m
 ```
@@ -417,9 +417,9 @@ Run the validation matrix in `tasks.md`:
 | R-MTL-1     | `openssl s_client -connect <pod-ip>:8443` — refuses without SVID              |
 | R-SBX-1     | `kubectl get pod <agent-pod> -o yaml \| grep runtimeClassName` → `kata-fc` (or preset-mapped) |
 | R-RUN-1     | `curl http://<pod-ip>:8080/readyz` → 200                                      |
-| R-DEP-1     | `kubectl get ksvc -n knative-agents` shows Ready                              |
-| R-EBP-1     | `kubectl get ds -n knative-agents -l app.kubernetes.io/component=ebpf-loader` Ready on all nodes |
-| R-EBP-2     | `kubectl exec <loader-pod> -- ls /sys/fs/bpf/knative-agents` shows pinned maps |
+| R-DEP-1     | `kubectl get ksvc -n smol-agents` shows Ready                              |
+| R-EBP-1     | `kubectl get ds -n smol-agents -l app.kubernetes.io/component=ebpf-loader` Ready on all nodes |
+| R-EBP-2     | `kubectl exec <loader-pod> -- ls /sys/fs/bpf/smol-agents` shows pinned maps |
 | R-VRF-1     | `make verify-formal` (CI runs this)                                           |
 | R-VRF-2     | `make test` includes the rapid property suite                                 |
 
@@ -428,7 +428,7 @@ Run the validation matrix in `tasks.md`:
 ## 6. Configuration reference
 
 The agent's full config schema lives in
-`.spec-workflow/specs/knative-agents-platform/design.md` under "Data Models".
+`.spec-workflow/specs/smol-agents-platform/design.md` under "Data Models".
 Highlights:
 
 ```yaml
@@ -455,7 +455,7 @@ secrets:
   maxLeaseTTL: 15m
 ebpf:
   programs: [syscalls, network]
-  objectsDir: /usr/share/knative-agents/bpf
+  objectsDir: /usr/share/smol-agents/bpf
   ringBufferSize: 1048576
 runtime:
   drainTimeout: 30s
@@ -465,20 +465,20 @@ sandbox:
   runtimeClass: kata-fc
 observability:
   otlpEndpoint: otel-collector.observability:4317
-  serviceName: knative-agent
+  serviceName: smol-agent
 ```
 
 Environment overrides:
 
 | Variable                         | Effect                                |
 |----------------------------------|---------------------------------------|
-| `KNATIVE_AGENTS_MODE`            | Override `.mode`                      |
-| `KNATIVE_AGENTS_TRUST_DOMAIN`    | Override `.trustDomain`               |
-| `KNATIVE_AGENTS_WORKLOAD_API`    | Override `.identity.workloadAPI`      |
-| `KNATIVE_AGENTS_BROKER_SOCKET`   | Override `.secrets.brokerSocket`      |
-| `KNATIVE_AGENTS_OTLP_ENDPOINT`   | Override `.observability.otlpEndpoint`|
-| `KNATIVE_AGENTS_ALLOW_INSECURE`  | Required (=`1`) for `mode: insecure`  |
-| `KNATIVE_AGENTS_ENV`             | Sets `deployment.environment` resource|
+| `SMOL_AGENTS_MODE`            | Override `.mode`                      |
+| `SMOL_AGENTS_TRUST_DOMAIN`    | Override `.trustDomain`               |
+| `SMOL_AGENTS_WORKLOAD_API`    | Override `.identity.workloadAPI`      |
+| `SMOL_AGENTS_BROKER_SOCKET`   | Override `.secrets.brokerSocket`      |
+| `SMOL_AGENTS_OTLP_ENDPOINT`   | Override `.observability.otlpEndpoint`|
+| `SMOL_AGENTS_ALLOW_INSECURE`  | Required (=`1`) for `mode: insecure`  |
+| `SMOL_AGENTS_ENV`             | Sets `deployment.environment` resource|
 
 ---
 
@@ -527,7 +527,7 @@ Switch presets with:
 
 ```bash
 helm upgrade --install agents deploy/helm \
-    --namespace knative-agents \
+    --namespace smol-agents \
     --set ebpfLoader.preset=eks-bottlerocket
 ```
 
@@ -538,8 +538,8 @@ loader the privileges its DaemonSet needs. Apply this once per cluster
 **before** installing the chart:
 
 ```bash
-oc adm policy add-scc-to-user privileged -z agents-knative-agents-ebpf-loader \
-    -n knative-agents
+oc adm policy add-scc-to-user privileged -z agents-smol-agents-ebpf-loader \
+    -n smol-agents
 ```
 
 If you set `capabilities.mode: minimal`, replace `privileged` with a
@@ -571,19 +571,19 @@ sandboxed agent.
 
 ```bash
 # 1. DaemonSet is healthy on every Linux node:
-kubectl get ds -n knative-agents -l app.kubernetes.io/component=ebpf-loader
+kubectl get ds -n smol-agents -l app.kubernetes.io/component=ebpf-loader
 # DESIRED == CURRENT == READY == NUMBER-AVAILABLE
 
 # 2. Pinned objects exist on each node:
-kubectl exec -n knative-agents <loader-pod> -- ls /sys/fs/bpf/knative-agents
+kubectl exec -n smol-agents <loader-pod> -- ls /sys/fs/bpf/smol-agents
 # Expect: events  syscalls  network  (or as configured)
 
 # 3. Programs are attached in-kernel:
-kubectl exec -n knative-agents <loader-pod> -- cat /proc/kallsyms 2>/dev/null | grep -c bpf_prog || true
+kubectl exec -n smol-agents <loader-pod> -- cat /proc/kallsyms 2>/dev/null | grep -c bpf_prog || true
 # Non-zero count means programs are present.
 
 # 4. Loader logs:
-kubectl logs -n knative-agents -l app.kubernetes.io/component=ebpf-loader --tail=50
+kubectl logs -n smol-agents -l app.kubernetes.io/component=ebpf-loader --tail=50
 # Expect: "loaded" with kernel features, programs, pinned maps
 ```
 
@@ -600,10 +600,10 @@ versions) delete the pinned files manually after stopping the
 DaemonSet:
 
 ```bash
-kubectl scale ds/<release>-knative-agents-ebpf-loader -n knative-agents --replicas=0
+kubectl scale ds/<release>-smol-agents-ebpf-loader -n smol-agents --replicas=0
 # wait for Pods to terminate
 kubectl debug node/<node> -it --image=busybox -- chroot /host \
-    rm -rf /sys/fs/bpf/knative-agents
+    rm -rf /sys/fs/bpf/smol-agents
 ```
 
 ---
@@ -756,11 +756,11 @@ kubectl apply --dry-run=server -f /tmp/render.yaml
 ## 9. Uninstall
 
 ```bash
-helm uninstall agents -n knative-agents
-kubectl delete namespace knative-agents
+helm uninstall agents -n smol-agents
+kubectl delete namespace smol-agents
 
 # Optionally remove the ClusterSPIFFEID if you are decommissioning the trust:
-kubectl delete clusterspiffeid agents-knative-agents
+kubectl delete clusterspiffeid agents-smol-agents
 ```
 
 The `RuntimeClass` resource is shared with other workloads — leave it.
@@ -769,7 +769,7 @@ The `RuntimeClass` resource is shared with other workloads — leave it.
 
 ## 10. Where to go next
 
-- Read the spec: `.spec-workflow/specs/knative-agents-platform/design.md`
+- Read the spec: `.spec-workflow/specs/smol-agents-platform/design.md`
 - Customize agent business logic: drop your code into a fork of
   `cmd/agent/main.go`; the wiring scaffolding is reusable.
 - Run the formal model interactively: `quint repl spec/quint/identity.qnt`
@@ -782,7 +782,7 @@ The `RuntimeClass` resource is shared with other workloads — leave it.
 
 The Helm chart and the operator coexist for one minor release so
 tenants can migrate at their own pace. The end state has the operator
-managing every `KnativeAgent` CR with the chart removed.
+managing every `SmolAgent` CR with the chart removed.
 
 ### 11.1 Order of operations
 
@@ -793,25 +793,25 @@ managing every `KnativeAgent` CR with the chart removed.
    ```
 
    This installs:
-   - `knative-agents-system` namespace + ServiceAccount + RBAC
-   - 8 CRDs (KnativeAgent, KnativeAgentPlatform, plus the 6 agent-model CRDs)
+   - `smol-agents-system` namespace + ServiceAccount + RBAC
+   - 8 CRDs (SmolAgent, SmolAgentPlatform, plus the 6 agent-model CRDs)
    - 2 webhook configurations + Service
    - The operator Deployment (2 replicas, leader-elect)
 
 2. **Apply the singleton platform CR**:
 
    ```bash
-   kubectl apply -f operator/config/samples/knativeagentplatform.yaml
+   kubectl apply -f operator/config/samples/smolagentplatform.yaml
    ```
 
    This is the cluster-wide knob the operator uses for defaults +
-   feature policy. Without it, every `KnativeAgent` stays in
+   feature policy. Without it, every `SmolAgent` stays in
    `Pending → PlatformAbsent`.
 
-3. **Translate each chart release into a `KnativeAgent` CR**.
+3. **Translate each chart release into a `SmolAgent` CR**.
    Mapping table:
 
-   | Helm `values.yaml` field          | `KnativeAgent.spec` field            |
+   | Helm `values.yaml` field          | `SmolAgent.spec` field            |
    |-----------------------------------|--------------------------------------|
    | `mode`                            | `mode`                               |
    | `trustDomain`                     | `trustDomain`                        |
@@ -830,7 +830,7 @@ managing every `KnativeAgent` CR with the chart removed.
 
    ```bash
    kubectl apply -f my-tenant.yaml
-   kubectl wait --for=jsonpath='{.status.phase}'=Ready knativeagent/<name> -n <ns> --timeout=120s
+   kubectl wait --for=jsonpath='{.status.phase}'=Ready smolagent/<name> -n <ns> --timeout=120s
    ```
 
 5. **`helm uninstall` the chart-managed release** for that tenant.
@@ -845,7 +845,7 @@ managing every `KnativeAgent` CR with the chart removed.
 ### 11.2 Coexistence guarantees
 
 - The operator only manages resources whose `OwnerReferences`
-  include its `KnativeAgent` CR. It never touches resources owned by
+  include its `SmolAgent` CR. It never touches resources owned by
   the chart's release.
 - If you accidentally apply both, the operator and chart will
   generate two copies of every owned object with different
@@ -869,7 +869,7 @@ After (operator):
 ```yaml
 # tenant-prod-agent.yaml
 apiVersion: agents.stigen.ai/v1
-kind: KnativeAgent
+kind: SmolAgent
 metadata:
   name: agents-prod
   namespace: tenant-prod
@@ -884,7 +884,7 @@ spec:
 
 ```bash
 kubectl apply -f tenant-prod-agent.yaml
-kubectl wait --for=jsonpath='{.status.phase}'=Ready knativeagent/agents-prod -n tenant-prod
+kubectl wait --for=jsonpath='{.status.phase}'=Ready smolagent/agents-prod -n tenant-prod
 helm uninstall agents-prod -n tenant-prod
 ```
 
@@ -893,7 +893,7 @@ helm uninstall agents-prod -n tenant-prod
 If the operator path mis-renders something, the chart still works:
 
 ```bash
-kubectl delete knativeagent agents-prod -n tenant-prod
+kubectl delete smolagent agents-prod -n tenant-prod
 helm install agents-prod deploy/helm --namespace tenant-prod ...
 ```
 

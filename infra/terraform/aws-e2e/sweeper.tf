@@ -1,7 +1,7 @@
 # Sweeper Lambda + EventBridge schedule.
 #
 # Every 30 min the Lambda lists EC2 instances tagged
-# `knative-agents-e2e=L2` whose LaunchTime > 1h ago and terminates
+# `smol-agents-e2e=L2` whose LaunchTime > 1h ago and terminates
 # them. Belt #3 in the cleanup defense (after Go t.Cleanup + Spot
 # auto-reclaim). Implements R-E2E-CLEAN-2.
 
@@ -12,7 +12,7 @@ data "archive_file" "sweeper" {
 }
 
 resource "aws_lambda_function" "sweeper" {
-  function_name    = "knative-agents-e2e-sweeper"
+  function_name    = "smol-agents-e2e-sweeper"
   role             = aws_iam_role.sweeper.arn
   handler          = "bootstrap"
   runtime          = "provided.al2023"
@@ -40,7 +40,7 @@ data "aws_iam_policy_document" "sweeper_assume" {
 }
 
 resource "aws_iam_role" "sweeper" {
-  name               = "knative-agents-e2e-sweeper"
+  name               = "smol-agents-e2e-sweeper"
   assume_role_policy = data.aws_iam_policy_document.sweeper_assume.json
 }
 
@@ -61,7 +61,7 @@ data "aws_iam_policy_document" "sweeper_perms" {
     resources = ["*"]
     condition {
       test     = "StringEquals"
-      variable = "ec2:ResourceTag/knative-agents-e2e"
+      variable = "ec2:ResourceTag/smol-agents-e2e"
       values   = ["L2"]
     }
   }
@@ -74,7 +74,7 @@ resource "aws_iam_role_policy" "sweeper" {
 }
 
 resource "aws_cloudwatch_event_rule" "sweeper" {
-  name                = "knative-agents-e2e-sweeper"
+  name                = "smol-agents-e2e-sweeper"
   description         = "Fires every 30 min to terminate stranded L2 instances."
   schedule_expression = "rate(30 minutes)"
 }

@@ -12,21 +12,21 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // AgentImage returns the container image to use for the agent. Tenants
 // can override via spec.image; otherwise we use a stable default.
-func AgentImage(cr *v1.KnativeAgent) string {
+func AgentImage(cr *v1.SmolAgent) string {
 	if cr.Spec.Image != "" {
 		return cr.Spec.Image
 	}
-	return "knative-agents/agent:0.1.0"
+	return "smol-agents/agent:0.1.0"
 }
 
 // SecretProxyImage is the image for the broker sidecar.
 func SecretProxyImage() string {
-	return "knative-agents/secret-proxy:0.1.0"
+	return "smol-agents/secret-proxy:0.1.0"
 }
 
 // BuildAgentPodSpec is the canonical Pod template shared by Deployment,
@@ -38,7 +38,7 @@ func SecretProxyImage() string {
 //   - the secret-broker emptyDir shared between the two containers;
 //   - the agent ConfigMap mount;
 //   - the sandbox RuntimeClassName.
-func BuildAgentPodSpec(cr *v1.KnativeAgent) corev1.PodSpec {
+func BuildAgentPodSpec(cr *v1.SmolAgent) corev1.PodSpec {
 	rc := cr.Spec.Features.Sandbox.RuntimeClass
 	if rc == "" {
 		rc = "kata-fc"
@@ -49,7 +49,7 @@ func BuildAgentPodSpec(cr *v1.KnativeAgent) corev1.PodSpec {
 		Name:            "agent",
 		Image:           AgentImage(cr),
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args:            []string{"--config=/etc/knative-agents/agent.yaml"},
+		Args:            []string{"--config=/etc/smol-agents/agent.yaml"},
 		Ports: []corev1.ContainerPort{
 			{Name: "http", ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
 			{Name: "private-mtls", ContainerPort: 8443, Protocol: corev1.ProtocolTCP},
@@ -114,7 +114,7 @@ func agentVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{Name: "spire-agent-socket", MountPath: "/run/spire/agent-sockets", ReadOnly: true},
 		{Name: "secret-broker", MountPath: "/run/secret-broker"},
-		{Name: "config", MountPath: "/etc/knative-agents", ReadOnly: true},
+		{Name: "config", MountPath: "/etc/smol-agents", ReadOnly: true},
 		{Name: "tmp", MountPath: "/tmp"},
 	}
 }
@@ -149,7 +149,7 @@ func secretProxyContainer() corev1.Container {
 	}
 }
 
-func agentVolumes(cr *v1.KnativeAgent) []corev1.Volume {
+func agentVolumes(cr *v1.SmolAgent) []corev1.Volume {
 	return []corev1.Volume{
 		{
 			Name: "spire-agent-socket",
@@ -175,7 +175,7 @@ func agentVolumes(cr *v1.KnativeAgent) []corev1.Volume {
 
 // BuildDeployment renders a stateless Deployment for the agent.
 // Implements R-DEP-2 (Deployment mode).
-func BuildDeployment(cr *v1.KnativeAgent) *appsv1.Deployment {
+func BuildDeployment(cr *v1.SmolAgent) *appsv1.Deployment {
 	replicas := cr.Spec.Replicas
 	if replicas == 0 {
 		replicas = 1
@@ -200,7 +200,7 @@ func BuildDeployment(cr *v1.KnativeAgent) *appsv1.Deployment {
 
 // BuildStatefulSet renders a StatefulSet for the agent. Implements
 // R-DEP-2 (StatefulSet mode); adds a 1Gi state PVC template.
-func BuildStatefulSet(cr *v1.KnativeAgent) *appsv1.StatefulSet {
+func BuildStatefulSet(cr *v1.SmolAgent) *appsv1.StatefulSet {
 	replicas := cr.Spec.Replicas
 	if replicas == 0 {
 		replicas = 1
@@ -247,7 +247,7 @@ var KnativeServiceGVK = schema.GroupVersionKind{
 // BuildKnativeService renders a Knative Service as Unstructured so we
 // don't take a build-time dep on knative.dev/serving APIs. Implements
 // R-DEP-1.
-func BuildKnativeService(cr *v1.KnativeAgent) *unstructured.Unstructured {
+func BuildKnativeService(cr *v1.SmolAgent) *unstructured.Unstructured {
 	pod := BuildAgentPodSpec(cr)
 
 	// Knative wants its own minimal pod-shape; reuse our spec.

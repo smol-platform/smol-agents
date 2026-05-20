@@ -7,7 +7,7 @@ patches:
       kind: Service
       group: serving.knative.dev
       version: v1
-      name: knative-agents
+      name: smol-agents
     patch: |-
       - op: add
         path: /spec/template/metadata/annotations/autoscaling.knative.dev~1min-scale

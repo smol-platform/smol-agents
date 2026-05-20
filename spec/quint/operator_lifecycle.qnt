@@ -2,7 +2,7 @@
 // Quint specification: operator feature-flag lifecycle.
 // Implements R-OP-VRF-3.
 //
-// Models a single KnativeAgent CR whose features can be toggled, with
+// Models a single SmolAgent CR whose features can be toggled, with
 // per-feature prereqs that come and go. Verified invariants:
 //
 //   FeatureProgresses          — on ∧ prereqs_met → eventually applied & ready.

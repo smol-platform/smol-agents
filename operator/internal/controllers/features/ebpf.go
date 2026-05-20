@@ -5,7 +5,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 // EBPFReconciler validates the agent's eBPF program list against what
@@ -25,7 +25,7 @@ func (r EBPFReconciler) Reconcile(_ context.Context, env Env) (Result, []client.
 	// Prereq: platform CR exists and has loader enabled.
 	if env.Platform == nil {
 		res.Reason = "PrerequisitesUnmet"
-		res.Message = "no KnativeAgentPlatform found; install one before enabling eBPF"
+		res.Message = "no SmolAgentPlatform found; install one before enabling eBPF"
 		return res, nil, nil
 	}
 	if !env.Platform.Spec.EBPFLoader.Enabled {

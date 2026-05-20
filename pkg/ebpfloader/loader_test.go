@@ -4,13 +4,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stigen/knative-agents/pkg/ebpf"
+	"github.com/stigen/smol-agents/pkg/ebpf"
 )
 
 func TestNewDefaultsPinRoot(t *testing.T) {
 	l := New(Config{})
-	if l.cfg.PinRoot != "/sys/fs/bpf/knative-agents" {
-		t.Errorf("PinRoot = %q, want /sys/fs/bpf/knative-agents", l.cfg.PinRoot)
+	if l.cfg.PinRoot != "/sys/fs/bpf/smol-agents" {
+		t.Errorf("PinRoot = %q, want /sys/fs/bpf/smol-agents", l.cfg.PinRoot)
 	}
 }
 

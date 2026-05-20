@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 func TestAggregatePhase_Ready(t *testing.T) {
@@ -50,7 +50,7 @@ func TestAggregatePhase_DisabledFeatureCannotFail(t *testing.T) {
 }
 
 func TestApplyFeatureResults_PopulatesEverything(t *testing.T) {
-	cr := &v1.KnativeAgent{}
+	cr := &v1.SmolAgent{}
 	cr.Generation = 7
 	now := time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC)
 
@@ -80,7 +80,7 @@ func TestApplyFeatureResults_PopulatesEverything(t *testing.T) {
 }
 
 func TestApplyFeatureResults_Idempotent(t *testing.T) {
-	cr := &v1.KnativeAgent{}
+	cr := &v1.SmolAgent{}
 	cr.Generation = 1
 	r := []FeatureResult{{Feature: features.Identity, Enabled: true, Ready: true, Reason: "Reconciled"}}
 	t1 := time.Unix(1000, 0)

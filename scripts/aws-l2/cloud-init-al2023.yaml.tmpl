@@ -259,7 +259,7 @@ runcmd:
         k0s kubectl get pods -A -o wide
         echo === events ===
         k0s kubectl get events -A --sort-by=.lastTimestamp
-        for ns in spire-system knative-agents-system cert-manager tenant-a kube-system; do
+        for ns in spire-system smol-agents-system cert-manager tenant-a kube-system; do
           echo === describe namespace=$ns ===
           k0s kubectl describe pod -n $ns
           echo === logs namespace=$ns ===
@@ -311,12 +311,12 @@ runcmd:
       $KCTL wait --for=condition=Ready --timeout=180s \
         pod -n spire-system -l app=spire-agent || fail "spire-agent pods"
 
-      wait_resource deployment knative-agents-system "" 180 || fail "operator not appearing"
+      wait_resource deployment smol-agents-system "" 180 || fail "operator not appearing"
       $KCTL wait --for=condition=Available --timeout=180s \
-        deployment -n knative-agents-system --all || fail "operator deploy"
+        deployment -n smol-agents-system --all || fail "operator deploy"
 
       $KCTL wait --for=condition=Established --timeout=60s \
-        crd/knativeagents.agents.stigen.ai \
+        crd/smolagents.agents.stigen.ai \
         crd/agentnetworks.runtime.agents.stigen.ai \
         crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
 
@@ -338,15 +338,15 @@ runcmd:
         echo "samples re-apply attempt $i failed, retrying in 10s"
         sleep 10
       done
-      $KCTL get -n tenant-a knativeagent hello >/dev/null 2>&1 || \
+      $KCTL get -n tenant-a smolagent hello >/dev/null 2>&1 || \
         fail "KA hello sample missing after re-apply"
 
-      # Sample KnativeAgent: block until operator reconciles to
+      # Sample SmolAgent: block until operator reconciles to
       # phase=Ready so KA-PHASE doesn't race the controller.
       wait_ka_ready() {
         local end=$(( $(date +%s) + 180 ))
         while [ $(date +%s) -lt $end ]; do
-          phase=$($KCTL -n tenant-a get knativeagent hello -o jsonpath='{.status.phase}' 2>/dev/null)
+          phase=$($KCTL -n tenant-a get smolagent hello -o jsonpath='{.status.phase}' 2>/dev/null)
           if [ "$phase" = "Ready" ]; then return 0; fi
           sleep 3
         done
@@ -354,6 +354,6 @@ runcmd:
       }
       # Best-effort: a slow operator should fall through to the
       # scenario's own 60s timeout, not block the entire bootstrap.
-      wait_ka_ready || echo "WARN: KnativeAgent hello not Ready in bootstrap; scenario will retry"
+      wait_ka_ready || echo "WARN: SmolAgent hello not Ready in bootstrap; scenario will retry"
     } >>"$log" 2>&1
     touch /var/log/l2-bootstrap.READY

@@ -220,11 +220,11 @@ $KCTL wait --for=condition=Ready --timeout=240s \
 wait_resource pod spire-system "-l app=spire-agent" 240 || fail "spire-agent not appearing"
 $KCTL wait --for=condition=Ready --timeout=240s \
   pod -n spire-system -l app=spire-agent || fail "spire-agent pods"
-wait_resource deployment knative-agents-system "" 240 || fail "operator not appearing"
+wait_resource deployment smol-agents-system "" 240 || fail "operator not appearing"
 $KCTL wait --for=condition=Available --timeout=240s \
-  deployment -n knative-agents-system --all || fail "operator deploy"
+  deployment -n smol-agents-system --all || fail "operator deploy"
 $KCTL wait --for=condition=Established --timeout=60s \
-  crd/knativeagents.agents.stigen.ai \
+  crd/smolagents.agents.stigen.ai \
   crd/agentnetworks.runtime.agents.stigen.ai \
   crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
 

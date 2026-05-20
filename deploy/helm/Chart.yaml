@@ -1,5 +1,5 @@
 apiVersion: v2
-name: knative-agents
+name: smol-agents
 description: |
   Hardened agent runtime: eBPF + gVisor + SPIFFE/SPIRE + dual-rail mTLS +
   kloak-style secret broker.
@@ -15,8 +15,8 @@ keywords:
   - knative
   - mtls
   - secrets
-home: https://github.com/stigen/knative-agents
+home: https://github.com/stigen/smol-agents
 sources:
-  - https://github.com/stigen/knative-agents
+  - https://github.com/stigen/smol-agents
 maintainers:
   - name: stigen

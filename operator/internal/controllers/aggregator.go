@@ -8,8 +8,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 // FeatureResult aliases features.Result so existing imports keep
@@ -45,7 +45,7 @@ func AggregatePhase(results []FeatureResult) string {
 
 // ApplyFeatureResults rewrites cr.Status.{Conditions,Features} given the
 // reconcile results. The caller is responsible for persisting the CR.
-func ApplyFeatureResults(cr *v1.KnativeAgent, results []FeatureResult, now time.Time) {
+func ApplyFeatureResults(cr *v1.SmolAgent, results []FeatureResult, now time.Time) {
 	if cr.Status.Features == nil {
 		cr.Status.Features = make(map[string]v1.FeatureStatus, len(results))
 	}
@@ -106,7 +106,7 @@ func ApplyFeatureResults(cr *v1.KnativeAgent, results []FeatureResult, now time.
 }
 
 // setCondition replaces the matching Type entry or appends.
-func setCondition(cr *v1.KnativeAgent, c metav1.Condition) {
+func setCondition(cr *v1.SmolAgent, c metav1.Condition) {
 	for i, existing := range cr.Status.Conditions {
 		if existing.Type == c.Type {
 			// Preserve LastTransitionTime if status hasn't changed.

@@ -4,19 +4,19 @@ import (
 	"context"
 	"testing"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
-func kataSandboxAgent() *v1.KnativeAgent {
-	cr := &v1.KnativeAgent{}
+func kataSandboxAgent() *v1.SmolAgent {
+	cr := &v1.SmolAgent{}
 	cr.Name = "a"
 	cr.Spec.Features.Sandbox.Enabled = true
 	cr.Spec.Features.Sandbox.RuntimeClass = "kata-fc"
 	return cr
 }
 
-func platformWithFallback(allow bool) *v1.KnativeAgentPlatform {
-	p := &v1.KnativeAgentPlatform{}
+func platformWithFallback(allow bool) *v1.SmolAgentPlatform {
+	p := &v1.SmolAgentPlatform{}
 	p.Spec.NodeProvisioning.AllowGvisorFallback = allow
 	return p
 }

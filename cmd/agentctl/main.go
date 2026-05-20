@@ -11,8 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/stigen/knative-agents/internal/version"
-	"github.com/stigen/knative-agents/pkg/secrets"
+	"github.com/stigen/smol-agents/internal/version"
+	"github.com/stigen/smol-agents/pkg/secrets"
 )
 
 func main() {

@@ -1,9 +1,9 @@
-# Project Structure — knative-agents
+# Project Structure — smol-agents
 
 ## Directory Organization
 
 ```
-knative-agents/
+smol-agents/
 ├── cmd/                          # Binaries
 │   ├── agent/                    # Main agent runtime
 │   ├── secret-proxy/             # Kloak-style sidecar
@@ -39,7 +39,7 @@ knative-agents/
 ├── docs/                         # Operator + dev docs
 └── .spec-workflow/               # spec-workflow MCP artifacts
     ├── specs/
-    │   └── knative-agents-platform/
+    │   └── smol-agents-platform/
     │       ├── product.md
     │       ├── requirements.md
     │       ├── design.md
@@ -68,12 +68,12 @@ knative-agents/
 ### Order
 1. Standard library
 2. External (`github.com/...`, `google.golang.org/...`)
-3. Module-internal (`github.com/stigen/knative-agents/...`)
+3. Module-internal (`github.com/stigen/smol-agents/...`)
 
 `goimports` enforces with sections.
 
 ### Module Organization
-- Module path: `github.com/stigen/knative-agents`.
+- Module path: `github.com/stigen/smol-agents`.
 - No package may import `cmd/`.
 - `internal/` packages are private to this module.
 

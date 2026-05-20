@@ -1,8 +1,8 @@
 domain: stigen.ai
 layout:
   - go.kubebuilder.io/v4
-projectName: knative-agents-operator
-repo: github.com/stigen/knative-agents/operator
+projectName: smol-agents-operator
+repo: github.com/stigen/smol-agents/operator
 version: "3"
 resources:
   - api:
@@ -11,8 +11,8 @@ resources:
     controller: true
     domain: stigen.ai
     group: agents
-    kind: KnativeAgent
-    path: github.com/stigen/knative-agents/operator/api/v1
+    kind: SmolAgent
+    path: github.com/stigen/smol-agents/operator/api/v1
     version: v1
   - api:
       crdVersion: v1
@@ -20,6 +20,6 @@ resources:
     controller: true
     domain: stigen.ai
     group: agents
-    kind: KnativeAgentPlatform
-    path: github.com/stigen/knative-agents/operator/api/v1
+    kind: SmolAgentPlatform
+    path: github.com/stigen/smol-agents/operator/api/v1
     version: v1

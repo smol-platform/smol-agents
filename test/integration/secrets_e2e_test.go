@@ -14,7 +14,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/stigen/knative-agents/pkg/secrets"
+	"github.com/stigen/smol-agents/pkg/secrets"
 )
 
 // Test the full client/server round trip including the wire protocol and

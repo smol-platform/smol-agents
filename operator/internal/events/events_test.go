@@ -8,7 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 func TestRecorder_NilSafe(t *testing.T) {

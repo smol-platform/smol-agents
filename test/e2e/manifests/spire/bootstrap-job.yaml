@@ -13,7 +13,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: register
-          image: knative-agents/spire-shell:dev
+          image: smol-agents/spire-shell:dev
           imagePullPolicy: Never
           # Connects to spire-server via in-cluster Service DNS, then
           # registers entries for each workload that needs an SVID.
@@ -56,7 +56,7 @@ spec:
                 /opt/spire/bin/spire-server entry create \
                   -serverAddr "$SERVER" \
                   -spiffeID "$spiffeID" \
-                  -parentID spiffe://stigen.ai/spire/agent/k8s_psat/knative-agents-kind/$(cat /etc/hostname || echo any) \
+                  -parentID spiffe://stigen.ai/spire/agent/k8s_psat/smol-agents-kind/$(cat /etc/hostname || echo any) \
                   -node \
                   -selector "$rest" 2>&1 | tee -a /tmp/register.log || true
               done

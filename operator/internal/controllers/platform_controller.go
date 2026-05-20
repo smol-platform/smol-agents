@@ -12,17 +12,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/internal/builders"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/internal/builders"
 )
 
-// KnativeAgentPlatformReconciler reconciles cluster-scoped platform
+// SmolAgentPlatformReconciler reconciles cluster-scoped platform
 // state: the ebpf-loader DaemonSet, its ServiceAccount/ConfigMap, and
 // (optionally) the cluster RuntimeClass for sandbox.
 //
 // Implements R-OP-API-2 (singleton platform CR) by treating any
 // platform CR named other than `SingletonName` as a config error.
-type KnativeAgentPlatformReconciler struct {
+type SmolAgentPlatformReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -31,28 +31,28 @@ type KnativeAgentPlatformReconciler struct {
 	SingletonName string
 
 	// Namespace where the operator deploys cluster-wide resources
-	// (ebpf-loader DaemonSet etc.). Defaults to "knative-agents-system".
+	// (ebpf-loader DaemonSet etc.). Defaults to "smol-agents-system".
 	Namespace string
 }
 
 // SetupWithManager wires the controller.
-func (r *KnativeAgentPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *SmolAgentPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.SingletonName == "" {
 		r.SingletonName = "default"
 	}
 	if r.Namespace == "" {
-		r.Namespace = "knative-agents-system"
+		r.Namespace = "smol-agents-system"
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1.KnativeAgentPlatform{}).
+		For(&v1.SmolAgentPlatform{}).
 		Complete(r)
 }
 
 // Reconcile owns the ebpf-loader stack at cluster scope.
-func (r *KnativeAgentPlatformReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *SmolAgentPlatformReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("platform", req.Name)
 
-	cr := &v1.KnativeAgentPlatform{}
+	cr := &v1.SmolAgentPlatform{}
 	if err := r.Get(ctx, req.NamespacedName, cr); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -96,15 +96,15 @@ func (r *KnativeAgentPlatformReconciler) Reconcile(ctx context.Context, req ctrl
 	return ctrl.Result{}, r.Status().Update(ctx, cr)
 }
 
-func (r *KnativeAgentPlatformReconciler) updateManagedTenants(ctx context.Context, p *v1.KnativeAgentPlatform) {
-	list := &v1.KnativeAgentList{}
+func (r *SmolAgentPlatformReconciler) updateManagedTenants(ctx context.Context, p *v1.SmolAgentPlatform) {
+	list := &v1.SmolAgentList{}
 	if err := r.List(ctx, list); err != nil {
 		return
 	}
 	p.Status.ManagedTenants = int32(len(list.Items))
 }
 
-func (r *KnativeAgentPlatformReconciler) setReady(p *v1.KnativeAgentPlatform, ready bool, reason, msg string) {
+func (r *SmolAgentPlatformReconciler) setReady(p *v1.SmolAgentPlatform, ready bool, reason, msg string) {
 	status := metav1.ConditionFalse
 	if ready {
 		status = metav1.ConditionTrue
@@ -132,7 +132,7 @@ func (r *KnativeAgentPlatformReconciler) setReady(p *v1.KnativeAgentPlatform, re
 	p.Status.ObservedGeneration = p.Generation
 }
 
-func (r *KnativeAgentPlatformReconciler) applyOwned(ctx context.Context, owner *v1.KnativeAgentPlatform, desired client.Object) error {
+func (r *SmolAgentPlatformReconciler) applyOwned(ctx context.Context, owner *v1.SmolAgentPlatform, desired client.Object) error {
 	current := desired.DeepCopyObject().(client.Object)
 	err := r.Get(ctx, client.ObjectKeyFromObject(desired), current)
 	if err != nil && !apierrors.IsNotFound(err) {

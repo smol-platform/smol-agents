@@ -121,7 +121,7 @@ type ObservabilityFeature struct {
 
 	OTLPEndpoint string `json:"otlpEndpoint,omitempty"`
 
-	// +kubebuilder:default:="knative-agent"
+	// +kubebuilder:default:="smol-agent"
 	ServiceName string `json:"serviceName,omitempty"`
 }
 

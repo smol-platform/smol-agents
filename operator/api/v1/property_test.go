@@ -76,11 +76,11 @@ func TestProperty_FeaturesRoundTrip(t *testing.T) {
 	})
 }
 
-// TestProperty_KnativeAgentRoundTrip — full CR round-trip.
-func TestProperty_KnativeAgentRoundTrip(t *testing.T) {
+// TestProperty_SmolAgentRoundTrip — full CR round-trip.
+func TestProperty_SmolAgentRoundTrip(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		cr := KnativeAgent{
-			Spec: KnativeAgentSpec{
+		cr := SmolAgent{
+			Spec: SmolAgentSpec{
 				TrustDomain:    rapid.StringMatching(`[a-z]{3,10}\.[a-z]{2,5}`).Draw(t, "td"),
 				Mode:           rapid.SampledFrom([]string{"", "insecure", "permissive", "strict"}).Draw(t, "mode"),
 				DeploymentKind: rapid.SampledFrom([]string{"knative", "deployment", "statefulset"}).Draw(t, "dk"),
@@ -91,7 +91,7 @@ func TestProperty_KnativeAgentRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var back KnativeAgent
+		var back SmolAgent
 		if err := json.Unmarshal(raw, &back); err != nil {
 			t.Fatal(err)
 		}

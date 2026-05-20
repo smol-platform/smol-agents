@@ -3,7 +3,7 @@ package v1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	pure "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // Agent is the K8s-native wrapper around the pure agent spec. The CR

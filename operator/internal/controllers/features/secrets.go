@@ -5,7 +5,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 // SecretsReconciler reports the secrets feature's readiness. The actual

@@ -3,12 +3,12 @@
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
-  name: knative-agents
+  name: smol-agents
 spec:
   spiffeIDTemplate: "spiffe://stigen.ai/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: knative-agents
+      app.kubernetes.io/name: smol-agents
   workloadSelectorTemplates:
     - "k8s:ns:{{ .PodMeta.Namespace }}"
     - "k8s:sa:{{ .PodSpec.ServiceAccountName }}"

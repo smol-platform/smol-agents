@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // stubRunner is a fake HarnessRunner used to drive Mode=harness tests.

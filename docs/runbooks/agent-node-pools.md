@@ -11,7 +11,7 @@ Design: [`docs/design/agent-platform.md`](../design/agent-platform.md).
    `clusterName`/`clusterEndpoint`, a control-plane instance profile with the
    Karpenter EC2 permissions). Node→cluster join is owned by *your* Karpenter
    deployment; the operator only adds the kata layer on top of it.
-2. **Platform `nodeProvisioning`** set on the singleton `KnativeAgentPlatform`
+2. **Platform `nodeProvisioning`** set on the singleton `SmolAgentPlatform`
    so generated `EC2NodeClass`es carry real selectors/role/join:
    ```yaml
    spec:
@@ -55,7 +55,7 @@ differs:
   operator cannot create. Instead it writes the node-group spec to a ConfigMap
   for your IaC to apply to a matching ASG:
   ```bash
-  kubectl -n knative-agents-system get cm anp-<name>-clusterautoscaler -o yaml
+  kubectl -n smol-agents-system get cm anp-<name>-clusterautoscaler -o yaml
   ```
   The ConfigMap carries `requiredASGTags` (CAS auto-discovery + node-template
   label/taint, so CAS scales the right ASG for a pending kata pod), the
@@ -86,7 +86,7 @@ and conditions `Ready` + `KarpenterSynced`.
 | Agent stuck, sandbox feature `NoKVMCapacity` | kata agent, no matching pool, fallback disabled | Create a matching `AgentNodePool`, or set `allowGvisorFallback: true` |
 | Pool `Ready` but pods Pending forever | No metal capacity (spot intermittency) | Widen `instanceFamilies`/`capacityType`; check Karpenter events |
 | kata pod schedules but won't start | kata layer failed at boot (devmapper/containerd) | SSM/console into the node; check the userData log + `dmsetup status kata-thinpool` |
-| Placement ignored on a Knative agent | podspec feature-flags off | Enable them in `knative-serving/config-features` |
+| Placement ignored on a Smol agent | podspec feature-flags off | Enable them in `knative-serving/config-features` |
 
 ## gVisor fallback
 

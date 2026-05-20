@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // TestAgentNodePool_setCondition_UpsertStableTimestamp covers the pure
@@ -57,23 +57,23 @@ func TestAgentNodePool_setCondition_UpsertStableTimestamp(t *testing.T) {
 // singleton platform — enough to test resolveDefaults without envtest.
 type stubPlatformClient struct {
 	client.Client
-	platform *v1.KnativeAgentPlatform
+	platform *v1.SmolAgentPlatform
 }
 
 func (s stubPlatformClient) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 	if s.platform == nil {
 		return apierrors.NewNotFound(schema.GroupResource{
-			Group: "agents.stigen.ai", Resource: "knativeagentplatforms",
+			Group: "agents.stigen.ai", Resource: "smolagentplatforms",
 		}, key.Name)
 	}
-	if p, ok := obj.(*v1.KnativeAgentPlatform); ok {
+	if p, ok := obj.(*v1.SmolAgentPlatform); ok {
 		s.platform.DeepCopyInto(p)
 	}
 	return nil
 }
 
 func TestAgentNodePool_resolveDefaults_FromPlatform(t *testing.T) {
-	plat := &v1.KnativeAgentPlatform{}
+	plat := &v1.SmolAgentPlatform{}
 	plat.Name = "default"
 	plat.Spec.NodeProvisioning = v1.NodeProvisioningSpec{
 		AMIFamily:          "Custom",

@@ -2,14 +2,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: knative-agents-operator-webhook
-  namespace: knative-agents-system
+  name: smol-agents-operator-webhook
+  namespace: smol-agents-system
   labels:
-    app.kubernetes.io/name: knative-agents-operator
+    app.kubernetes.io/name: smol-agents-operator
     app.kubernetes.io/component: webhook
 spec:
   selector:
-    app.kubernetes.io/name: knative-agents-operator
+    app.kubernetes.io/name: smol-agents-operator
     app.kubernetes.io/component: manager
   ports:
     - name: https
@@ -23,59 +23,59 @@ spec:
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: knative-agents-operator-validating
+  name: smol-agents-operator-validating
   annotations:
-    cert-manager.io/inject-ca-from: knative-agents-system/knative-agents-operator-serving-cert
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
 webhooks:
-  - name: validate.knativeagent.agents.stigen.ai
+  - name: validate.smolagent.agents.stigen.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
     clientConfig:
       service:
-        name: knative-agents-operator-webhook
-        namespace: knative-agents-system
-        path: /validate-agents-stigen-ai-v1-knativeagent
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-agents-stigen-ai-v1-smolagent
     rules:
       - apiGroups: [agents.stigen.ai]
         apiVersions: [v1]
-        resources: [knativeagents]
+        resources: [smolagents]
         operations: [CREATE, UPDATE]
-  - name: validate.knativeagentplatform.agents.stigen.ai
+  - name: validate.smolagentplatform.agents.stigen.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
     clientConfig:
       service:
-        name: knative-agents-operator-webhook
-        namespace: knative-agents-system
-        path: /validate-agents-stigen-ai-v1-knativeagentplatform
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-agents-stigen-ai-v1-smolagentplatform
     rules:
       - apiGroups: [agents.stigen.ai]
         apiVersions: [v1]
-        resources: [knativeagentplatforms]
+        resources: [smolagentplatforms]
         operations: [CREATE, UPDATE]
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: knative-agents-operator-mutating
+  name: smol-agents-operator-mutating
   annotations:
-    cert-manager.io/inject-ca-from: knative-agents-system/knative-agents-operator-serving-cert
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
 webhooks:
-  - name: default.knativeagent.agents.stigen.ai
+  - name: default.smolagent.agents.stigen.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
     clientConfig:
       service:
-        name: knative-agents-operator-webhook
-        namespace: knative-agents-system
-        path: /mutate-agents-stigen-ai-v1-knativeagent
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /mutate-agents-stigen-ai-v1-smolagent
     rules:
       - apiGroups: [agents.stigen.ai]
         apiVersions: [v1]
-        resources: [knativeagents]
+        resources: [smolagents]
         operations: [CREATE, UPDATE]
 ---
 # AgentNetwork validating webhook — enforces the transport-mutex
@@ -86,9 +86,9 @@ webhooks:
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: knative-agents-operator-validating-agentnetwork
+  name: smol-agents-operator-validating-agentnetwork
   annotations:
-    cert-manager.io/inject-ca-from: knative-agents-system/knative-agents-operator-serving-cert
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
 webhooks:
   - name: validate.agentnetwork.runtime.agents.stigen.ai
     sideEffects: None
@@ -96,8 +96,8 @@ webhooks:
     failurePolicy: Fail
     clientConfig:
       service:
-        name: knative-agents-operator-webhook
-        namespace: knative-agents-system
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
         path: /validate-runtime-agents-stigen-ai-v1-agentnetwork
     rules:
       - apiGroups: [runtime.agents.stigen.ai]

@@ -1,17 +1,17 @@
-{{- include "knative-agents.validateSandbox" . -}}
+{{- include "smol-agents.validateSandbox" . -}}
 {{- if eq .Values.mode "knative" -}}
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
-  name: {{ include "knative-agents.fullname" . }}
+  name: {{ include "smol-agents.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
 spec:
   template:
     metadata:
       labels:
-        {{- include "knative-agents.selectorLabels" . | nindent 8 }}
+        {{- include "smol-agents.selectorLabels" . | nindent 8 }}
       annotations:
         autoscaling.knative.dev/min-scale: {{ .Values.knative.minScale | quote }}
         autoscaling.knative.dev/max-scale: {{ .Values.knative.maxScale | quote }}
@@ -23,7 +23,7 @@ spec:
       containers:
         - name: agent
           image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
-          args: ["--config=/etc/knative-agents/agent.yaml"]
+          args: ["--config=/etc/smol-agents/agent.yaml"]
           ports:
             - name: http1
               containerPort: 8080
@@ -48,7 +48,7 @@ spec:
             - name: secret-broker
               mountPath: /run/secret-broker
             - name: config
-              mountPath: /etc/knative-agents
+              mountPath: /etc/smol-agents
               readOnly: true
             - name: tmp
               mountPath: /tmp
@@ -77,7 +77,7 @@ spec:
           emptyDir: {}
         - name: config
           configMap:
-            name: {{ include "knative-agents.fullname" . }}-config
+            name: {{ include "smol-agents.fullname" . }}-config
         - name: tmp
           emptyDir: {}
 {{- end -}}

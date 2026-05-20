@@ -3,12 +3,12 @@ package controllers
 import (
 	"testing"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 func TestPlatform_setReady_Idempotent(t *testing.T) {
-	r := &KnativeAgentPlatformReconciler{}
-	p := &v1.KnativeAgentPlatform{}
+	r := &SmolAgentPlatformReconciler{}
+	p := &v1.SmolAgentPlatform{}
 	r.setReady(p, true, "Reconciled", "")
 	first := p.Status.Conditions[0].LastTransitionTime
 	r.setReady(p, true, "Reconciled", "")
@@ -21,8 +21,8 @@ func TestPlatform_setReady_Idempotent(t *testing.T) {
 }
 
 func TestPlatform_setReady_TransitionUpdates(t *testing.T) {
-	r := &KnativeAgentPlatformReconciler{}
-	p := &v1.KnativeAgentPlatform{}
+	r := &SmolAgentPlatformReconciler{}
+	p := &v1.SmolAgentPlatform{}
 	r.setReady(p, true, "Reconciled", "")
 	first := p.Status.Conditions[0].LastTransitionTime
 	// Sleep one nanosecond by mutating: any non-equal time should update.

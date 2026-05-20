@@ -30,7 +30,7 @@ export L2_ECR_REGISTRY=$(terraform -chdir=infra/terraform/aws-e2e output -raw ec
 |---|---|---|---|
 | `make e2e-l2-smoke` | Provision + sentinel-wait + Teardown (no scenarios) | ~6 min | ~$0.10 |
 | `make e2e-l2` | Full Provision + `shared.RunAll` + Teardown | ~12 min | ~$0.22 |
-| `make e2e-clean-aws` | Manual sweeper — terminates every `knative-agents-e2e` tagged instance | ~30 sec | $0 |
+| `make e2e-clean-aws` | Manual sweeper — terminates every `smol-agents-e2e` tagged instance | ~30 sec | $0 |
 
 Smoke is the cheap CI gate for cloud-init drift. Full L2 is the
 release-gate variant that exercises every scenario the L1 ring
@@ -43,7 +43,7 @@ The Terraform module in `infra/terraform/aws-e2e/` enforces three
 defenses:
 
 1. **Sweeper Lambda** — runs every 30 minutes, terminates any
-   `knative-agents-e2e` tagged instance older than 1 hour
+   `smol-agents-e2e` tagged instance older than 1 hour
 2. **Nuke Lambda** — fires when the AWS Budget alarm reports >$50
    spent in the current month, terminates every tagged instance
 3. **Region pin** — both Make and the Go driver refuse `AWS_REGION`
@@ -102,7 +102,7 @@ aws --profile stigen --region us-east-2 ec2 terminate-instances --instance-ids i
 ```
 
 The sweeper logs every termination to CloudWatch under
-`/aws/lambda/knative-agents-e2e-sweeper` so you can confirm.
+`/aws/lambda/smol-agents-e2e-sweeper` so you can confirm.
 
 ### Spot interruption mid-run
 

@@ -9,9 +9,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/knative-agents/operator/internal/builders"
-	"github.com/stigen/knative-agents/operator/pkg/features"
-	pkgsandbox "github.com/stigen/knative-agents/pkg/sandbox"
+	"github.com/stigen/smol-agents/operator/internal/builders"
+	"github.com/stigen/smol-agents/operator/pkg/features"
+	pkgsandbox "github.com/stigen/smol-agents/pkg/sandbox"
 )
 
 // SandboxReconciler enforces RuntimeClass selection. R-SBX-1.

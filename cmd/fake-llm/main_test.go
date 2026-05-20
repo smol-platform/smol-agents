@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	rt "github.com/stigen/knative-agents/pkg/agentmodel/runtime"
+	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
 )
 
 func TestKeyFor_Stable(t *testing.T) {

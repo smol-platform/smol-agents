@@ -53,7 +53,7 @@
   env.GOFLAGS = "-mod=mod";
 
   enterShell = ''
-    echo "knative-agents devenv"
+    echo "smol-agents devenv"
     echo "  go:       $(go version)"
     echo "  clang:    $(clang --version | head -n1)"
     echo "  kubectl:  $(kubectl version --client --short 2>/dev/null || kubectl version --client)"

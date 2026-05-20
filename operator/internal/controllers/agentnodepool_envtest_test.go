@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // TestAgentNodePool_Reconcile_KarpenterMissingDegraded drives the real
@@ -66,7 +66,7 @@ func condReason(a *v1.AgentNodePool, condType string) string {
 func TestAgentNodePool_Reconcile_ClusterAutoscalerReady(t *testing.T) {
 	e := setupEnv(t)
 	applyPlatform(t, e)
-	makeNamespace(t, e, "knative-agents-system")
+	makeNamespace(t, e, "smol-agents-system")
 
 	anp := &v1.AgentNodePool{
 		ObjectMeta: metav1.ObjectMeta{Name: "ca-kata"},
@@ -86,7 +86,7 @@ func TestAgentNodePool_Reconcile_ClusterAutoscalerReady(t *testing.T) {
 	})
 
 	cm := &corev1.ConfigMap{}
-	key := types.NamespacedName{Namespace: "knative-agents-system", Name: "anp-ca-kata-clusterautoscaler"}
+	key := types.NamespacedName{Namespace: "smol-agents-system", Name: "anp-ca-kata-clusterautoscaler"}
 	if err := e.cli.Get(e.ctx, key, cm); err != nil {
 		t.Fatalf("CAS node-group ConfigMap not created: %v", err)
 	}

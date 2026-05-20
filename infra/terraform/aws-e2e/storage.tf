@@ -2,9 +2,9 @@
 # instances, manifest tarballs. 7-day expiration keeps cost negligible.
 
 resource "aws_s3_bucket" "artifacts" {
-  bucket = "knative-agents-e2e-artifacts-${var.region}"
+  bucket = "smol-agents-e2e-artifacts-${var.region}"
   tags = {
-    "knative-agents-e2e" = "infra"
+    "smol-agents-e2e" = "infra"
   }
 }
 
@@ -34,32 +34,32 @@ resource "aws_s3_bucket_public_access_block" "artifacts" {
 # ECR repos: one per image we ship to L2.
 
 resource "aws_ecr_repository" "operator" {
-  name                 = "knative-agents/operator"
+  name                 = "smol-agents/operator"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_ecr_repository" "agent" {
-  name                 = "knative-agents/agent"
+  name                 = "smol-agents/agent"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_ecr_repository" "ebpf_loader" {
-  name                 = "knative-agents/ebpf-loader"
+  name                 = "smol-agents/ebpf-loader"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_ecr_repository" "secret_proxy" {
-  name                 = "knative-agents/secret-proxy"
+  name                 = "smol-agents/secret-proxy"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_ecr_repository" "fake_llm" {
-  name                 = "knative-agents/fake-llm"
+  name                 = "smol-agents/fake-llm"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_ecr_repository" "fake_gateway" {
-  name                 = "knative-agents/fake-gateway"
+  name                 = "smol-agents/fake-gateway"
   image_tag_mutability = "MUTABLE"
 }
 
@@ -67,7 +67,7 @@ resource "aws_ecr_repository" "fake_gateway" {
 # to register workload entries. Built from
 # scripts/e2e/spire/Dockerfile.spire-shell.
 resource "aws_ecr_repository" "spire_shell" {
-  name                 = "knative-agents/spire-shell"
+  name                 = "smol-agents/spire-shell"
   image_tag_mutability = "MUTABLE"
 }
 
@@ -75,19 +75,19 @@ resource "aws_ecr_repository" "spire_shell" {
 # SPIFFE workload-API and the cgroup-attached eBPF egress filter
 # respectively. Built from cmd/spiffe-probe and cmd/ebpf-probe.
 resource "aws_ecr_repository" "spiffe_probe" {
-  name                 = "knative-agents/spiffe-probe"
+  name                 = "smol-agents/spiffe-probe"
   image_tag_mutability = "MUTABLE"
 }
 
 resource "aws_ecr_repository" "ebpf_probe" {
-  name                 = "knative-agents/ebpf-probe"
+  name                 = "smol-agents/ebpf-probe"
   image_tag_mutability = "MUTABLE"
 }
 
 # bottlerocket-bootstrap is the kata-fc base bootstrap container
 # used by the Bottlerocket distro investigation.
 resource "aws_ecr_repository" "bottlerocket_bootstrap" {
-  name                 = "knative-agents/bottlerocket-bootstrap"
+  name                 = "smol-agents/bottlerocket-bootstrap"
   image_tag_mutability = "MUTABLE"
 }
 

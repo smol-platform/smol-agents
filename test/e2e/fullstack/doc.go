@@ -1,11 +1,11 @@
 // Package fullstack hosts the cross-cutting end-to-end tests for the
-// knative-agents project. The tests run at three concentric rings:
+// smol-agents project. The tests run at three concentric rings:
 //
 //	L0  docker-compose on the dev host (no kernel features)
 //	L1  kind cluster (eBPF + Pod sandbox; OrbStack on macOS)
 //	L2  single-node k0s on AWS Spot bare-metal (Kata-FC microVM)
 //
-// See `.spec-workflow/specs/knative-agents-fullstack-e2e/` for the
+// See `.spec-workflow/specs/smol-agents-fullstack-e2e/` for the
 // full design. Each ring's setup lives in its own subpackage with a
 // build tag so unit-test runs don't accidentally pull in heavy deps:
 //

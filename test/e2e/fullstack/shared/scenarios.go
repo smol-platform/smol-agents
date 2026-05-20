@@ -19,11 +19,11 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
-	rt "github.com/stigen/knative-agents/pkg/agentmodel/runtime"
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
-	"github.com/stigen/knative-agents/pkg/agentnet/wireguard"
-	"github.com/stigen/knative-agents/pkg/agentruntime"
-	"github.com/stigen/knative-agents/pkg/agentruntime/fakellm"
+	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	"github.com/stigen/smol-agents/pkg/agentnet/wireguard"
+	"github.com/stigen/smol-agents/pkg/agentruntime"
+	"github.com/stigen/smol-agents/pkg/agentruntime/fakellm"
 )
 
 // All returns every cross-ring scenario in registration order. Each
@@ -44,7 +44,7 @@ func All() []Scenario {
 		cancel,
 		webhook,
 		kataIsolation,
-		knativeAgentPhase,
+		smolAgentPhase,
 	}
 }
 
@@ -578,7 +578,7 @@ var webhook = Scenario{
 
 // runWebhook exercises both validating webhooks the operator ships:
 //
-//  1. KnativeAgent: mode=insecure without the allow-insecure
+//  1. SmolAgent: mode=insecure without the allow-insecure
 //     annotation must be rejected (R-OP-WH-1).
 //  2. AgentNetwork: setting both `identityProxy` and `wireguardMesh`
 //     simultaneously must be rejected by the transport-mutex
@@ -599,16 +599,16 @@ func runWebhook(t *testing.T, env Env) {
 		cleanup []string
 	}{
 		{
-			name: "knativeagent-insecure-no-annotation",
+			name: "smolagent-insecure-no-annotation",
 			yaml: `apiVersion: agents.stigen.ai/v1
-kind: KnativeAgent
+kind: SmolAgent
 metadata: {name: webhook-bad-mode, namespace: tenant-a}
 spec:
   trustDomain: stigen.ai
   mode: insecure
 `,
 			matches: []string{"denied", "allow-insecure"},
-			cleanup: []string{"delete", "knativeagent", "webhook-bad-mode", "-n", "tenant-a"},
+			cleanup: []string{"delete", "smolagent", "webhook-bad-mode", "-n", "tenant-a"},
 		},
 		{
 			name: "agentnetwork-both-transports",
@@ -751,27 +751,27 @@ spec:
 	t.Logf("kata-fc isolation OK: host=%q pod=%q", hostKernel, podKernel)
 }
 
-var knativeAgentPhase = Scenario{
+var smolAgentPhase = Scenario{
 	ID:       "R-E2E-SCN-KA-PHASE",
-	Name:     "knativeagent-status-phase-ready",
+	Name:     "smolagent-status-phase-ready",
 	Requires: CapKubernetes,
-	Run:      runKnativeAgentPhase,
+	Run:      runSmolAgentPhase,
 }
 
-// runKnativeAgentPhase asserts that a KnativeAgent CR reconciled by
+// runSmolAgentPhase asserts that a SmolAgent CR reconciled by
 // the operator reaches phase=Ready in-cluster. Uses the existing
 // `tenant-a/hello` CR brought up by scripts/kind-verify.sh — the
 // L1 driver hooks into that path. Doesn't apply a new CR; the point
 // is to verify the operator's status reconciliation path works
 // end-to-end against a live apiserver.
-func runKnativeAgentPhase(t *testing.T, env Env) {
+func runSmolAgentPhase(t *testing.T, env Env) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	err := env.WaitFor(ctx, "knativeagent-phase-ready", 60*time.Second, func(ctx context.Context) bool {
+	err := env.WaitFor(ctx, "smolagent-phase-ready", 60*time.Second, func(ctx context.Context) bool {
 		out, err := env.Exec(ctx, ExecTarget{},
-			"get", "-n", "tenant-a", "knativeagent", "hello",
+			"get", "-n", "tenant-a", "smolagent", "hello",
 			"-o", "jsonpath={.status.phase}")
 		if err != nil {
 			return false
@@ -781,11 +781,11 @@ func runKnativeAgentPhase(t *testing.T, env Env) {
 	if err != nil {
 		// Fetch the current state for the failure log.
 		out, _ := env.Exec(ctx, ExecTarget{},
-			"get", "-n", "tenant-a", "knativeagent", "hello",
+			"get", "-n", "tenant-a", "smolagent", "hello",
 			"-o", "jsonpath={.status}")
-		t.Fatalf("KnativeAgent hello never reached phase=Ready: %v\nstatus: %s", err, out)
+		t.Fatalf("SmolAgent hello never reached phase=Ready: %v\nstatus: %s", err, out)
 	}
-	t.Log("KnativeAgent tenant-a/hello reconciled to phase=Ready")
+	t.Log("SmolAgent tenant-a/hello reconciled to phase=Ready")
 }
 
 // todo returns a Run that fails-loudly with a useful message until

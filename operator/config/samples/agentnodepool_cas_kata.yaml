@@ -1,7 +1,7 @@
 # Cluster Autoscaler variant. CAS scales an external cloud ASG, so the
 # operator cannot create the node group — instead it emits the node-group spec
 # (CAS discovery tags + the kata launch-template userData) as a ConfigMap at
-# knative-agents-system/anp-<name>-clusterautoscaler for your IaC to apply to a
+# smol-agents-system/anp-<name>-clusterautoscaler for your IaC to apply to a
 # matching ASG. The in-cluster workload coupling (pool label + isolation taint)
 # is identical to the Karpenter pool. See docs/runbooks/agent-node-pools.md.
 apiVersion: agents.stigen.ai/v1

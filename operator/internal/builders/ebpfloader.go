@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // LoaderPreset captures the per-distro defaults we ship in the Helm
@@ -55,14 +55,14 @@ func BuildEBPFLoaderClusterRole() *rbacv1.ClusterRole {
 
 // BuildEBPFLoaderConfigMap renders the loader's config from the
 // platform CR's ebpfLoader spec.
-func BuildEBPFLoaderConfigMap(p *v1.KnativeAgentPlatform, ns string) *corev1.ConfigMap {
+func BuildEBPFLoaderConfigMap(p *v1.SmolAgentPlatform, ns string) *corev1.ConfigMap {
 	pinRoot := p.Spec.EBPFLoader.PinRoot
 	if pinRoot == "" {
-		pinRoot = "/sys/fs/bpf/knative-agents"
+		pinRoot = "/sys/fs/bpf/smol-agents"
 	}
 	yaml := "" +
 		"pinRoot: " + pinRoot + "\n" +
-		"objectsDir: /usr/share/knative-agents/bpf\n" +
+		"objectsDir: /usr/share/smol-agents/bpf\n" +
 		"programs:\n  - syscalls\n  - network\n" +
 		"mountBPFFS: true\n" +
 		"healthAddr: \"0.0.0.0:8081\"\n"
@@ -78,7 +78,7 @@ func BuildEBPFLoaderConfigMap(p *v1.KnativeAgentPlatform, ns string) *corev1.Con
 // deploy/helm/templates/ebpf-loader-daemonset.yaml.
 //
 // `presetName` selects per-distro defaults from LoaderPresets.
-func BuildEBPFLoaderDaemonSet(p *v1.KnativeAgentPlatform, ns, presetName string) *appsv1.DaemonSet {
+func BuildEBPFLoaderDaemonSet(p *v1.SmolAgentPlatform, ns, presetName string) *appsv1.DaemonSet {
 	preset, ok := LoaderPresets[presetName]
 	if !ok {
 		preset = LoaderPresets["generic"]
@@ -86,7 +86,7 @@ func BuildEBPFLoaderDaemonSet(p *v1.KnativeAgentPlatform, ns, presetName string)
 
 	image := p.Spec.EBPFLoader.Image
 	if image == "" {
-		image = "knative-agents/ebpf-loader:0.1.0"
+		image = "smol-agents/ebpf-loader:0.1.0"
 	}
 
 	hostPathDir := corev1.HostPathDirectoryOrCreate
@@ -156,7 +156,7 @@ func BuildEBPFLoaderDaemonSet(p *v1.KnativeAgentPlatform, ns, presetName string)
 	}
 
 	loaderLabels := map[string]string{
-		"app.kubernetes.io/name":      "knative-agents",
+		"app.kubernetes.io/name":      "smol-agents",
 		"app.kubernetes.io/component": "ebpf-loader",
 	}
 

@@ -1,5 +1,5 @@
 // Nuke Lambda — fires when AWS Budget hits 100% of the monthly cap.
-// Terminates EVERY EC2 instance tagged knative-agents-e2e=*
+// Terminates EVERY EC2 instance tagged smol-agents-e2e=*
 // regardless of age, then dumps a JSON summary to CloudWatch Logs.
 //
 // Triggered via SNS subscription from the budget topic.
@@ -40,7 +40,7 @@ func handler(ctx context.Context, ev events.SNSEvent) (Result, error) {
 
 	out, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []types.Filter{
-			{Name: aws.String("tag-key"), Values: []string{"knative-agents-e2e"}},
+			{Name: aws.String("tag-key"), Values: []string{"smol-agents-e2e"}},
 			{Name: aws.String("instance-state-name"), Values: []string{
 				"pending", "running", "stopping", "stopped",
 			}},

@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // Version identifies a single snapshot in the backup target.

@@ -2,10 +2,10 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+  name: {{ include "smol-agents.fullname" . }}-ebpf-loader
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
     app.kubernetes.io/component: ebpf-loader
 ---
 # The loader does not need to call the Kubernetes API; we keep the
@@ -15,9 +15,9 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+  name: {{ include "smol-agents.fullname" . }}-ebpf-loader
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: ["nodes"]
@@ -26,16 +26,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+  name: {{ include "smol-agents.fullname" . }}-ebpf-loader
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+  name: {{ include "smol-agents.fullname" . }}-ebpf-loader
 subjects:
   - kind: ServiceAccount
-    name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+    name: {{ include "smol-agents.fullname" . }}-ebpf-loader
     namespace: {{ .Release.Namespace }}
 {{- end }}
 {{- end -}}

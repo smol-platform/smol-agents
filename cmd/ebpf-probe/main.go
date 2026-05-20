@@ -44,12 +44,12 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 
-	"github.com/stigen/knative-agents/pkg/agentnet/cgroup"
+	"github.com/stigen/smol-agents/pkg/agentnet/cgroup"
 )
 
 func main() {
 	scenarios := flag.String("scenarios", "drop", "comma list: drop,redir")
-	bpfObj := flag.String("bpf-obj", "/usr/share/knative-agents/bpf/egress_redirect.bpf.o",
+	bpfObj := flag.String("bpf-obj", "/usr/share/smol-agents/bpf/egress_redirect.bpf.o",
 		"path to egress_redirect.bpf.o")
 	allowCIDR := flag.String("allow-cidr", "127.0.0.1/32",
 		"single /32 to allow for drop scenario")

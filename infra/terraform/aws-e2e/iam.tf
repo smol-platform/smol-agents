@@ -1,11 +1,11 @@
 # Two IAM roles:
 #
-# 1. knative-agents-e2e-runner — assumed by GHA via OIDC. Permissions
+# 1. smol-agents-e2e-runner — assumed by GHA via OIDC. Permissions
 #    scoped tightly: RunInstances on c6gd.metal Spot only,
 #    Terminate/Describe on tagged instances, SSM SendCommand, S3 +
 #    ECR pulls.
 #
-# 2. knative-agents-e2e-l2 — instance profile attached to EC2.
+# 2. smol-agents-e2e-l2 — instance profile attached to EC2.
 #    Permissions: S3 GetObject for the artifact bucket + SSM agent.
 
 # ---------------------------- runner role ----------------------------
@@ -38,7 +38,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 resource "aws_iam_role" "runner" {
-  name               = "knative-agents-e2e-runner"
+  name               = "smol-agents-e2e-runner"
   assume_role_policy = data.aws_iam_policy_document.gha_oidc_trust.json
 }
 
@@ -84,7 +84,7 @@ data "aws_iam_policy_document" "runner_perms" {
     resources = ["*"]
     condition {
       test     = "StringEquals"
-      variable = "ec2:ResourceTag/knative-agents-e2e"
+      variable = "ec2:ResourceTag/smol-agents-e2e"
       values   = ["L2"]
     }
   }
@@ -143,7 +143,7 @@ data "aws_iam_policy_document" "ec2_assume" {
 }
 
 resource "aws_iam_role" "l2_instance" {
-  name               = "knative-agents-e2e-l2"
+  name               = "smol-agents-e2e-l2"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
 }
 
@@ -177,6 +177,6 @@ resource "aws_iam_role_policy" "l2_extra" {
 }
 
 resource "aws_iam_instance_profile" "l2" {
-  name = "knative-agents-e2e-l2"
+  name = "smol-agents-e2e-l2"
   role = aws_iam_role.l2_instance.name
 }

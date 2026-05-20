@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Quint specification: AgentFS backup + restore + retention.
-// Implements R-AFS-1..4 from knative-agents-agent-model.
+// Implements R-AFS-1..4 from smol-agents-agent-model.
 //
 // Verified safety invariants (via `quint run --invariant=Safety`):
 //

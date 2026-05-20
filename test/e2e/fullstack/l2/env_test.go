@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // fakeSSM is a deterministic ssmAPI for unit tests. Each SendCommand

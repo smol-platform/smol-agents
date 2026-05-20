@@ -1,12 +1,12 @@
-# knative-agents Makefile
+# smol-agents Makefile
 # All targets are idempotent and verifiable.
 
 GO ?= go
 GOFLAGS ?= -trimpath
 LDFLAGS ?= -s -w \
-	-X github.com/stigen/knative-agents/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev") \
-	-X github.com/stigen/knative-agents/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none") \
-	-X github.com/stigen/knative-agents/internal/version.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+	-X github.com/stigen/smol-agents/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev") \
+	-X github.com/stigen/smol-agents/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none") \
+	-X github.com/stigen/smol-agents/internal/version.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BIN_DIR := bin
 CMDS := agent secret-proxy agentctl ebpf-loader
@@ -62,7 +62,7 @@ kind-verify:
 
 .PHONY: kind-down
 kind-down:
-	kind delete cluster --name $${CLUSTER:-knative-agents-kind}
+	kind delete cluster --name $${CLUSTER:-smol-agents-kind}
 
 .PHONY: test-cover
 test-cover:
@@ -78,7 +78,7 @@ test-e2e:
 	$(GO) test -race -tags=e2e -timeout 15m ./test/e2e/...
 
 # fullstack-e2e: layered, runs against real binaries.
-# See .spec-workflow/specs/knative-agents-fullstack-e2e/.
+# See .spec-workflow/specs/smol-agents-fullstack-e2e/.
 
 .PHONY: e2e-l0
 e2e-l0: ## fullstack-e2e L0 ring (docker-compose, ~1 min)
@@ -122,7 +122,7 @@ e2e-l2-smoke: _check-l2-aws ## L2 smoke (Provision+Teardown, 6 min, USD 0.10/run
 	$(GO) test -tags=e2e_l2 -timeout 15m -run TestL2_Smoke ./test/e2e/fullstack/l2/...
 
 .PHONY: e2e-clean-aws
-e2e-clean-aws: ## terminate every stranded knative-agents-e2e instance
+e2e-clean-aws: ## terminate every stranded smol-agents-e2e instance
 	@: $${AWS_PROFILE:?must be set to a sandbox AWS profile}
 	bash scripts/aws-l2/sweep.sh
 
@@ -160,7 +160,7 @@ verify: vet lint test verify-formal
 .PHONY: docker
 docker:
 	@for cmd in $(DOCKER_IMAGES); do \
-		docker build -f deploy/docker/$$cmd.Dockerfile -t knative-agents/$$cmd:dev .; \
+		docker build -f deploy/docker/$$cmd.Dockerfile -t smol-agents/$$cmd:dev .; \
 	done
 
 .PHONY: build-operator

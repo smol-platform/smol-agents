@@ -23,7 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // Region the L2 ring is hard-pinned to. Any other value is a bug;
@@ -42,7 +42,7 @@ type Cluster struct {
 }
 
 // Provision launches a Spot c6gd.metal in us-east-2, tags it
-// `knative-agents-e2e=L2 + run-id=<random>`, waits for SSM to
+// `smol-agents-e2e=L2 + run-id=<random>`, waits for SSM to
 // register, and returns the Cluster handle. Caller MUST defer
 // Teardown — leftover instances incur Spot charges.
 //
@@ -88,7 +88,7 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		APIServer:       os.Getenv("L2_K8S_API_SERVER"),
 		ClusterCABase64: os.Getenv("L2_K8S_CA_BASE64"),
 		BootstrapToken:  os.Getenv("L2_K8S_BOOTSTRAP_TOKEN"),
-		ClusterName:     envOrDefault("L2_K8S_CLUSTER_NAME", "knative-agents-l2-smoke"),
+		ClusterName:     envOrDefault("L2_K8S_CLUSTER_NAME", "smol-agents-l2-smoke"),
 		DebugSSHKey:     os.Getenv("L2_DEBUG_SSH_KEY"),
 	})
 	if err != nil {
@@ -102,16 +102,16 @@ func Provision(ctx context.Context) (*Cluster, error) {
 		MinCount: aws.Int32(1),
 		MaxCount: aws.Int32(1),
 		IamInstanceProfile: &types.IamInstanceProfileSpecification{
-			Name: aws.String("knative-agents-e2e-l2"),
+			Name: aws.String("smol-agents-e2e-l2"),
 		},
 		UserData: aws.String(base64.StdEncoding.EncodeToString([]byte(userData))),
 		TagSpecifications: []types.TagSpecification{{
 			ResourceType: types.ResourceTypeInstance,
 			Tags: []types.Tag{
-				{Key: aws.String("knative-agents-e2e"), Value: aws.String("L2")},
+				{Key: aws.String("smol-agents-e2e"), Value: aws.String("L2")},
 				{Key: aws.String("run-id"), Value: aws.String(runID)},
 				{Key: aws.String("expires-at"), Value: aws.String(rfc3339Plus(1 * time.Hour))},
-				{Key: aws.String("Name"), Value: aws.String("knative-agents-e2e-l2-" + runID)},
+				{Key: aws.String("Name"), Value: aws.String("smol-agents-e2e-l2-" + runID)},
 			},
 		}},
 	}
@@ -122,7 +122,7 @@ func Provision(ctx context.Context) (*Cluster, error) {
 			MarketType: types.MarketTypeSpot,
 		}
 	}
-	// Attach the knative-agents-e2e-l2 SG (egress + intra-SG + NodePort
+	// Attach the smol-agents-e2e-l2 SG (egress + intra-SG + NodePort
 	// ingress from the test runner). Without it, the instance falls
 	// back to the default VPC SG which gives intra-VPC ingress but
 	// blocks NodePort scenarios (AGENTRUN, WG-CLIENT, PROXY-*).
@@ -205,7 +205,7 @@ func (c *Cluster) Teardown(ctx context.Context) error {
 func countActiveL2(ctx context.Context, c *ec2.Client) (int, error) {
 	out, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []types.Filter{
-			{Name: aws.String("tag:knative-agents-e2e"), Values: []string{"L2"}},
+			{Name: aws.String("tag:smol-agents-e2e"), Values: []string{"L2"}},
 			{Name: aws.String("instance-state-name"), Values: []string{
 				"pending", "running", "stopping", "stopped",
 			}},

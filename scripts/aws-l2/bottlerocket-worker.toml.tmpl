@@ -8,7 +8,7 @@
 #   .APIServer        : https://<controller-public-ip>:6443
 #   .ClusterCABase64  : k0s CA cert from /var/lib/k0s/pki/ca.crt
 #   .BootstrapToken   : k0s-issued worker join token
-#   .ClusterName      : arbitrary tag, "knative-agents-l2"
+#   .ClusterName      : arbitrary tag, "smol-agents-l2"
 #
 # These are populated at runtime by the L2 driver after the
 # controller's health gate passes.
@@ -24,7 +24,7 @@ cluster-dns-ip = "10.96.0.10"
 cluster-domain = "cluster.local"
 authentication-mode = "tls"
 bootstrap-token = "{{ .BootstrapToken }}"
-node-labels = { "node.kubernetes.io/role" = "worker", "knative-agents.stigen.ai/distro" = "bottlerocket" }
+node-labels = { "node.kubernetes.io/role" = "worker", "smol-agents.stigen.ai/distro" = "bottlerocket" }
 # Explicitly set node-ip + provider-id so pluto's settings-generator
 # doesn't need to call ec2:DescribeInstances. Without these the
 # bootstrap blocks at "Generate additional settings for Kubernetes"

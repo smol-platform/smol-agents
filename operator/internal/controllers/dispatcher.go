@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // FeatureReconcilerLite mirrors features.FeatureReconciler without the
@@ -22,8 +22,8 @@ type FeatureReconcilerLite interface {
 // features sub-package can reference it without cycles via interface
 // shape.
 type DispatchEnv struct {
-	CR       *v1.KnativeAgent
-	Platform *v1.KnativeAgentPlatform
+	CR       *v1.SmolAgent
+	Platform *v1.SmolAgentPlatform
 	Reader   client.Reader
 	Scheme   *runtime.Scheme
 }

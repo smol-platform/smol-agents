@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "knative-agents.fullname" . }}-ebpf-loader-config
+  name: {{ include "smol-agents.fullname" . }}-ebpf-loader-config
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
     app.kubernetes.io/component: ebpf-loader
 data:
   config.yaml: |
     pinRoot: {{ .Values.ebpfLoader.pinRoot | quote }}
-    objectsDir: /usr/share/knative-agents/bpf
+    objectsDir: /usr/share/smol-agents/bpf
     programs:
 {{ toYaml .Values.ebpfLoader.programs | indent 6 }}
     mountBPFFS: {{ .Values.ebpfLoader.mountBPFFS }}

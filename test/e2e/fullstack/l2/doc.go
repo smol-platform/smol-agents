@@ -3,6 +3,6 @@
 // Provisions a Spot c6gd.metal in us-east-2 (stigen account), boots
 // k0s + Kata via cloud-init, runs every applicable scenario, and
 // terminates the instance on exit. See
-// .spec-workflow/specs/knative-agents-fullstack-e2e/design.md for the
+// .spec-workflow/specs/smol-agents-fullstack-e2e/design.md for the
 // full topology.
 package l2

@@ -22,7 +22,7 @@
 #
 # Implements R-E2E-L0-1 .. R-E2E-L0-4.
 
-name: knative-agents-e2e-l0
+name: smol-agents-e2e-l0
 
 networks:
   e2e_l0:
@@ -52,7 +52,7 @@ services:
       retries: 30
 
   spire-agent:
-    image: knative-agents/spire-shell:dev
+    image: smol-agents/spire-shell:dev
     depends_on:
       spire-init: { condition: service_completed_successfully }
     networks: [e2e_l0]
@@ -64,7 +64,7 @@ services:
       # Host bind so the test driver running OUTSIDE the compose
       # network can use the workload-API socket. Path matches
       # composeEnv.socketDir.
-      - /tmp/knative-agents-e2e-l0-spire-sockets:/run/spire/agent-sockets
+      - /tmp/smol-agents-e2e-l0-spire-sockets:/run/spire/agent-sockets
       - spire-data:/tmp/spire
       - ./spire/agent.conf:/run/spire/conf/agent.conf:ro
     entrypoint:
@@ -73,7 +73,7 @@ services:
       - "exec /opt/spire/bin/spire-agent run -config /run/spire/conf/agent.conf -joinToken $$(cat /tmp/spire/agent-token)"
 
   spire-init:
-    image: knative-agents/spire-shell:dev
+    image: smol-agents/spire-shell:dev
     depends_on:
       spire-server: { condition: service_healthy }
     networks: [e2e_l0]
@@ -85,7 +85,7 @@ services:
     entrypoint: ["/bin/sh", "/bootstrap.sh"]
 
   fake-llm:
-    image: knative-agents/fake-llm:dev
+    image: smol-agents/fake-llm:dev
     networks: [e2e_l0]
     ports: ["18080:8080"] # exposed to host for direct test access
     volumes:
@@ -97,7 +97,7 @@ services:
       retries: 30
 
   fake-gateway:
-    image: knative-agents/fake-gateway:dev
+    image: smol-agents/fake-gateway:dev
     depends_on:
       spire-agent: { condition: service_started }
       spire-init:  { condition: service_completed_successfully }

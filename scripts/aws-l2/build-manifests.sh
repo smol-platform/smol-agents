@@ -3,7 +3,7 @@
 # upload as a tarball to S3 for cloud-init to pull at instance-start.
 #
 # Usage:
-#   L2_ARTIFACT_BUCKET=knative-agents-e2e-artifacts-us-east-2 \
+#   L2_ARTIFACT_BUCKET=smol-agents-e2e-artifacts-us-east-2 \
 #   AWS_PROFILE=stigen \
 #     scripts/aws-l2/build-manifests.sh <tag>
 #
@@ -21,7 +21,7 @@ if [[ "$REGION" != "us-east-2" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-WORK=$(mktemp -d -t knative-agents-l2-manifests.XXXXXX)
+WORK=$(mktemp -d -t smol-agents-l2-manifests.XXXXXX)
 trap "rm -rf $WORK" EXIT
 
 step() { printf "\n=== %s ===\n" "$*"; }
@@ -42,11 +42,11 @@ mkdir -p "$WORK/spire" "$WORK/operator" "$WORK/samples"
 kustomize build "$ROOT/test/e2e/manifests/spire" > "$WORK/spire/00-spire.yaml"
 
 # Rewrite the spire-shell image reference (kind uses
-# `knative-agents/spire-shell:dev` with imagePullPolicy: Never;
+# `smol-agents/spire-shell:dev` with imagePullPolicy: Never;
 # L2 pulls from ECR with IfNotPresent).
 if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
   sed -i.bak \
-    -e "s|knative-agents/spire-shell:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/spire-shell:${TAG}|g" \
+    -e "s|smol-agents/spire-shell:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/spire-shell:${TAG}|g" \
     -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
     "$WORK/spire/00-spire.yaml"
   rm "$WORK/spire/00-spire.yaml.bak"
@@ -58,11 +58,11 @@ fi
 kustomize build "$ROOT/operator/config/kind-webhook" > "$WORK/operator/00-operator.yaml"
 
 # Rewrite the operator image reference: kind uses
-# `knative-agents/operator:0.1.0` (loaded via `kind load`); L2 pulls
+# `smol-agents/operator:0.1.0` (loaded via `kind load`); L2 pulls
 # from ECR. Empty L2_ECR_REGISTRY leaves the dev tag intact.
 if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
   sed -i.bak \
-    -e "s|knative-agents/operator:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/operator:${TAG}|g" \
+    -e "s|smol-agents/operator:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/operator:${TAG}|g" \
     "$WORK/operator/00-operator.yaml"
   rm "$WORK/operator/00-operator.yaml.bak"
 fi
@@ -78,7 +78,7 @@ kind: Namespace
 metadata:
   name: tenant-a
   labels:
-    knative-agents.stigen.ai/tenant: a
+    smol-agents.stigen.ai/tenant: a
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -92,9 +92,9 @@ YAML
 kustomize build "$ROOT/test/e2e/manifests" > "$WORK/tenant/10-fakes.yaml"
 if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
   sed -i.bak \
-    -e "s|knative-agents/fake-llm:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/fake-llm:${TAG}|g" \
-    -e "s|knative-agents/fake-gateway:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/fake-gateway:${TAG}|g" \
-    -e "s|knative-agents/spiffe-probe:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/knative-agents/spiffe-probe:${TAG}|g" \
+    -e "s|smol-agents/fake-llm:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/fake-llm:${TAG}|g" \
+    -e "s|smol-agents/fake-gateway:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/fake-gateway:${TAG}|g" \
+    -e "s|smol-agents/spiffe-probe:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/spiffe-probe:${TAG}|g" \
     -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
     "$WORK/tenant/10-fakes.yaml"
   rm "$WORK/tenant/10-fakes.yaml.bak"
@@ -132,24 +132,24 @@ metadata:
 handler: kata-fc
 YAML
 
-# 4. Sample CRs (Platform + KnativeAgent + ModelProvider + Tool +
+# 4. Sample CRs (Platform + SmolAgent + ModelProvider + Tool +
 #    Agent + AgentRun + AgentNetwork). The Platform CR must apply
-#    BEFORE any KnativeAgent CR, so we prefix-order them. Tenant
+#    BEFORE any SmolAgent CR, so we prefix-order them. Tenant
 #    namespace must exist first (it's in tenant/ which the manifest
 #    watcher applies alphabetically before samples/).
 mkdir -p "$WORK/samples"
-cp "$ROOT/operator/config/samples/knativeagentplatform.yaml"   "$WORK/samples/00-platform.yaml"
-cp "$ROOT/operator/config/samples/knativeagent_minimal.yaml"   "$WORK/samples/10-knativeagent.yaml"
+cp "$ROOT/operator/config/samples/smolagentplatform.yaml"   "$WORK/samples/00-platform.yaml"
+cp "$ROOT/operator/config/samples/smolagent_minimal.yaml"   "$WORK/samples/10-smolagent.yaml"
 cp "$ROOT/operator/config/samples/agent_full.yaml"             "$WORK/samples/20-agent-chain.yaml"
 cp "$ROOT/operator/config/samples/agentnetwork_proxy.yaml"     "$WORK/samples/30-agentnetwork-proxy.yaml"
 cp "$ROOT/operator/config/samples/agentnetwork_wg_client.yaml" "$WORK/samples/31-agentnetwork-wg.yaml"
 
 # Pin the ebpf-loader image on the Platform CR to the L2 ECR copy.
-# The operator's default is "knative-agents/ebpf-loader:0.1.0" which
+# The operator's default is "smol-agents/ebpf-loader:0.1.0" which
 # isn't pullable from the L2 cluster — leaving it set crashes the
 # loader DaemonSet with Init:ErrImagePull.
 if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
-  yq -i ".spec.ebpfLoader.image = \"${L2_ECR_REGISTRY}/knative-agents/ebpf-loader:${TAG}\"" \
+  yq -i ".spec.ebpfLoader.image = \"${L2_ECR_REGISTRY}/smol-agents/ebpf-loader:${TAG}\"" \
     "$WORK/samples/00-platform.yaml"
 fi
 

@@ -13,11 +13,11 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/internal/controllers"
-	"github.com/stigen/knative-agents/operator/internal/controllers/agentmodel"
-	"github.com/stigen/knative-agents/operator/internal/webhooks"
+	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/internal/controllers"
+	"github.com/stigen/smol-agents/operator/internal/controllers/agentmodel"
+	"github.com/stigen/smol-agents/operator/internal/webhooks"
 )
 
 var (
@@ -48,28 +48,28 @@ func main() {
 		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
-		LeaderElectionID:        "knative-agents-operator.stigen.ai",
-		LeaderElectionNamespace: "knative-agents-system",
+		LeaderElectionID:        "smol-agents-operator.stigen.ai",
+		LeaderElectionNamespace: "smol-agents-system",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
 
-	r := &controllers.KnativeAgentReconciler{
+	r := &controllers.SmolAgentReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register KnativeAgent controller")
+		setupLog.Error(err, "unable to register SmolAgent controller")
 		os.Exit(1)
 	}
-	pr := &controllers.KnativeAgentPlatformReconciler{
+	pr := &controllers.SmolAgentPlatformReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
 	if err := pr.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register KnativeAgentPlatform controller")
+		setupLog.Error(err, "unable to register SmolAgentPlatform controller")
 		os.Exit(1)
 	}
 	if err := (&controllers.AgentNodePoolReconciler{
@@ -102,11 +102,11 @@ func main() {
 	// Admission webhooks. R-OP-WH-1, R-OP-WH-2, R-AN-API-1.
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err := webhooks.SetupAgentWebhook(mgr, "default"); err != nil {
-			setupLog.Error(err, "unable to register KnativeAgent webhook")
+			setupLog.Error(err, "unable to register SmolAgent webhook")
 			os.Exit(1)
 		}
 		if err := webhooks.SetupPlatformWebhook(mgr, "default"); err != nil {
-			setupLog.Error(err, "unable to register KnativeAgentPlatform webhook")
+			setupLog.Error(err, "unable to register SmolAgentPlatform webhook")
 			os.Exit(1)
 		}
 		if err := webhooks.SetupAgentNetworkWebhook(mgr); err != nil {

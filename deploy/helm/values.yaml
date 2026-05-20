@@ -1,4 +1,4 @@
-# knative-agents values.yaml
+# smol-agents values.yaml
 #
 # All defaults below honour R-SBX-1 (Kata + Firecracker microVMs)
 # and the SPIFFE / mTLS posture described in design.md.
@@ -38,7 +38,7 @@ sandbox:
 
 agent:
   image:
-    repository: knative-agents/agent
+    repository: smol-agents/agent
     tag: 0.1.0
   replicas: 1
   resources:
@@ -64,18 +64,18 @@ agent:
       maxLeaseTTL: 15m
     ebpf:
       programs: ["syscalls", "network"]
-      objectsDir: /usr/share/knative-agents/bpf
+      objectsDir: /usr/share/smol-agents/bpf
     runtime:
       drainTimeout: 30s
       shutdownTimeout: 5s
       healthAddr: "0.0.0.0:8080"
     observability:
       otlpEndpoint: "otel-collector.observability.svc:4317"
-      serviceName: knative-agent
+      serviceName: smol-agent
 
 secretProxy:
   image:
-    repository: knative-agents/secret-proxy
+    repository: smol-agents/secret-proxy
     tag: 0.1.0
   resources:
     limits:
@@ -100,7 +100,7 @@ spire:
 
 serviceAccount:
   create: true
-  name: knative-agent
+  name: smol-agent
 
 # Knative-specific knobs
 knative:
@@ -139,7 +139,7 @@ ebpfLoader:
   preset: generic                    # see list above
 
   image:
-    repository: knative-agents/ebpf-loader
+    repository: smol-agents/ebpf-loader
     tag: 0.1.0
     pullPolicy: IfNotPresent
 
@@ -147,7 +147,7 @@ ebpfLoader:
     - syscalls
     - network
 
-  pinRoot: /sys/fs/bpf/knative-agents
+  pinRoot: /sys/fs/bpf/smol-agents
   mountBPFFS: true                   # init container mounts bpffs if missing
 
   hostPID: true                      # required for some BPF program types

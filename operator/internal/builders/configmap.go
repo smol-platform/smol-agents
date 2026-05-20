@@ -6,12 +6,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // BuildAgentConfigMap renders the ConfigMap that the agent runtime mounts
 // to populate pkg/config.Agent. The shape mirrors deploy/helm/templates/configmap.yaml.
-func BuildAgentConfigMap(cr *v1.KnativeAgent) *corev1.ConfigMap {
+func BuildAgentConfigMap(cr *v1.SmolAgent) *corev1.ConfigMap {
 	mode := cr.Spec.Mode
 	if mode == "" {
 		mode = nonEmpty(cr.Spec.Features.Identity.Mode, "strict")
@@ -30,7 +30,7 @@ func BuildAgentConfigMap(cr *v1.KnativeAgent) *corev1.ConfigMap {
 	return cm
 }
 
-func renderAgentYAML(cr *v1.KnativeAgent, mode string) string {
+func renderAgentYAML(cr *v1.SmolAgent, mode string) string {
 	out := ""
 	add := func(format string, args ...any) { out += fmt.Sprintf(format, args...) }
 
@@ -77,7 +77,7 @@ func renderAgentYAML(cr *v1.KnativeAgent, mode string) string {
 		for _, p := range progs {
 			add("    - %s\n", p)
 		}
-		add("  objectsDir: /usr/share/knative-agents/bpf\n")
+		add("  objectsDir: /usr/share/smol-agents/bpf\n")
 	}
 
 	add("sandbox:\n")
@@ -85,7 +85,7 @@ func renderAgentYAML(cr *v1.KnativeAgent, mode string) string {
 
 	if cr.Spec.Features.Observability.Enabled {
 		add("observability:\n")
-		add("  serviceName: %s\n", nonEmpty(cr.Spec.Features.Observability.ServiceName, "knative-agent"))
+		add("  serviceName: %s\n", nonEmpty(cr.Spec.Features.Observability.ServiceName, "smol-agent"))
 		if cr.Spec.Features.Observability.OTLPEndpoint != "" {
 			add("  otlpEndpoint: %s\n", cr.Spec.Features.Observability.OTLPEndpoint)
 		}

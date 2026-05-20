@@ -1,5 +1,5 @@
 // Package ebpfloader is the host-level eBPF loader used by the
-// knative-agents DaemonSet (cmd/ebpf-loader).
+// smol-agents DaemonSet (cmd/ebpf-loader).
 //
 // Where pkg/ebpf provides an in-process loader for the agent itself,
 // pkg/ebpfloader extends it with:

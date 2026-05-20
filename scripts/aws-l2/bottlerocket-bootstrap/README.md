@@ -65,7 +65,7 @@ AMIs from `/aws/service/bottlerocket/aws-k8s-*/...` will not
 boot without an EKS context.
 
 The kubeadm bootstrap-container code, ECR-Public image
-(`public.ecr.aws/f4r4b7z2/knative-agents-bottlerocket-kubeadm`),
+(`public.ecr.aws/f4r4b7z2/smol-agents-bottlerocket-kubeadm`),
 and TOML template are preserved in the tree as a starting
 point for any future investigation that involves a custom
 Bottlerocket AMI build.

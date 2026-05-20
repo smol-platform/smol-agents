@@ -51,7 +51,7 @@ spec:
     spec:
       containers:
         - name: fake-llm
-          image: knative-agents/fake-llm:dev
+          image: smol-agents/fake-llm:dev
           imagePullPolicy: Never
           args: ["-addr=:8080", "-plans=/etc/fake-llm/plans.json"]
           ports:

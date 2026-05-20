@@ -1,0 +1,117 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: smolagentplatforms.agents.stigen.ai
+spec:
+  group: agents.stigen.ai
+  scope: Cluster
+  names:
+    kind: SmolAgentPlatform
+    plural: smolagentplatforms
+    singular: smolagentplatform
+    shortNames:
+      - knap
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: TrustDomain
+          type: string
+          jsonPath: .spec.defaultTrustDomain
+        - name: Loader
+          type: string
+          jsonPath: .spec.ebpfLoader.preset
+        - name: Canary
+          type: integer
+          jsonPath: .spec.canary.percent
+        - name: Tenants
+          type: integer
+          jsonPath: .status.managedTenants
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [defaultTrustDomain]
+              properties:
+                defaultTrustDomain:
+                  type: string
+                  minLength: 1
+                defaults:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                featurePolicy:
+                  type: array
+                  items:
+                    type: object
+                    required: [feature]
+                    properties:
+                      feature: { type: string, minLength: 1 }
+                      allowed: { type: boolean, default: true }
+                      defaultEnabled: { type: boolean, default: true }
+                ebpfLoader:
+                  type: object
+                  properties:
+                    enabled: { type: boolean, default: true }
+                    preset:
+                      type: string
+                      enum: [generic, gke-cos, eks-bottlerocket, aks-mariner, k3s, openshift, talos]
+                      default: generic
+                    image: { type: string }
+                    pinRoot: { type: string, default: /sys/fs/bpf/smol-agents }
+                    capabilityMode:
+                      type: string
+                      enum: [privileged, minimal]
+                      default: privileged
+                canary:
+                  type: object
+                  properties:
+                    percent:
+                      type: integer
+                      minimum: 0
+                      maximum: 100
+                      default: 0
+                nodeProvisioning:
+                  type: object
+                  properties:
+                    amiFamily: { type: string, default: Custom }
+                    role: { type: string }
+                    subnetSelectorTags:
+                      type: object
+                      additionalProperties: { type: string }
+                    securityGroupSelectorTags:
+                      type: object
+                      additionalProperties: { type: string }
+                    baseAMISelector:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          tags:
+                            type: object
+                            additionalProperties: { type: string }
+                          id: { type: string }
+                          alias: { type: string }
+                    joinUserData: { type: string }
+                    allowGvisorFallback: { type: boolean }
+            status:
+              type: object
+              properties:
+                observedGeneration: { type: integer }
+                managedTenants: { type: integer }
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string }
+                      status: { type: string, enum: ["True", "False", "Unknown"] }
+                      reason: { type: string }
+                      message: { type: string }
+                      lastTransitionTime: { type: string, format: date-time }
+                      observedGeneration: { type: integer }

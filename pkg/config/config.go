@@ -148,7 +148,7 @@ func (a *Agent) applyDefaults() {
 		a.EBPF.RingBufferSize = 1 << 20 // 1 MiB
 	}
 	if a.EBPF.ObjectsDir == "" {
-		a.EBPF.ObjectsDir = "/usr/share/knative-agents/bpf"
+		a.EBPF.ObjectsDir = "/usr/share/smol-agents/bpf"
 	}
 	if a.Runtime.DrainTimeout == 0 {
 		a.Runtime.DrainTimeout = 30 * time.Second
@@ -163,24 +163,24 @@ func (a *Agent) applyDefaults() {
 		a.Sandbox.RuntimeClass = "kata-fc"
 	}
 	if a.Observability.ServiceName == "" {
-		a.Observability.ServiceName = "knative-agent"
+		a.Observability.ServiceName = "smol-agent"
 	}
 }
 
 func (a *Agent) applyEnvOverrides() {
-	if v := os.Getenv("KNATIVE_AGENTS_MODE"); v != "" {
+	if v := os.Getenv("SMOL_AGENTS_MODE"); v != "" {
 		a.Mode = Mode(strings.ToLower(v))
 	}
-	if v := os.Getenv("KNATIVE_AGENTS_TRUST_DOMAIN"); v != "" {
+	if v := os.Getenv("SMOL_AGENTS_TRUST_DOMAIN"); v != "" {
 		a.TrustDomain = v
 	}
-	if v := os.Getenv("KNATIVE_AGENTS_WORKLOAD_API"); v != "" {
+	if v := os.Getenv("SMOL_AGENTS_WORKLOAD_API"); v != "" {
 		a.Identity.WorkloadAPI = v
 	}
-	if v := os.Getenv("KNATIVE_AGENTS_BROKER_SOCKET"); v != "" {
+	if v := os.Getenv("SMOL_AGENTS_BROKER_SOCKET"); v != "" {
 		a.Secrets.BrokerSocket = v
 	}
-	if v := os.Getenv("KNATIVE_AGENTS_OTLP_ENDPOINT"); v != "" {
+	if v := os.Getenv("SMOL_AGENTS_OTLP_ENDPOINT"); v != "" {
 		a.Observability.OTLPEndpoint = v
 	}
 }
@@ -191,9 +191,9 @@ func (a Agent) Validate() error {
 	if !a.Mode.Valid() {
 		errs = append(errs, fmt.Errorf("mode %q is not insecure|permissive|strict", a.Mode))
 	}
-	if a.Mode == ModeInsecure && os.Getenv("KNATIVE_AGENTS_ALLOW_INSECURE") != "1" {
+	if a.Mode == ModeInsecure && os.Getenv("SMOL_AGENTS_ALLOW_INSECURE") != "1" {
 		// R-IDN-3 acceptance #3
-		errs = append(errs, errors.New("mode=insecure requires KNATIVE_AGENTS_ALLOW_INSECURE=1"))
+		errs = append(errs, errors.New("mode=insecure requires SMOL_AGENTS_ALLOW_INSECURE=1"))
 	}
 	if a.TrustDomain == "" {
 		errs = append(errs, errors.New("trustDomain is required"))

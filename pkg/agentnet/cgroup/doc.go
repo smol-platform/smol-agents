@@ -7,5 +7,5 @@
 //
 // The controller does NOT load BPF programs itself — that's the
 // ebpf-loader DaemonSet's job. It only manipulates already-loaded
-// maps via pinned paths under /sys/fs/bpf/knative-agents/.
+// maps via pinned paths under /sys/fs/bpf/smol-agents/.
 package cgroup

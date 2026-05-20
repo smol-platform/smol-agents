@@ -18,7 +18,7 @@ import (
 )
 
 // GroupVersion is `runtime.agents.stigen.ai/v1`. We use a different
-// group from the operator's `agents.stigen.ai/v1` (KnativeAgent) so
+// group from the operator's `agents.stigen.ai/v1` (SmolAgent) so
 // the two specs evolve independently.
 var GroupVersion = schema.GroupVersion{Group: "runtime.agents.stigen.ai", Version: "v1"}
 

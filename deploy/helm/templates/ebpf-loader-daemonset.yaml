@@ -4,15 +4,15 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: {{ include "knative-agents.fullname" . }}-ebpf-loader
+  name: {{ include "smol-agents.fullname" . }}-ebpf-loader
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "knative-agents.labels" . | nindent 4 }}
+    {{- include "smol-agents.labels" . | nindent 4 }}
     app.kubernetes.io/component: ebpf-loader
 spec:
   selector:
     matchLabels:
-      {{- include "knative-agents.selectorLabels" . | nindent 6 }}
+      {{- include "smol-agents.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: ebpf-loader
   updateStrategy:
     type: RollingUpdate
@@ -21,7 +21,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "knative-agents.selectorLabels" . | nindent 8 }}
+        {{- include "smol-agents.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: ebpf-loader
       annotations:
         # Force a restart whenever the ConfigMap or program objects change.
@@ -33,7 +33,7 @@ spec:
       # The loader is cluster-critical: it must run on every eligible node,
       # even on tainted nodes (control plane, dedicated, NoSchedule).
       priorityClassName: {{ .Values.ebpfLoader.priorityClassName | default "system-node-critical" }}
-      serviceAccountName: {{ include "knative-agents.fullname" . }}-ebpf-loader
+      serviceAccountName: {{ include "smol-agents.fullname" . }}-ebpf-loader
 
       # Tolerate every common control-plane / managed taint so we cover
       # all nodes of a cluster.
@@ -83,7 +83,7 @@ spec:
               set -eu
               echo "init-bpffs: ensuring {{ $hostPaths.bpffs }} is bpffs"
               mountpoint -q "{{ $hostPaths.bpffs }}" || mount -t bpf bpf "{{ $hostPaths.bpffs }}"
-              mkdir -p "{{ $hostPaths.bpffs }}/{{ .Release.Name }}-knative-agents"
+              mkdir -p "{{ $hostPaths.bpffs }}/{{ .Release.Name }}-smol-agents"
               chmod 0755 "{{ $hostPaths.bpffs }}"
               echo "init-bpffs: ok"
           securityContext:
@@ -188,7 +188,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "knative-agents.fullname" . }}-ebpf-loader-config
+            name: {{ include "smol-agents.fullname" . }}-ebpf-loader-config
         - name: bpffs
           hostPath:
             path: {{ $hostPaths.bpffs }}

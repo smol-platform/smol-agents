@@ -3,11 +3,11 @@ package builders
 import (
 	"testing"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
-func samplePlatform() *v1.KnativeAgentPlatform {
-	p := &v1.KnativeAgentPlatform{}
+func samplePlatform() *v1.SmolAgentPlatform {
+	p := &v1.SmolAgentPlatform{}
 	p.Name = "default"
 	p.Spec.DefaultTrustDomain = "stigen.ai"
 	p.Spec.EBPFLoader.Enabled = true
@@ -28,7 +28,7 @@ func TestLoaderPresets_AllSeven(t *testing.T) {
 }
 
 func TestBuildEBPFLoaderDaemonSet_Generic(t *testing.T) {
-	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "knative-agents", "generic")
+	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "smol-agents", "generic")
 	if ds.Name != "ebpf-loader" {
 		t.Errorf("name = %s", ds.Name)
 	}
@@ -42,7 +42,7 @@ func TestBuildEBPFLoaderDaemonSet_Generic(t *testing.T) {
 }
 
 func TestBuildEBPFLoaderDaemonSet_MinimalCaps(t *testing.T) {
-	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "knative-agents", "eks-bottlerocket")
+	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "smol-agents", "eks-bottlerocket")
 	sc := ds.Spec.Template.Spec.Containers[0].SecurityContext
 	if sc.Privileged == nil || *sc.Privileged {
 		t.Error("eks-bottlerocket should NOT be privileged")
@@ -62,7 +62,7 @@ func TestBuildEBPFLoaderDaemonSet_MinimalCaps(t *testing.T) {
 }
 
 func TestBuildEBPFLoaderDaemonSet_TalosOmitsModulesAndDebug(t *testing.T) {
-	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "knative-agents", "talos")
+	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "smol-agents", "talos")
 	for _, v := range ds.Spec.Template.Spec.Volumes {
 		if v.Name == "modules" || v.Name == "kernel-debug" {
 			t.Errorf("talos should not mount %s", v.Name)
@@ -71,7 +71,7 @@ func TestBuildEBPFLoaderDaemonSet_TalosOmitsModulesAndDebug(t *testing.T) {
 }
 
 func TestBuildEBPFLoaderDaemonSet_UnknownFallsBackToGeneric(t *testing.T) {
-	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "knative-agents", "no-such-preset")
+	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "smol-agents", "no-such-preset")
 	sc := ds.Spec.Template.Spec.Containers[0].SecurityContext
 	if sc.Privileged == nil || !*sc.Privileged {
 		t.Error("unknown preset should fall back to generic (privileged)")
@@ -79,7 +79,7 @@ func TestBuildEBPFLoaderDaemonSet_UnknownFallsBackToGeneric(t *testing.T) {
 }
 
 func TestBuildEBPFLoaderConfigMap(t *testing.T) {
-	cm := BuildEBPFLoaderConfigMap(samplePlatform(), "knative-agents")
+	cm := BuildEBPFLoaderConfigMap(samplePlatform(), "smol-agents")
 	if cm.Name != "ebpf-loader-config" {
 		t.Errorf("name = %s", cm.Name)
 	}

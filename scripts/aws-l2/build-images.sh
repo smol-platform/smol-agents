@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-images.sh — build all knative-agents images for linux/arm64
+# build-images.sh — build all smol-agents images for linux/arm64
 # and push them to ECR under the given tag.
 #
 # Usage:
@@ -56,7 +56,7 @@ images=(
 
 for entry in "${images[@]}"; do
   read -r name dockerfile ctx <<<"$entry"
-  full=$REGISTRY/knative-agents/$name:$TAG
+  full=$REGISTRY/smol-agents/$name:$TAG
 
   step "build + push $name → $full"
   # --build-arg TARGETARCH=arm64 overrides Dockerfiles whose ARG
@@ -77,5 +77,5 @@ echo
 echo "DONE. Cloud-init will pull:"
 for entry in "${images[@]}"; do
   read -r name _ _ <<<"$entry"
-  echo "  $REGISTRY/knative-agents/$name:$TAG"
+  echo "  $REGISTRY/smol-agents/$name:$TAG"
 done

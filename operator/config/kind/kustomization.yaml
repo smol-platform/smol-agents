@@ -3,7 +3,7 @@
 # ENABLE_WEBHOOKS=false so the manager doesn't try to bind 9443.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: knative-agents-system
+namespace: smol-agents-system
 resources:
   - ../crd
   - ../rbac
@@ -11,7 +11,7 @@ resources:
 patches:
   - target:
       kind: Deployment
-      name: knative-agents-operator
+      name: smol-agents-operator
     patch: |
       - op: add
         path: /spec/template/spec/containers/0/env
@@ -30,4 +30,4 @@ patches:
 labels:
   - includeSelectors: false
     pairs:
-      app.kubernetes.io/managed-by: knative-agents-operator
+      app.kubernetes.io/managed-by: smol-agents-operator

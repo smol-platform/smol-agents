@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sweep.sh — manual escape hatch for stranded L2 EC2 instances.
-# Terminates every instance tagged knative-agents-e2e=L2 in us-east-2
+# Terminates every instance tagged smol-agents-e2e=L2 in us-east-2
 # under the stigen profile. Use only when the sweeper Lambda + budget
 # alarm both failed.
 #
@@ -17,7 +17,7 @@ fi
 
 ids=$(aws --profile "$PROFILE" --region "$REGION" ec2 describe-instances \
   --filters \
-    'Name=tag:knative-agents-e2e,Values=L2,L1,infra' \
+    'Name=tag:smol-agents-e2e,Values=L2,L1,infra' \
     'Name=instance-state-name,Values=pending,running,stopping,stopped' \
   --query 'Reservations[].Instances[].InstanceId' --output text)
 

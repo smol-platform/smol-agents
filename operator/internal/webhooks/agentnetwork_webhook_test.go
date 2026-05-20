@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 func TestAgentNetworkWebhook_RejectsBothTransports(t *testing.T) {

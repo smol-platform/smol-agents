@@ -23,8 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/internal/controllers"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/internal/controllers"
 )
 
 // envTest is the shared test environment. It boots a real api-server
@@ -82,7 +82,7 @@ func setupEnv(t *testing.T) *envContext {
 		t.Fatalf("NewManager: %v", err)
 	}
 
-	r := &controllers.KnativeAgentReconciler{
+	r := &controllers.SmolAgentReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}
@@ -134,9 +134,9 @@ func projectRoot(t *testing.T) string {
 // applyPlatform creates a default singleton Platform CR.
 func applyPlatform(t *testing.T, e *envContext) {
 	t.Helper()
-	p := &v1.KnativeAgentPlatform{
+	p := &v1.SmolAgentPlatform{
 		ObjectMeta: metav1.ObjectMeta{Name: "default"},
-		Spec:       v1.KnativeAgentPlatformSpec{DefaultTrustDomain: "stigen.ai"},
+		Spec:       v1.SmolAgentPlatformSpec{DefaultTrustDomain: "stigen.ai"},
 	}
 	if err := e.cli.Create(e.ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create platform: %v", err)
@@ -151,12 +151,12 @@ func makeNamespace(t *testing.T, e *envContext, name string) {
 	}
 }
 
-// makeAgent applies a minimal KnativeAgent and waits for it to exist.
-func makeAgent(t *testing.T, e *envContext, ns, name string) *v1.KnativeAgent {
+// makeAgent applies a minimal SmolAgent and waits for it to exist.
+func makeAgent(t *testing.T, e *envContext, ns, name string) *v1.SmolAgent {
 	t.Helper()
-	cr := &v1.KnativeAgent{
+	cr := &v1.SmolAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: v1.KnativeAgentSpec{
+		Spec: v1.SmolAgentSpec{
 			TrustDomain: "stigen.ai",
 			Mode:        "strict",
 			Features: v1.Features{
@@ -180,11 +180,11 @@ func makeAgent(t *testing.T, e *envContext, ns, name string) *v1.KnativeAgent {
 
 // waitFor polls the predicate until it returns true or the test
 // timeout fires.
-func waitFor(t *testing.T, e *envContext, key types.NamespacedName, pred func(*v1.KnativeAgent) bool) {
+func waitFor(t *testing.T, e *envContext, key types.NamespacedName, pred func(*v1.SmolAgent) bool) {
 	t.Helper()
 	deadline := 30
 	for i := 0; i < deadline; i++ {
-		got := &v1.KnativeAgent{}
+		got := &v1.SmolAgent{}
 		if err := e.cli.Get(e.ctx, key, got); err == nil && pred(got) {
 			return
 		}

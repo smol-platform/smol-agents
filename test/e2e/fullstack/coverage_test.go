@@ -88,7 +88,7 @@ func repoFile(rel string) string {
 	for {
 		// Look for the spec dir as the anchor (more specific than
 		// go.mod, prevents climbing too far on test machines).
-		spec := filepath.Join(dir, ".spec-workflow", "specs", "knative-agents-fullstack-e2e")
+		spec := filepath.Join(dir, ".spec-workflow", "specs", "smol-agents-fullstack-e2e")
 		if _, err := os.Stat(spec); err == nil {
 			return filepath.Join(spec, rel)
 		}

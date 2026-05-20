@@ -23,7 +23,7 @@ import (
 	"os"
 	"sync"
 
-	rt "github.com/stigen/knative-agents/pkg/agentmodel/runtime"
+	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
 )
 
 // PlanFile is the on-disk shape of a fake-llm script.

@@ -7,12 +7,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // otelTracer returns the package's tracer.
 func otelTracer() trace.Tracer {
-	return otel.Tracer("github.com/stigen/knative-agents/pkg/agentruntime")
+	return otel.Tracer("github.com/stigen/smol-agents/pkg/agentruntime")
 }
 
 // StartRunSpan opens the parent span for an AgentRun and sets the

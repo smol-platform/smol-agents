@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 // composeEnv is the L0 Env impl. It drives a docker-compose stack
@@ -38,9 +38,9 @@ func composeUp(ctx context.Context) (*composeEnv, error) {
 	}
 
 	env := &composeEnv{
-		projectName: "knative-agents-e2e-l0",
+		projectName: "smol-agents-e2e-l0",
 		composeFile: composeFile,
-		socketDir:   filepath.Join(os.TempDir(), "knative-agents-e2e-l0-spire-sockets"),
+		socketDir:   filepath.Join(os.TempDir(), "smol-agents-e2e-l0-spire-sockets"),
 		endpoints: map[string]string{
 			"fake-llm":          "http://127.0.0.1:18080",
 			"fake-gateway-http": "https://127.0.0.1:18081",

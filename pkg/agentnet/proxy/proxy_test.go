@@ -20,8 +20,8 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
-	"github.com/stigen/knative-agents/pkg/identity"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	"github.com/stigen/smol-agents/pkg/identity"
 )
 
 // fakeIdentity implements identity.Source enough for the HTTP proxy

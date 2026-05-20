@@ -7,9 +7,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
-	"github.com/stigen/knative-agents/operator/internal/builders"
-	pure "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
+	"github.com/stigen/smol-agents/operator/internal/builders"
+	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 func sampleAgent() *amv1.Agent {

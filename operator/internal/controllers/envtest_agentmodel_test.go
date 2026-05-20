@@ -22,9 +22,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
-	"github.com/stigen/knative-agents/operator/internal/controllers/agentmodel"
-	pure "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
+	"github.com/stigen/smol-agents/operator/internal/controllers/agentmodel"
+	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // agentmodelEnv is a clean envtest environment for the

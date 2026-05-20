@@ -7,8 +7,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/knative-agents/operator/internal/builders"
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	"github.com/stigen/smol-agents/operator/internal/builders"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 // KnativeReconciler renders the Knative Service when the feature is

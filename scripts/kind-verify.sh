@@ -6,8 +6,8 @@
 # Idempotent: re-running reuses the cluster + image cache.
 set -euo pipefail
 
-CLUSTER=${CLUSTER:-knative-agents-kind}
-IMAGE=${IMAGE:-knative-agents/operator:0.1.0}
+CLUSTER=${CLUSTER:-smol-agents-kind}
+IMAGE=${IMAGE:-smol-agents/operator:0.1.0}
 OVERLAY=${OVERLAY:-operator/config/kind}
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -32,8 +32,8 @@ step "apply manifests via $OVERLAY"
 kubectl --context "kind-$CLUSTER" apply -k "$OVERLAY"
 
 step "wait for deployment Available"
-kubectl --context "kind-$CLUSTER" -n knative-agents-system rollout status \
-  deployment/knative-agents-operator --timeout=120s
+kubectl --context "kind-$CLUSTER" -n smol-agents-system rollout status \
+  deployment/smol-agents-operator --timeout=120s
 
 KCTL="kubectl --context kind-$CLUSTER"
 
@@ -44,16 +44,16 @@ $KCTL apply -f operator/config/samples/agentnetwork_wg_client.yaml
 
 step "apply runtime CR chain (Provider → Tool → Agent → AgentRun)"
 # BuildAgentRunPod sets ServiceAccountName to "<agent>-agent". On a real
-# cluster the KnativeAgent reconciler creates that SA via the identity
+# cluster the SmolAgent reconciler creates that SA via the identity
 # feature. For the kind-only chain check we pre-create it so the
 # AgentRun Pod admits.
 $KCTL -n tenant-a create serviceaccount researcher-agent \
   --dry-run=client -o yaml | $KCTL apply -f -
 $KCTL apply -f operator/config/samples/agent_full.yaml
 
-step "apply control-plane samples (Platform + KnativeAgent)"
-$KCTL apply -f operator/config/samples/knativeagentplatform.yaml
-$KCTL apply -f operator/config/samples/knativeagent_minimal.yaml
+step "apply control-plane samples (Platform + SmolAgent)"
+$KCTL apply -f operator/config/samples/smolagentplatform.yaml
+$KCTL apply -f operator/config/samples/smolagent_minimal.yaml
 
 step "wait for reconcilers to populate status"
 deadline=$((SECONDS + 90))
@@ -78,7 +78,7 @@ $KCTL -n tenant-a get agentnetworks,agents,agentruns,modelproviders,tools -o wid
 echo "--- run pod ---"
 $KCTL -n tenant-a get pod researcher-001 -o wide --ignore-not-found
 echo "--- operator logs (last 30) ---"
-$KCTL -n knative-agents-system logs deploy/knative-agents-operator --tail=30
+$KCTL -n smol-agents-system logs deploy/smol-agents-operator --tail=30
 
 # Success criteria — fail loudly with the observed value if any check fails.
 require() { local what="$1" got="$2" want="$3"; [[ "$got" == "$want" ]] || \

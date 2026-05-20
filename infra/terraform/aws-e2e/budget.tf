@@ -1,15 +1,15 @@
 # Budget alarm + nuke Lambda.
 #
 # At 80% of monthly_budget_usd → SNS notify (informational).
-# At 100% → SNS → nuke Lambda terminates ALL knative-agents-e2e=*
+# At 100% → SNS → nuke Lambda terminates ALL smol-agents-e2e=*
 # tagged instances. Implements R-E2E-COST-4 + R-E2E-CLEAN-3.
 
 resource "aws_sns_topic" "budget_alerts" {
-  name = "knative-agents-e2e-budget-alerts"
+  name = "smol-agents-e2e-budget-alerts"
 }
 
 resource "aws_budgets_budget" "e2e" {
-  name              = "knative-agents-e2e"
+  name              = "smol-agents-e2e"
   budget_type       = "COST"
   limit_amount      = tostring(var.monthly_budget_usd)
   limit_unit        = "USD"
@@ -18,7 +18,7 @@ resource "aws_budgets_budget" "e2e" {
 
   cost_filter {
     name   = "TagKeyValue"
-    values = ["user:knative-agents-e2e$L2", "user:knative-agents-e2e$infra"]
+    values = ["user:smol-agents-e2e$L2", "user:smol-agents-e2e$infra"]
   }
 
   notification {
@@ -59,7 +59,7 @@ data "archive_file" "nuke" {
 }
 
 resource "aws_lambda_function" "nuke" {
-  function_name    = "knative-agents-e2e-nuke"
+  function_name    = "smol-agents-e2e-nuke"
   role             = aws_iam_role.nuke.arn
   handler          = "bootstrap"
   runtime          = "provided.al2023"
@@ -71,7 +71,7 @@ resource "aws_lambda_function" "nuke" {
 }
 
 resource "aws_iam_role" "nuke" {
-  name               = "knative-agents-e2e-nuke"
+  name               = "smol-agents-e2e-nuke"
   assume_role_policy = data.aws_iam_policy_document.sweeper_assume.json
 }
 
@@ -91,10 +91,10 @@ data "aws_iam_policy_document" "nuke_perms" {
     actions   = ["ec2:TerminateInstances"]
     resources = ["*"]
     # Nuke is broader than sweeper — when budget triggers, kill
-    # anything tagged knative-agents-e2e (any value).
+    # anything tagged smol-agents-e2e (any value).
     condition {
       test     = "StringLike"
-      variable = "ec2:ResourceTag/knative-agents-e2e"
+      variable = "ec2:ResourceTag/smol-agents-e2e"
       values   = ["*"]
     }
   }

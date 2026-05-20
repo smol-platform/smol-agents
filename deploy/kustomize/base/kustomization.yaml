@@ -1,6 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: knative-agents
+namespace: smol-agents
 resources:
   - namespace.yaml
   - serviceaccount.yaml
@@ -8,5 +8,5 @@ resources:
   - cluster-spiffe-id.yaml
   - knative-service.yaml
 commonLabels:
-  app.kubernetes.io/name: knative-agents
+  app.kubernetes.io/name: smol-agents
   app.kubernetes.io/managed-by: kustomize

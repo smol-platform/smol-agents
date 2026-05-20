@@ -2,7 +2,7 @@
 // inside a kind Pod (where the SPIRE workload-API socket is dial-
 // able with peercred). The L1 driver does:
 //
-//	kubectl run spiffe-probe ... --image=knative-agents/spiffe-probe:dev
+//	kubectl run spiffe-probe ... --image=smol-agents/spiffe-probe:dev
 //	kubectl logs spiffe-probe        # parses lines below
 //
 // Output format (one per line):

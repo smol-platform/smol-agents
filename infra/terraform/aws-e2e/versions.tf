@@ -22,11 +22,11 @@ terraform {
   #      run `terraform init -migrate-state`
   #
   # backend "s3" {
-  #   bucket         = "knative-agents-e2e-tfstate-us-east-2"
+  #   bucket         = "smol-agents-e2e-tfstate-us-east-2"
   #   key            = "aws-e2e/terraform.tfstate"
   #   region         = "us-east-2"
   #   profile        = "stigen-io-tasks/sandbox/AdministratorAccess"
-  #   dynamodb_table = "knative-agents-e2e-tfstate-locks"
+  #   dynamodb_table = "smol-agents-e2e-tfstate-locks"
   #   encrypt        = true
   # }
 }

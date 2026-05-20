@@ -16,7 +16,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 	"golang.org/x/sys/unix"
 
-	"github.com/stigen/knative-agents/pkg/ebpf"
+	"github.com/stigen/smol-agents/pkg/ebpf"
 )
 
 // Run loads every configured program, pins maps + programs under PinRoot,

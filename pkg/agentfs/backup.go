@@ -138,7 +138,7 @@ func (m *Manager) putMeta() PutMeta {
 		ContentType:  "application/octet-stream",
 		SSEAlgorithm: m.Spec.Backup.S3.SSEAlgorithm,
 		KMSKeyARN:    m.Spec.Backup.S3.KMSKeyARN,
-		UserMeta:     map[string]string{"agentfs-source": "knative-agents"},
+		UserMeta:     map[string]string{"agentfs-source": "smol-agents"},
 	}
 }
 

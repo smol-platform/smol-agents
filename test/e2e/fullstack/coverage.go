@@ -1,7 +1,7 @@
 package fullstack
 
 // Coverage maps each requirement ID from
-// .spec-workflow/specs/knative-agents-fullstack-e2e/requirements.md
+// .spec-workflow/specs/smol-agents-fullstack-e2e/requirements.md
 // to the test that exercises it. The CI coverage gate parses this
 // registry and fails if any requirement is unreferenced (R-E2E-VRF-1).
 //
@@ -22,7 +22,7 @@ var Coverage = map[string]string{
 	"R-E2E-SCN-CANCEL":     "shared.cancel",
 	"R-E2E-SCN-WEBHOOK":    "shared.webhook",
 	"R-E2E-SCN-KATA":       "shared.kataIsolation",
-	"R-E2E-SCN-KA-PHASE":   "shared.knativeAgentPhase",
+	"R-E2E-SCN-KA-PHASE":   "shared.smolAgentPhase",
 
 	// Driver / ring orchestration: validated by the existence + green
 	// pass of each ring's TestLn root test. Each entry below names

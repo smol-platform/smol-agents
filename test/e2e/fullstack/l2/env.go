@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
-	"github.com/stigen/knative-agents/test/e2e/fullstack/shared"
+	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
 )
 
 const (
@@ -164,7 +164,7 @@ spec:
   hostNetwork: false
   containers:
     - name: probe
-      image: %s/knative-agents/ebpf-probe:%s
+      image: %s/smol-agents/ebpf-probe:%s
       args: %s
       securityContext:
         privileged: true
@@ -194,7 +194,7 @@ spec:
   restartPolicy: Never
   containers:
     - name: probe
-      image: %s/knative-agents/spiffe-probe:%s
+      image: %s/smol-agents/spiffe-probe:%s
       args: %s
       volumeMounts:
         - { name: sockets, mountPath: /run/spire/agent-sockets }

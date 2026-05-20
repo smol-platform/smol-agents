@@ -1,5 +1,5 @@
 // Sweeper Lambda — terminates EC2 instances tagged
-// knative-agents-e2e=L2 that have been running longer than
+// smol-agents-e2e=L2 that have been running longer than
 // MAX_AGE_SECONDS. Fired every 30 min by EventBridge.
 //
 // Cross-compiled to bootstrap (provided.al2023 runtime, arm64) by:
@@ -46,7 +46,7 @@ func handler(ctx context.Context) (Result, error) {
 
 	out, err := c.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []types.Filter{
-			{Name: aws.String("tag:knative-agents-e2e"), Values: []string{"L2"}},
+			{Name: aws.String("tag:smol-agents-e2e"), Values: []string{"L2"}},
 			{Name: aws.String("instance-state-name"), Values: []string{
 				"pending", "running", "stopping", "stopped",
 			}},

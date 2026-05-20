@@ -1,6 +1,6 @@
 # Market Research — How Industry Models an "Agent"
 
-This is the synthesis we used to design `KnativeAgents`'s agent CRD set.
+This is the synthesis we used to design `SmolAgents`'s agent CRD set.
 It captures the dominant abstractions across nine ecosystems as of 2026
 Q2 and condenses them into a small set of primitives that map cleanly
 onto Kubernetes-native objects.
@@ -153,7 +153,7 @@ posture, and the formal-method discipline of safety-critical software.
 
 This research drives:
 
-- `.spec-workflow/specs/knative-agents-agent-model/` — the spec.
+- `.spec-workflow/specs/smol-agents-agent-model/` — the spec.
 - `pkg/agentmodel/` — the typed Go contract for all six CRDs plus the
   in-cluster runtime contract (`StepRequest`, `StepResponse`,
   `ToolCall`, `Observation`, `Budget`, `Lifecycle`).

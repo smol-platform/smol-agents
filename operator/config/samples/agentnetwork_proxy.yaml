@@ -9,7 +9,7 @@ metadata:
 spec:
   kind: identityProxy
   agentSelector:
-    app.kubernetes.io/name: knative-agents
+    app.kubernetes.io/name: smol-agents
   identityProxy:
     resources:
       - name: orders-db

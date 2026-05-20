@@ -18,6 +18,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ebpf-probe /ebpf-probe
-COPY bpf/build/*.bpf.o /usr/share/knative-agents/bpf/
+COPY bpf/build/*.bpf.o /usr/share/smol-agents/bpf/
 USER 0:0
 ENTRYPOINT ["/ebpf-probe"]

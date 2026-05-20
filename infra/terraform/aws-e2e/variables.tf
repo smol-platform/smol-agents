@@ -14,7 +14,7 @@ variable "region" {
 }
 
 variable "monthly_budget_usd" {
-  description = "AWS Budget cap for tag knative-agents-e2e (USD/month). Spec default $50."
+  description = "AWS Budget cap for tag smol-agents-e2e (USD/month). Spec default $50."
   type        = number
   default     = 50
 }
@@ -28,7 +28,7 @@ variable "active_l2_instance_cap" {
 variable "github_repository" {
   description = "github_owner/repo for GHA OIDC trust. Format: owner/repo."
   type        = string
-  default     = "stigen/knative-agents"
+  default     = "stigen/smol-agents"
 }
 
 # IP allow-list for NodePort ingress used by the L2 driver to reach

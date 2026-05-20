@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/knative-agents/pkg/transport"
+	"github.com/stigen/smol-agents/pkg/transport"
 )
 
 // TestIntegration_PublicListenerHandshake validates that a real TLS client

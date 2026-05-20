@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/stigen/knative-agents/pkg/ebpf"
+	"github.com/stigen/smol-agents/pkg/ebpf"
 )
 
 // Config drives the host loader.
 type Config struct {
 	// PinRoot is the directory under bpffs where programs and maps are
-	// pinned (default /sys/fs/bpf/knative-agents).
+	// pinned (default /sys/fs/bpf/smol-agents).
 	PinRoot string
 
 	// Programs is the list of CO-RE BPF objects to load.
@@ -51,7 +51,7 @@ type Loader struct {
 // New returns a Loader. It does no I/O; call Run to attach programs.
 func New(cfg Config) *Loader {
 	if cfg.PinRoot == "" {
-		cfg.PinRoot = "/sys/fs/bpf/knative-agents"
+		cfg.PinRoot = "/sys/fs/bpf/smol-agents"
 	}
 	return &Loader{cfg: cfg}
 }

@@ -8,7 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // TestEnvtest_Identity_HappyPath drives the controller against a real
@@ -41,7 +41,7 @@ func TestEnvtest_Identity_HappyPath(t *testing.T) {
 	}
 
 	// Status should reflect at least Identity ready.
-	waitFor(t, e, types.NamespacedName{Namespace: "tenant-a", Name: "alice"}, func(a *v1.KnativeAgent) bool {
+	waitFor(t, e, types.NamespacedName{Namespace: "tenant-a", Name: "alice"}, func(a *v1.SmolAgent) bool {
 		s, ok := a.Status.Features["identity"]
 		return ok && s.Ready
 	})
@@ -71,7 +71,7 @@ func TestEnvtest_OwnedResourcesHaveOwnerRef(t *testing.T) {
 		t.Fatalf("expected 1 owner ref, got %d: %+v", len(cm.OwnerReferences), cm.OwnerReferences)
 	}
 	o := cm.OwnerReferences[0]
-	if o.Kind != "KnativeAgent" || o.Name != "owns" {
+	if o.Kind != "SmolAgent" || o.Name != "owns" {
 		t.Errorf("wrong owner ref: %+v", o)
 	}
 	if o.Controller == nil || !*o.Controller {

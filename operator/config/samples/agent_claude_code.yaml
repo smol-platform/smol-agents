@@ -18,7 +18,7 @@ spec:
     maxToolCalls: 0
   harness:
     kind: claude-code
-    image: knative-agents/claude-code:0.1.0
+    image: smol-agents/claude-code:0.1.0
     sessionPolicy: persistent       # share state across runs
     cli:
       promptFlag: --print

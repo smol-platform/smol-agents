@@ -1,4 +1,4 @@
-// Command agent is the knative-agents runtime entrypoint.
+// Command agent is the smol-agents runtime entrypoint.
 //
 // Wires identity, transport, secrets client, eBPF, health, observability,
 // and runs them under a Manager that gracefully drains on SIGTERM.
@@ -17,15 +17,15 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/stigen/knative-agents/internal/version"
-	"github.com/stigen/knative-agents/pkg/config"
-	"github.com/stigen/knative-agents/pkg/ebpf"
-	"github.com/stigen/knative-agents/pkg/health"
-	"github.com/stigen/knative-agents/pkg/identity"
-	"github.com/stigen/knative-agents/pkg/observability"
-	"github.com/stigen/knative-agents/pkg/runtime"
-	"github.com/stigen/knative-agents/pkg/secrets"
-	"github.com/stigen/knative-agents/pkg/transport"
+	"github.com/stigen/smol-agents/internal/version"
+	"github.com/stigen/smol-agents/pkg/config"
+	"github.com/stigen/smol-agents/pkg/ebpf"
+	"github.com/stigen/smol-agents/pkg/health"
+	"github.com/stigen/smol-agents/pkg/identity"
+	"github.com/stigen/smol-agents/pkg/observability"
+	"github.com/stigen/smol-agents/pkg/runtime"
+	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/stigen/smol-agents/pkg/transport"
 )
 
 func main() {
@@ -57,7 +57,7 @@ func main() {
 		ServiceName:    cfg.Observability.ServiceName,
 		ServiceVersion: version.Version,
 		OTLPEndpoint:   cfg.Observability.OTLPEndpoint,
-		Environment:    os.Getenv("KNATIVE_AGENTS_ENV"),
+		Environment:    os.Getenv("SMOL_AGENTS_ENV"),
 		Insecure:       true, // in-cluster collector typically uses insecure gRPC
 	})
 	if err != nil {

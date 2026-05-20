@@ -15,7 +15,7 @@ spec:
     maxToolCalls: 0
   harness:
     kind: codex
-    image: knative-agents/codex:0.1.0
+    image: smol-agents/codex:0.1.0
     sessionPolicy: ephemeral
     env:
       - name: OPENAI_API_KEY

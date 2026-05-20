@@ -9,7 +9,7 @@ import (
 )
 
 func TestLoadAgent_Defaults(t *testing.T) {
-	t.Setenv("KNATIVE_AGENTS_ALLOW_INSECURE", "")
+	t.Setenv("SMOL_AGENTS_ALLOW_INSECURE", "")
 	cfg, err := LoadAgent("")
 	if err != nil {
 		t.Fatalf("LoadAgent empty path: %v", err)
@@ -56,7 +56,7 @@ secrets:
 }
 
 func TestValidate_InsecureRequiresEnv(t *testing.T) {
-	t.Setenv("KNATIVE_AGENTS_ALLOW_INSECURE", "")
+	t.Setenv("SMOL_AGENTS_ALLOW_INSECURE", "")
 	cfg := Agent{Mode: ModeInsecure, TrustDomain: "x", Identity: Identity{RotationThreshold: 0.5}, Secrets: Secrets{MaxLeaseTTL: time.Minute}, Runtime: Runtime{DrainTimeout: time.Second}}
 	cfg.applyDefaults()
 	cfg.Mode = ModeInsecure // applyDefaults won't overwrite
@@ -67,7 +67,7 @@ func TestValidate_InsecureRequiresEnv(t *testing.T) {
 }
 
 func TestValidate_InsecureWithEnvAllowed(t *testing.T) {
-	t.Setenv("KNATIVE_AGENTS_ALLOW_INSECURE", "1")
+	t.Setenv("SMOL_AGENTS_ALLOW_INSECURE", "1")
 	cfg := Agent{}
 	cfg.applyDefaults()
 	cfg.Mode = ModeInsecure
@@ -87,8 +87,8 @@ func TestValidate_PublicRequiresCertKey(t *testing.T) {
 }
 
 func TestEnvOverride(t *testing.T) {
-	t.Setenv("KNATIVE_AGENTS_MODE", "permissive")
-	t.Setenv("KNATIVE_AGENTS_TRUST_DOMAIN", "override.test")
+	t.Setenv("SMOL_AGENTS_MODE", "permissive")
+	t.Setenv("SMOL_AGENTS_TRUST_DOMAIN", "override.test")
 	cfg, err := LoadAgent("")
 	if err != nil {
 		t.Fatal(err)

@@ -16,9 +16,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
-	"github.com/stigen/knative-agents/operator/internal/builders"
-	pure "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
+	"github.com/stigen/smol-agents/operator/internal/builders"
+	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // AgentRunReconciler turns an AgentRun CR into a Pod and tracks its

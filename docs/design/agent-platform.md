@@ -52,11 +52,11 @@ deployment already uses to join nodes.
 
 | Concern | Where | Notes |
 |---|---|---|
-| Durable vs serverless | `KnativeAgentSpec.deploymentKind` = `knative`\|`deployment`\|`statefulset` | `knative` → Knative Service (scale-to-zero); others → Deployment/StatefulSet |
+| Durable vs serverless | `SmolAgentSpec.deploymentKind` = `knative`\|`deployment`\|`statefulset` | `knative` → Knative Service (scale-to-zero); others → Deployment/StatefulSet |
 | Isolation runtime | `features.sandbox.runtimeClass` (default `kata-fc`) | `AllowHostEscape` guarded by Platform webhook |
 | Serverless scale | `features.knative` (`scaleToZero`, `minScale`, `maxScale`) | already modelled |
 | **Node→k0s join + `providerID`** | **existing Karpenter deployment (external)** | **token issue solved there; operator does not re-implement** |
-| Cluster env presets | `KnativeAgentPlatformSpec.ebpfLoader.preset` | precedent for a per-environment node concept |
+| Cluster env presets | `SmolAgentPlatformSpec.ebpfLoader.preset` | precedent for a per-environment node concept |
 | Node kata recipe | `scripts/aws-l2/{cloud-init-*,*.bu}.tmpl` | kata-static → `/opt/kata`, devmapper thin-pool, containerd drop-ins; hardened across 4 distros |
 
 ### What's new (in scope)
@@ -109,7 +109,7 @@ deployment already uses to join nodes.
 - **Existing Karpenter deployment**: reuse its node-join mechanism verbatim
   (base AMI / launch template / userData snippet — composition seam TBC). The
   operator never touches join, tokens, or `providerID`.
-- **`KnativeAgentPlatform` CR**: gains a `nodeProvisioning` block (Karpenter
+- **`SmolAgentPlatform` CR**: gains a `nodeProvisioning` block (Karpenter
   backend reference, subnet/SG discovery tags, the base-AMI/join reference, IAM
   role). `AgentNodePool` objects inherit these defaults.
 - **`SandboxFeature.RuntimeClass`**: the existing field is the *input* to the
@@ -145,14 +145,14 @@ deployment already uses to join nodes.
 ```mermaid
 graph TD
     subgraph User_API[agents.stigen.ai]
-        KNAP[KnativeAgentPlatform<br/>nodeProvisioning defaults]
+        KNAP[SmolAgentPlatform<br/>nodeProvisioning defaults]
         ANP[AgentNodePool<br/>isolation: kata-fc]
-        KNA[KnativeAgent<br/>sandbox.runtimeClass=kata-fc]
+        KNA[SmolAgent<br/>sandbox.runtimeClass=kata-fc]
     end
 
     subgraph Operator
         NPC[AgentNodePool controller]
-        WLC[KnativeAgent controller<br/>+ workload builder coupling]
+        WLC[SmolAgent controller<br/>+ workload builder coupling]
     end
 
     subgraph Karpenter[Karpenter on k0s - pre-installed]
@@ -212,7 +212,7 @@ layer makes it run microVMs; Karpenter binds the pods.
 ### 4. Webhook additions (`operator/internal/webhooks/`)
 - Validate `AgentNodePool` (valid isolation, non-empty selectors, join/base
   reference present).
-- On `KnativeAgent` admission, warn when a kata runtimeClass has no matching
+- On `SmolAgent` admission, warn when a kata runtimeClass has no matching
   pool and no gVisor fallback is allowed.
 
 ## Data Models
@@ -276,7 +276,7 @@ type ThinPoolConfig struct {
 | `bootstrap: UserData` | — | `amiFamily: Custom`; userData = **existing join snippet** + appended kata/devmapper recipe |
 | `bootstrap: PrebakedAMI` | — | `amiSelectorTerms` = kata-ready AMI (existing join baked in); userData = thin-pool create only |
 | `thinPool` | — | created at firstboot on raw instance-store NVMe (ephemeral → always at boot); matching `blockDeviceMappings`; **not** `instanceStorePolicy: RAID0` |
-| (cluster defaults) | `nodeClassRef` | base-AMI/join reference, IAM role, subnet/SG selectors from `KnativeAgentPlatform.nodeProvisioning` |
+| (cluster defaults) | `nodeClassRef` | base-AMI/join reference, IAM role, subnet/SG selectors from `SmolAgentPlatform.nodeProvisioning` |
 
 Pool label `agents.stigen.ai/pool: <name>` + taint are the workload builder's join keys.
 
@@ -378,10 +378,10 @@ afternoon, and tells us exactly what `nodeProvisioning` must reference.
    or (b) **userData appended** after your existing join snippet? This is what
    `nodeProvisioning` references. The spike settles it.
 4. **Pool selection:** auto-match by `isolation`/runtimeClass (zero change to
-   existing `KnativeAgent`s) vs explicit `features.sandbox.nodePoolRef`.
+   existing `SmolAgent`s) vs explicit `features.sandbox.nodePoolRef`.
    **Recommendation:** auto-match primary, explicit ref as override.
 5. **Where provisioning defaults live:** `nodeProvisioning` block on
-   `KnativeAgentPlatform` (recommended) vs per-`AgentNodePool`.
+   `SmolAgentPlatform` (recommended) vs per-`AgentNodePool`.
 6. **gVisor fallback policy:** silent auto-fallback vs explicit Platform opt-in
    (`allowGvisorFallback`). Security-relevant — gVisor is weaker than a microVM.
 7. **Run the composition spike before scaffolding (b)?** Recommended.

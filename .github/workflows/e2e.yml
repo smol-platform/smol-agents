@@ -39,9 +39,9 @@ jobs:
           go-version: "1.24"
       - name: build fake images
         run: |
-          docker build -f deploy/docker/fake-llm.Dockerfile -t knative-agents/fake-llm:dev .
-          docker build -f deploy/docker/fake-gateway.Dockerfile -t knative-agents/fake-gateway:dev .
-          docker build -f scripts/e2e/spire/Dockerfile.spire-shell -t knative-agents/spire-shell:dev scripts/e2e/spire
+          docker build -f deploy/docker/fake-llm.Dockerfile -t smol-agents/fake-llm:dev .
+          docker build -f deploy/docker/fake-gateway.Dockerfile -t smol-agents/fake-gateway:dev .
+          docker build -f scripts/e2e/spire/Dockerfile.spire-shell -t smol-agents/spire-shell:dev scripts/e2e/spire
       - name: make e2e-l0
         run: make e2e-l0
 
@@ -82,7 +82,7 @@ jobs:
           go-version: "1.24"
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/knative-agents-e2e-runner
+          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
           aws-region: us-east-2
       - name: build + push bundles
         env:
@@ -119,7 +119,7 @@ jobs:
       - name: configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/knative-agents-e2e-runner
+          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
           aws-region: us-east-2
       - name: build + push bundles
         env:

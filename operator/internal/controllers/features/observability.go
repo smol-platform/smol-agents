@@ -5,7 +5,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
 // ObservabilityReconciler is config-only: the agent runtime reads

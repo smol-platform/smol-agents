@@ -4,7 +4,7 @@
 # Makefile target `make test-e2e`.
 set -euo pipefail
 
-CLUSTER_NAME="${CLUSTER_NAME:-knative-agents}"
+CLUSTER_NAME="${CLUSTER_NAME:-smol-agents}"
 KIND="${KIND:-kind}"
 HELM="${HELM:-helm}"
 KUBECTL="${KUBECTL:-kubectl}"
@@ -26,10 +26,10 @@ echo "==> installing SPIRE (CRDs + agent + server)"
 "$HELM" upgrade --install spire spiffe/spire --namespace spire-server \
   --set global.spire.trustDomain=stigen.ai
 
-echo "==> installing knative-agents chart"
-"$HELM" upgrade --install agents deploy/helm --namespace knative-agents --create-namespace
+echo "==> installing smol-agents chart"
+"$HELM" upgrade --install agents deploy/helm --namespace smol-agents --create-namespace
 
 echo "==> waiting for Knative Service to be Ready"
-"$KUBECTL" wait --for=condition=Ready ksvc/agents-knative-agents -n knative-agents --timeout=300s
+"$KUBECTL" wait --for=condition=Ready ksvc/agents-smol-agents -n smol-agents --timeout=300s
 
 echo "==> e2e harness ready"

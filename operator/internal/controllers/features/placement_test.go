@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // stubReader is a minimal client.Reader returning a fixed AgentNodePool
@@ -37,8 +37,8 @@ func (s stubReader) List(_ context.Context, list client.ObjectList, _ ...client.
 	return nil
 }
 
-func kataAgent(rc string) *v1.KnativeAgent {
-	cr := &v1.KnativeAgent{}
+func kataAgent(rc string) *v1.SmolAgent {
+	cr := &v1.SmolAgent{}
 	cr.Name, cr.Namespace = "a", "ns"
 	cr.Spec.Features.Sandbox.RuntimeClass = rc
 	return cr

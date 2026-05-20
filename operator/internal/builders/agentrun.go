@@ -6,8 +6,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
-	amv1 "github.com/stigen/knative-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // BuildAgentRunPod renders the Pod that executes a single AgentRun.
@@ -48,7 +48,7 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":      "knative-agents",
+		"app.kubernetes.io/name":      "smol-agents",
 		"app.kubernetes.io/component": "agent-run",
 		"agents.stigen.ai/agent":      agent.Name,
 		"agents.stigen.ai/run":        run.Name,
@@ -80,7 +80,7 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 }
 
 func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Container {
-	image := "knative-agents/agent-harness:0.1.0"
+	image := "smol-agents/agent-harness:0.1.0"
 	if agent.Spec.Harness != nil && agent.Spec.Harness.Image != "" {
 		image = agent.Spec.Harness.Image
 	}
@@ -120,9 +120,9 @@ func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Con
 func loopContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Container {
 	return corev1.Container{
 		Name:            "agent",
-		Image:           "knative-agents/agent:0.1.0",
+		Image:           "smol-agents/agent:0.1.0",
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args:            []string{"--config=/etc/knative-agents/agent.yaml"},
+		Args:            []string{"--config=/etc/smol-agents/agent.yaml"},
 		Resources: corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("500m"),

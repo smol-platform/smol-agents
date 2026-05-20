@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
-	"github.com/stigen/knative-agents/pkg/identity"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	"github.com/stigen/smol-agents/pkg/identity"
 )
 
 // Sidecar runs every resource defined in an IdentityProxySpec under a

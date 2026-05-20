@@ -3,17 +3,17 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: knative-agents-operator
+  name: smol-agents-operator
 rules:
   # CR access — control-plane CRs.
   - apiGroups: [agents.stigen.ai]
-    resources: [knativeagents, knativeagentplatforms, agentnodepools]
+    resources: [smolagents, smolagentplatforms, agentnodepools]
     verbs: [get, list, watch, update, patch]
   - apiGroups: [agents.stigen.ai]
-    resources: [knativeagents/status, knativeagentplatforms/status, agentnodepools/status]
+    resources: [smolagents/status, smolagentplatforms/status, agentnodepools/status]
     verbs: [get, update, patch]
   - apiGroups: [agents.stigen.ai]
-    resources: [knativeagents/finalizers, knativeagentplatforms/finalizers, agentnodepools/finalizers]
+    resources: [smolagents/finalizers, smolagentplatforms/finalizers, agentnodepools/finalizers]
     verbs: [update]
 
   # Karpenter objects owned by AgentNodePool (node provisioning).
@@ -86,12 +86,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: knative-agents-operator
+  name: smol-agents-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: knative-agents-operator
+  name: smol-agents-operator
 subjects:
   - kind: ServiceAccount
-    name: knative-agents-operator
-    namespace: knative-agents-system
+    name: smol-agents-operator
+    namespace: smol-agents-system

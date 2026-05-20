@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // RedirectKey is the BPF LPM_TRIE key used by `redirect_cidrs`. The

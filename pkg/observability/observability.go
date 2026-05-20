@@ -38,7 +38,7 @@ type Shutdown func(context.Context) error
 // is empty, providers default to no-ops (suitable for tests).
 func Init(ctx context.Context, cfg Config) (Shutdown, error) {
 	if cfg.ServiceName == "" {
-		cfg.ServiceName = "knative-agent"
+		cfg.ServiceName = "smol-agent"
 	}
 	if cfg.OTLPEndpoint == "" {
 		// No-op providers are already the package default.

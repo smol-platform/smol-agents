@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/pkg/features"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/pkg/features"
 )
 
-func sample() *v1.KnativeAgent {
-	cr := &v1.KnativeAgent{}
+func sample() *v1.SmolAgent {
+	cr := &v1.SmolAgent{}
 	cr.Name = "alice"
 	cr.Namespace = "tenant-a"
 	cr.Spec.TrustDomain = "stigen.ai"
@@ -21,8 +21,8 @@ func sample() *v1.KnativeAgent {
 	return cr
 }
 
-func samplePlatform() *v1.KnativeAgentPlatform {
-	p := &v1.KnativeAgentPlatform{}
+func samplePlatform() *v1.SmolAgentPlatform {
+	p := &v1.SmolAgentPlatform{}
 	p.Spec.EBPFLoader.Enabled = true
 	return p
 }

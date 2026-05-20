@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
 )
 
 // Karpenter object rendering for AgentNodePool. We emit Karpenter v1
@@ -23,7 +23,7 @@ const (
 	// the workload builder adds the matching toleration for sandboxed agents.
 	IsolationTaintKey = "agents.stigen.ai/isolation"
 
-	karpenterManagedBy = "knative-agents-operator"
+	karpenterManagedBy = "smol-agents-operator"
 )
 
 var (

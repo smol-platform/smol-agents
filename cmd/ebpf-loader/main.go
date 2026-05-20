@@ -24,10 +24,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/stigen/knative-agents/internal/version"
-	"github.com/stigen/knative-agents/pkg/ebpf"
-	"github.com/stigen/knative-agents/pkg/ebpfloader"
-	"github.com/stigen/knative-agents/pkg/observability"
+	"github.com/stigen/smol-agents/internal/version"
+	"github.com/stigen/smol-agents/pkg/ebpf"
+	"github.com/stigen/smol-agents/pkg/ebpfloader"
+	"github.com/stigen/smol-agents/pkg/observability"
 )
 
 type loaderConfig struct {
@@ -110,8 +110,8 @@ func main() {
 
 func loadConfig(path string) (loaderConfig, error) {
 	cfg := loaderConfig{
-		PinRoot:    "/sys/fs/bpf/knative-agents",
-		ObjectsDir: "/usr/share/knative-agents/bpf",
+		PinRoot:    "/sys/fs/bpf/smol-agents",
+		ObjectsDir: "/usr/share/smol-agents/bpf",
 		Programs:   []string{"syscalls", "network"},
 		MountBPFFS: true,
 		HealthAddr: "0.0.0.0:8081",
@@ -131,10 +131,10 @@ func loadConfig(path string) (loaderConfig, error) {
 		return cfg, err
 	}
 	if cfg.PinRoot == "" {
-		cfg.PinRoot = "/sys/fs/bpf/knative-agents"
+		cfg.PinRoot = "/sys/fs/bpf/smol-agents"
 	}
 	if cfg.ObjectsDir == "" {
-		cfg.ObjectsDir = "/usr/share/knative-agents/bpf"
+		cfg.ObjectsDir = "/usr/share/smol-agents/bpf"
 	}
 	if cfg.HealthAddr == "" {
 		cfg.HealthAddr = "0.0.0.0:8081"

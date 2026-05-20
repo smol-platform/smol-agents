@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/stigen/knative-agents/pkg/agentmodel/v1"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
 // fakeCmd returns an exec.Cmd that runs `/bin/sh -c "echo $args"`. We

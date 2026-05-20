@@ -12,11 +12,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/stigen/knative-agents/operator/api/v1"
-	"github.com/stigen/knative-agents/operator/internal/builders"
+	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	"github.com/stigen/smol-agents/operator/internal/builders"
 )
 
-const anpFieldOwner = "knative-agents-operator"
+const anpFieldOwner = "smol-agents-operator"
 
 // AgentNodePoolReconciler compiles each AgentNodePool into a Karpenter
 // NodePool + EC2NodeClass (the kata/devmapper layer composed onto the
@@ -26,13 +26,13 @@ type AgentNodePoolReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// PlatformName is the singleton KnativeAgentPlatform whose
+	// PlatformName is the singleton SmolAgentPlatform whose
 	// nodeProvisioning block supplies cluster-level defaults. Defaults to
 	// "default".
 	PlatformName string
 
 	// Namespace is where ClusterAutoscaler node-group ConfigMaps are
-	// written. Defaults to "knative-agents-system".
+	// written. Defaults to "smol-agents-system".
 	Namespace string
 }
 
@@ -47,7 +47,7 @@ func (r *AgentNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.PlatformName = "default"
 	}
 	if r.Namespace == "" {
-		r.Namespace = "knative-agents-system"
+		r.Namespace = "smol-agents-system"
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.AgentNodePool{}).
@@ -143,7 +143,7 @@ func (r *AgentNodePoolReconciler) reconcileClusterAutoscaler(ctx context.Context
 }
 
 // resolveDefaults sources cluster-level provisioning defaults from the
-// singleton KnativeAgentPlatform's nodeProvisioning block (subnet/SG
+// singleton SmolAgentPlatform's nodeProvisioning block (subnet/SG
 // discovery tags, node IAM role, the existing join snippet / base AMI).
 // If the Platform is absent we return minimal defaults; the resulting
 // EC2NodeClass will lack selectors and Karpenter will reject it, surfaced
@@ -154,7 +154,7 @@ func (r *AgentNodePoolReconciler) resolveDefaults(ctx context.Context) builders.
 	if name == "" {
 		name = "default"
 	}
-	p := &v1.KnativeAgentPlatform{}
+	p := &v1.SmolAgentPlatform{}
 	if err := r.Get(ctx, client.ObjectKey{Name: name}, p); err != nil {
 		return d
 	}
