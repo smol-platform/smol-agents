@@ -51,6 +51,39 @@ func (c *Client) Lease(ctx context.Context, name string, ttl time.Duration) (*Le
 	return resp.Lease, nil
 }
 
+// Mint asks the broker to mint a dynamic provider credential for `name`,
+// authorized by the supplied TraT (which the broker verifies). The returned
+// lease's Value is the provider credential the caller injects into egress.
+// R-SEGR-INJECT-1.
+func (c *Client) Mint(ctx context.Context, name, compactTraT string) (*Lease, error) {
+	if name == "" {
+		return nil, fmt.Errorf("%w: name is required", ErrInvalidRequest)
+	}
+	if compactTraT == "" {
+		return nil, fmt.Errorf("%w: trat is required", ErrInvalidRequest)
+	}
+	conn, err := c.dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeFrame(conn, request{Kind: reqMint, Name: name, TraT: compactTraT}); err != nil {
+		c.dropConn()
+		return nil, fmt.Errorf("secrets: write request: %w", err)
+	}
+	var resp response
+	if err := readFrame(conn, &resp); err != nil {
+		c.dropConn()
+		return nil, fmt.Errorf("secrets: read response: %w", err)
+	}
+	if resp.ErrorCode != "" {
+		return nil, errorFromCode(resp.ErrorCode, resp.ErrorMessage)
+	}
+	if resp.Lease == nil {
+		return nil, errors.New("secrets: empty response with no error")
+	}
+	return resp.Lease, nil
+}
+
 // Close closes the underlying connection if any.
 func (c *Client) Close() error {
 	c.mu.Lock()

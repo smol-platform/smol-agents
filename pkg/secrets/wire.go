@@ -19,6 +19,7 @@ type requestKind string
 const (
 	reqLease   requestKind = "lease"
 	reqRefresh requestKind = "refresh"
+	reqMint    requestKind = "mint" // dynamic provider-credential mint (R-SEGR)
 	reqClose   requestKind = "close"
 )
 
@@ -28,6 +29,7 @@ type request struct {
 	Name  string        `json:"name,omitempty"`
 	Lease string        `json:"lease,omitempty"` // for refresh
 	TTL   time.Duration `json:"ttl,omitempty"`   // requested TTL (≤ MaxLeaseTTL)
+	TraT  string        `json:"trat,omitempty"`  // for mint: the TraT the broker verifies
 }
 
 // response is the on-wire response shape. ErrorMessage is non-empty on

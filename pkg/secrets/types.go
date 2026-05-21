@@ -56,6 +56,42 @@ type Backend interface {
 	Close() error
 }
 
+// CredentialRequest is the verified authorization context for a dynamic
+// provider-credential mint: the SO_PEERCRED-attested in-pod caller plus the
+// TraT's verified sub/scope/req_wl/rctx. A DynamicBackend uses it to scope the
+// minted credential. Implements R-SEGR-MINT-1 / R-SEGR-AUTH-1.
+type CredentialRequest struct {
+	Name      string         // credential/policy key (e.g. "github")
+	Principal spiffeid.ID    // attested in-pod caller
+	Subject   string         // TraT sub (verified)
+	Scope     string         // TraT scope (verified) — transaction intent
+	ReqWL     string         // TraT req_wl (verified) — requesting workload
+	ReqCtx    map[string]any // TraT rctx (verified) — e.g. {"repo": "..."}
+}
+
+// DynamicBackend mints a short-lived provider credential scoped by the
+// request. Implementations MUST be goroutine-safe and MUST NOT log the minted
+// value or any root secret. Implements R-SEGR-MINT-1.
+type DynamicBackend interface {
+	Mint(ctx context.Context, req CredentialRequest) (Lease, error)
+	Close() error
+}
+
+// CredentialPolicy authorizes — and MAY narrow — a mint. It returns the
+// CredentialRequest the backend will receive (e.g. with rctx.repo validated
+// against an allow-list), or an error to deny. Deny-by-default.
+// Implements R-SEGR-API-2.
+type CredentialPolicy interface {
+	AuthorizeMint(req CredentialRequest) (CredentialRequest, error)
+}
+
+// CredentialPolicyFunc adapts a closure to CredentialPolicy.
+type CredentialPolicyFunc func(CredentialRequest) (CredentialRequest, error)
+
+func (f CredentialPolicyFunc) AuthorizeMint(r CredentialRequest) (CredentialRequest, error) {
+	return f(r)
+}
+
 // Policy decides whether a principal may obtain a given secret.
 type Policy interface {
 	Allowed(principal spiffeid.ID, name string) bool

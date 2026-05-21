@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+
+	"github.com/stigen/smol-agents/pkg/trat"
 )
 
 // Server is the broker process serving Lease requests over a UDS.
@@ -29,6 +31,12 @@ type Server struct {
 	Attestor    PeerAttestor
 	Logger      *slog.Logger
 	Now         func() time.Time
+
+	// Dynamic + TraTVerifier + CredPolicy enable the dynamic provider-
+	// credential mint path (R-SEGR). If any is nil, reqMint is rejected.
+	Dynamic      DynamicBackend
+	TraTVerifier trat.Verifier
+	CredPolicy   CredentialPolicy
 
 	mu    sync.Mutex
 	ln    net.Listener
@@ -165,6 +173,8 @@ func (s *Server) dispatch(ctx context.Context, principal spiffeid.ID, req reques
 		return s.handleLease(ctx, principal, req)
 	case reqRefresh:
 		return s.handleRefresh(ctx, principal, req)
+	case reqMint:
+		return s.handleMint(ctx, principal, req)
 	case reqClose:
 		return response{}
 	default:
@@ -222,6 +232,58 @@ func (s *Server) handleRefresh(ctx context.Context, principal spiffeid.ID, req r
 	// Re-validate policy + re-fetch backend so a newly-revoked policy
 	// blocks future refreshes (R-SEC-2 #2).
 	return s.handleLease(ctx, principal, request{Kind: reqLease, Name: prev.Name, TTL: prev.TTL})
+}
+
+// handleMint mints a dynamic provider credential (R-SEGR). It (1) requires the
+// dynamic path to be configured, (2) verifies the TraT signature + aud/exp via
+// the TTS JWKS, (3) lets the CredentialPolicy authorize + narrow the request
+// from the verified claims, then (4) calls the DynamicBackend. The minted value
+// is returned to the calling sidecar (which injects it) — never logged.
+func (s *Server) handleMint(ctx context.Context, principal spiffeid.ID, req request) response {
+	if s.Dynamic == nil || s.TraTVerifier == nil || s.CredPolicy == nil {
+		return errResponse(ErrInvalidRequest, "dynamic credential minting not configured")
+	}
+	if req.Name == "" {
+		return errResponse(ErrInvalidRequest, "credential name is required")
+	}
+	if req.TraT == "" {
+		return errResponse(ErrUnauthorized, "trat is required for mint")
+	}
+	claims, err := s.TraTVerifier.Verify(ctx, req.TraT)
+	if err != nil {
+		s.Logger.Warn("trat verification failed", "principal", principal, "credential", req.Name, "err", err)
+		return errResponse(ErrUnauthorized, "trat invalid")
+	}
+	cr := CredentialRequest{
+		Name:      req.Name,
+		Principal: principal,
+		Subject:   claims.Subject,
+		Scope:     claims.Scope,
+		ReqWL:     claims.ReqWL,
+		ReqCtx:    claims.ReqCtx,
+	}
+	cr, err = s.CredPolicy.AuthorizeMint(cr)
+	if err != nil {
+		s.Logger.Warn("mint policy denied", "principal", principal, "credential", req.Name, "scope", claims.Scope, "err", err)
+		return errResponse(ErrUnauthorized, err.Error())
+	}
+	lease, err := s.Dynamic.Mint(ctx, cr)
+	if err != nil {
+		s.Logger.Warn("mint failed", "principal", principal, "credential", req.Name, "err", err)
+		return errResponseWrap(err)
+	}
+	now := s.Now()
+	if lease.Issued.IsZero() {
+		lease.Issued = now
+	}
+	if lease.ExpiresAt.IsZero() || lease.ExpiresAt.After(now.Add(s.MaxLeaseTTL)) {
+		lease.ExpiresAt = now.Add(s.MaxLeaseTTL)
+	}
+	lease.Name = req.Name
+	lease.Audience = principal
+	lease.TTL = lease.ExpiresAt.Sub(lease.Issued)
+	s.recordLease(lease)
+	return response{Lease: &lease}
 }
 
 func errResponse(err error, msg string) response {
