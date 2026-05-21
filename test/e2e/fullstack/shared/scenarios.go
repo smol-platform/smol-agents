@@ -45,6 +45,7 @@ func All() []Scenario {
 		webhook,
 		kataIsolation,
 		smolAgentPhase,
+		secretlessEgress,
 	}
 }
 
@@ -786,6 +787,84 @@ func runSmolAgentPhase(t *testing.T, env Env) {
 		t.Fatalf("SmolAgent hello never reached phase=Ready: %v\nstatus: %s", err, out)
 	}
 	t.Log("SmolAgent tenant-a/hello reconciled to phase=Ready")
+}
+
+var secretlessEgress = Scenario{
+	ID:       "R-E2E-SCN-SECRETLESS",
+	Name:     "secretless-egress-github",
+	Requires: CapSPIRE,
+	Run:      runSecretlessEgress,
+}
+
+// runSecretlessEgress verifies the agent reaches GitHub through the sidecar
+// with a broker-minted credential it never sees. Two halves:
+//
+//   - upstream strictness (runs wherever fake-github is deployed): a
+//     non-minted token is rejected 401, so the upstream isn't a no-op echo;
+//   - full mint→inject chain (runs once the TTS + broker dynamic backend +
+//     credential-resource sidecar are wired): a call through the sidecar
+//     succeeds and fake-github's /_observed confirms it saw a minted token.
+//
+// R-E2E-SCN-SECRETLESS.
+func runSecretlessEgress(t *testing.T, env Env) {
+	t.Helper()
+	ghURL, ok := env.Endpoint("fake-github")
+	if !ok {
+		t.Skip("env has no fake-github endpoint (secretless stack not deployed)")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Upstream must reject any token it did not mint (e.g. the agent's own
+	// JWT-SVID or a forgery) — guards against a silently-permissive upstream.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ghURL+"/repos/stigen/app", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer not-a-minted-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET fake-github: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("fake-github accepted a non-minted token: status %d, want 401", resp.StatusCode)
+	}
+
+	// Full chain only when the sidecar's credential listener is reachable.
+	sidecarURL, ok := env.Endpoint("secretless-egress")
+	if !ok {
+		t.Skip("no secretless-egress sidecar endpoint yet (TTS + broker dynamic backend not deployed); upstream-strictness half verified")
+	}
+
+	sreq, err := http.NewRequestWithContext(ctx, http.MethodGet, sidecarURL+"/repos/stigen/app", nil)
+	if err != nil {
+		t.Fatalf("new sidecar request: %v", err)
+	}
+	sresp, err := http.DefaultClient.Do(sreq)
+	if err != nil {
+		t.Fatalf("GET via sidecar: %v", err)
+	}
+	sresp.Body.Close()
+	if sresp.StatusCode != http.StatusOK {
+		t.Fatalf("sidecar github resource = %d, want 200 (mint+inject failed)", sresp.StatusCode)
+	}
+
+	obsResp, err := http.Get(ghURL + "/_observed")
+	if err != nil {
+		t.Fatalf("GET /_observed: %v", err)
+	}
+	defer obsResp.Body.Close()
+	body, _ := io.ReadAll(obsResp.Body)
+	var obs struct {
+		SawMintedToken bool `json:"sawMintedToken"`
+	}
+	if err := json.Unmarshal(body, &obs); err != nil {
+		t.Fatalf("decode /_observed: %v", err)
+	}
+	if !obs.SawMintedToken {
+		t.Error("upstream never observed a broker-minted token (agent-blind injection failed)")
+	}
 }
 
 // todo returns a Run that fails-loudly with a useful message until

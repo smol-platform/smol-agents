@@ -48,6 +48,7 @@ images=(
   "secret-proxy deploy/docker/secret-proxy.Dockerfile    ."
   "fake-llm     deploy/docker/fake-llm.Dockerfile        ."
   "fake-gateway deploy/docker/fake-gateway.Dockerfile    ."
+  "fake-github  deploy/docker/fake-github.Dockerfile     ."
   "spire-shell  scripts/e2e/spire/Dockerfile.spire-shell scripts/e2e/spire"
   "spiffe-probe deploy/docker/spiffe-probe.Dockerfile    ."
   "ebpf-probe   deploy/docker/ebpf-probe.Dockerfile      ."
