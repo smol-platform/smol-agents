@@ -72,3 +72,6 @@ func (f *fakeEnv) SPIFFEWorkloadAPI() string        { return "" }
 func (f *fakeEnv) RunSpiffeProbe(_ context.Context, _ []string, _ ...string) ([]ProbeLine, error) {
 	return nil, nil
 }
+func (f *fakeEnv) RunEBPFProbe(_ context.Context, _ []string, _ ...string) ([]ProbeLine, error) {
+	return nil, nil
+}
