@@ -199,12 +199,28 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 			"wait", "--for=condition=available", "deployment", "--all",
 			"--timeout=120s")
 	}
-	// 3c. Apply the kind-webhook overlay — adds the operator's
-	// validating webhook + cert-manager Issuer/Certificate. Replaces
-	// the no-webhook deployment from kind-verify.sh's overlay.
-	if err := runCmd(ctx, "kubectl", "--context", e.context,
-		"apply", "-k", filepath.Join(root, "operator/config/kind-webhook")); err != nil {
-		return fmt.Errorf("kubectl apply webhook overlay: %w", err)
+	// 3c. Apply the kind-webhook overlay — adds the operator's validating
+	// webhook + cert-manager Issuer/Certificate. Replaces the no-webhook
+	// deployment from kind-verify.sh's overlay. cert-manager's webhook CA can
+	// lag behind its pods being Available right after install, so the apiserver
+	// transiently rejects the admission call with "x509: certificate signed by
+	// unknown authority" — retry with backoff.
+	var overlayErr error
+	for attempt := 1; attempt <= 6; attempt++ {
+		overlayErr = runCmd(ctx, "kubectl", "--context", e.context,
+			"apply", "-k", filepath.Join(root, "operator/config/kind-webhook"))
+		if overlayErr == nil {
+			break
+		}
+		// Only the cert-manager CA race is retryable; surface anything else.
+		if !strings.Contains(overlayErr.Error(), "cert-manager") &&
+			!strings.Contains(overlayErr.Error(), "unknown authority") {
+			break
+		}
+		time.Sleep(15 * time.Second)
+	}
+	if overlayErr != nil {
+		return fmt.Errorf("kubectl apply webhook overlay (after retries): %w", overlayErr)
 	}
 	// 3d. Wait for the rolled-out operator pod to be Ready.
 	if err := runCmd(ctx, "kubectl", "--context", e.context,
