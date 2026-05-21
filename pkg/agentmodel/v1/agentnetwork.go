@@ -25,6 +25,8 @@ func (k NetworkKind) Valid() bool {
 
 // AgentNetworkSpec is the canonical CRD shape. Implements R-AN-API-1.
 type AgentNetworkSpec struct {
+	// Kind discriminates the transport (validated by NetworkKind.Valid).
+	// +kubebuilder:validation:Enum=identityProxy;wireguardMesh
 	Kind NetworkKind `json:"kind"`
 
 	// AgentSelector picks which Agents in the namespace get this
@@ -170,6 +172,7 @@ type EgressRule struct {
 	CIDR string `json:"cidr"`
 	// Protocol: "tcp" | "udp" | "" (any).
 	// +optional
+	// +kubebuilder:validation:Enum=tcp;udp;""
 	Protocol string `json:"protocol,omitempty"`
 	// Ports is the list of allowed L4 ports. Empty list = any.
 	// +optional

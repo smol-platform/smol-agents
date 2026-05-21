@@ -1,147 +1,378 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
   name: agentnetworks.runtime.agents.stigen.ai
 spec:
   group: runtime.agents.stigen.ai
-  scope: Namespaced
   names:
     kind: AgentNetwork
+    listKind: AgentNetworkList
     plural: agentnetworks
+    shortNames:
+    - anet
     singular: agentnetwork
-    shortNames: [anet]
+  scope: Namespaced
   versions:
-    - name: v1
-      served: true
-      storage: true
-      subresources:
-        status: {}
-      additionalPrinterColumns:
-        - name: Kind
-          type: string
-          jsonPath: .spec.kind
-        - name: Resources
-          type: integer
-          jsonPath: .status.proxyResourceCount
-        - name: WG-Peers
-          type: integer
-          jsonPath: .status.wgPeerCount
-        - name: Bound
-          type: integer
-          jsonPath: .status.boundAgents
-        - name: Ready
-          type: string
-          jsonPath: .status.phase
-        - name: Age
-          type: date
-          jsonPath: .metadata.creationTimestamp
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [kind]
-              properties:
-                kind:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.kind
+      name: Kind
+      type: string
+    - jsonPath: .status.proxyResourceCount
+      name: Resources
+      type: integer
+    - jsonPath: .status.wgPeerCount
+      name: WG-Peers
+      type: integer
+    - jsonPath: .status.boundAgents
+      name: Bound
+      type: integer
+    - jsonPath: .status.phase
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AgentNetwork is the K8s-native wrapper around the pure
+          AgentNetworkSpec. Implements R-AN-API-1.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentNetworkSpec is the canonical CRD shape. Implements R-AN-API-1.
+            properties:
+              agentSelector:
+                additionalProperties:
                   type: string
-                  enum: [identityProxy, wireguardMesh]
-                agentSelector:
-                  type: object
-                  additionalProperties: { type: string }
-                identityProxy:
-                  type: object
-                  required: [resources]
-                  properties:
-                    resources:
-                      type: array
-                      items:
-                        type: object
-                        required: [name, kind, gateway]
-                        properties:
-                          name: { type: string, minLength: 1 }
-                          kind: { type: string, enum: [tcp, http] }
-                          localAddr: { type: string }
-                          localPort: { type: integer }
-                          gateway: { type: string }
-                          authorize:
-                            type: array
-                            items: { type: string }
-                          jwtAudience: { type: string }
-                    egress:
-                      type: object
-                      properties:
-                        enforcement:
+                description: |-
+                  AgentSelector picks which Agents in the namespace get this
+                  network's sidecar injected. If empty, the AgentNetwork is
+                  available but binds nothing.
+                type: object
+              identityProxy:
+                description: IdentityProxy is required when kind=identityProxy.
+                properties:
+                  egress:
+                    description: |-
+                      EgressPolicy carries the eBPF-driven host policy — both transparent
+                      redirect of known CIDRs and a strict allow-list.
+                    properties:
+                      allow:
+                        description: |-
+                          Allow is the per-(CIDR, ports, proto) allow-list. Anything
+                          outside this list is dropped by the eBPF cgroup_skb/egress
+                          program when Enforcement includes "ebpfAllowList".
+                        items:
+                          description: EgressRule is one entry in the allow-list.
+                          properties:
+                            cidr:
+                              type: string
+                            ports:
+                              description: Ports is the list of allowed L4 ports.
+                                Empty list = any.
+                              items:
+                                format: int32
+                                type: integer
+                              type: array
+                            protocol:
+                              description: 'Protocol: "tcp" | "udp" | "" (any).'
+                              enum:
+                              - tcp
+                              - udp
+                              - ""
+                              type: string
+                          required:
+                          - cidr
+                          type: object
+                        type: array
+                      enforcement:
+                        default: ebpfBoth
+                        enum:
+                        - none
+                        - ebpfRedirect
+                        - ebpfAllowList
+                        - ebpfBoth
+                        type: string
+                      redirectCIDRs:
+                        description: |-
+                          RedirectCIDRs is the destination set the operator's
+                          cgroup/connect4 program rewrites to point at the sidecar
+                          (R-AN-EBPF-1). Tenants list the internal IP ranges they want
+                          the sidecar to receive transparently.
+                        items:
                           type: string
-                          enum: [none, ebpfRedirect, ebpfAllowList, ebpfBoth]
-                          default: ebpfBoth
-                        redirectCIDRs:
-                          type: array
-                          items: { type: string }
-                        allow:
-                          type: array
-                          items:
-                            type: object
-                            required: [cidr]
-                            properties:
-                              cidr: { type: string }
-                              protocol:
-                                type: string
-                                enum: [tcp, udp, ""]
-                              ports:
-                                type: array
-                                items: { type: integer }
-                wireguardMesh:
-                  type: object
-                  required: [mode, privateKeyRef]
-                  properties:
-                    mode:
-                      type: string
-                      enum: [client, server]
-                    listenPort:
-                      type: integer
-                    privateKeyRef:
-                      type: object
-                      required: [secretName]
+                        type: array
+                    type: object
+                  resources:
+                    items:
+                      description: |-
+                        ResourceTarget describes one upstream resource the agent reaches
+                        through the sidecar. R-AN-PROXY-1 / R-AN-PROXY-2.
                       properties:
-                        secretName: { type: string }
-                    addresses:
-                      type: array
-                      items: { type: string }
-                    dns:
-                      type: array
-                      items: { type: string }
-                    mtu:
-                      type: integer
-                      minimum: 576
-                      maximum: 9000
-                    peers:
-                      type: array
-                      items:
-                        type: object
-                        required: [name, publicKey, allowedIPs]
-                        properties:
-                          name: { type: string, minLength: 1 }
-                          publicKey: { type: string, minLength: 44, maxLength: 44 }
-                          endpoint: { type: string }
-                          allowedIPs:
-                            type: array
-                            items: { type: string }
-                          persistentKeepalive:
-                            type: integer
-                            minimum: 0
-                          pskRef:
-                            type: object
-                            properties:
-                              secretName: { type: string }
-            status:
-              type: object
-              properties:
-                phase: { type: string }
-                observedGeneration: { type: integer }
-                boundAgents: { type: integer }
-                wgPeerCount: { type: integer }
-                proxyResourceCount: { type: integer }
-                reason: { type: string }
-                message: { type: string }
+                        authorize:
+                          description: |-
+                            Authorize lists SPIFFE authorizer descriptors (matched against
+                            the gateway's peer SVID). At least one is required for TCP.
+                          items:
+                            type: string
+                          type: array
+                        credential:
+                          description: |-
+                            Credential, when set, injects a broker-minted provider credential on
+                            egress to this resource (the agent never sees it). http only. R-SEGR-API-1.
+                          properties:
+                            header:
+                              description: Header overrides where the value is placed;
+                                default "Authorization".
+                              type: string
+                            name:
+                              description: Name is the broker credential/policy key
+                                (e.g. "github").
+                              type: string
+                            scheme:
+                              description: Scheme prefixes the value; default "Bearer".
+                              type: string
+                            scope:
+                              description: |-
+                                Scope is the RFC 8693 transaction intent of the authorizing TraT the
+                                broker verifies before minting. This TraT is internal-only (never sent
+                                to the upstream). R-SEGR-AUTH-1.
+                              type: string
+                          required:
+                          - name
+                          - scope
+                          type: object
+                        gateway:
+                          description: |-
+                            Gateway is the upstream the sidecar dials. For TCP: host:port.
+                            For HTTP: a full URL.
+                          type: string
+                        jwtAudience:
+                          description: |-
+                            JWTAudience is the audience the HTTP sidecar should mint
+                            JWT-SVIDs for. Required when kind=http.
+                          type: string
+                        kind:
+                          enum:
+                          - tcp
+                          - http
+                          type: string
+                        localAddr:
+                          description: LocalAddr is the host:port the sidecar listens
+                            on (TCP).
+                          type: string
+                        localPort:
+                          description: LocalPort is the port the sidecar listens on
+                            (HTTP).
+                          format: int32
+                          type: integer
+                        name:
+                          description: Name is a stable per-resource identifier (used
+                            in metrics).
+                          type: string
+                        trat:
+                          description: |-
+                            TraT, when set, injects a Transaction Token (Txn-Token header) on
+                            egress to this resource. http only. R-TRAT-API-1.
+                          properties:
+                            audience:
+                              description: Audience overrides the trust-domain audience;
+                                default = platform trust domain.
+                              type: string
+                            header:
+                              description: Header overrides the conveyance header;
+                                default "Txn-Token".
+                              type: string
+                            scope:
+                              description: Scope is the RFC 8693 scope (the transaction
+                                intent) for this resource.
+                              type: string
+                          required:
+                          - scope
+                          type: object
+                      required:
+                      - gateway
+                      - kind
+                      - name
+                      type: object
+                    type: array
+                  tts:
+                    description: |-
+                      TTS configures the Tokenetes Transaction Token Service used to mint
+                      (and verify) TraTs. Required when any resource sets trat or credential.
+                    properties:
+                      jwksUrl:
+                        description: |-
+                          JWKSURL is the TTS signing key set; required when a resource sets
+                          credential (the broker verifies the TraT before minting). R-SEGR-AUTH-1.
+                        type: string
+                      subjectAudience:
+                        description: |-
+                          SubjectAudience is the audience the JWT-SVID subject_token is minted
+                          for (the TTS's identity); default = the TraT audience.
+                        type: string
+                      subjectTokenType:
+                        description: |-
+                          SubjectTokenType for the JWT-SVID subject_token; default
+                          urn:ietf:params:oauth:token-type:jwt.
+                        type: string
+                      url:
+                        description: URL is the TTS token-exchange endpoint (RFC 8693).
+                        type: string
+                    required:
+                    - url
+                    type: object
+                required:
+                - resources
+                type: object
+              kind:
+                description: Kind discriminates the transport (validated by NetworkKind.Valid).
+                enum:
+                - identityProxy
+                - wireguardMesh
+                type: string
+              wireguardMesh:
+                description: WireGuardMesh is required when kind=wireguardMesh.
+                properties:
+                  addresses:
+                    description: |-
+                      Addresses are the CIDRs assigned to the device (e.g. 10.99.0.5/32).
+                      Required for server mode; recommended for client mode.
+                    items:
+                      type: string
+                    type: array
+                  dns:
+                    description: DNS is the resolver list applied to the netstack
+                      interface.
+                    items:
+                      type: string
+                    type: array
+                  listenPort:
+                    description: |-
+                      ListenPort is the UDP port the userspace device binds (server
+                      mode). Default 51820.
+                    format: int32
+                    type: integer
+                  mode:
+                    description: 'Mode: "client" (joins peers) | "server" (listens
+                      for peers).'
+                    enum:
+                    - client
+                    - server
+                    type: string
+                  mtu:
+                    description: MTU defaults to 1420 (WireGuard's default).
+                    format: int32
+                    type: integer
+                  peers:
+                    description: Peers is the static peer list.
+                    items:
+                      description: WGPeer is one peer entry (for both client and server
+                        modes).
+                      properties:
+                        allowedIPs:
+                          description: |-
+                            AllowedIPs is the CIDR list that maps to this peer (the
+                            "cryptokey routing" set).
+                          items:
+                            type: string
+                          type: array
+                        endpoint:
+                          description: Endpoint is host:port, optional for server
+                            mode.
+                          type: string
+                        name:
+                          description: Name is a human label; the public key is the
+                            actual identity.
+                          type: string
+                        persistentKeepalive:
+                          description: PersistentKeepalive in seconds (0 = disabled).
+                          format: int32
+                          type: integer
+                        pskRef:
+                          description: |-
+                            PSKRef is an optional broker reference to a per-peer
+                            pre-shared key.
+                          properties:
+                            secretName:
+                              type: string
+                          required:
+                          - secretName
+                          type: object
+                        publicKey:
+                          description: PublicKey is the peer's WireGuard public key
+                            (base64).
+                          type: string
+                      required:
+                      - allowedIPs
+                      - name
+                      - publicKey
+                      type: object
+                    type: array
+                  privateKeyRef:
+                    description: |-
+                      PrivateKeyRef points at a broker secret containing the
+                      WireGuard private key (base64). MUST NOT be inlined.
+                    properties:
+                      secretName:
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                required:
+                - mode
+                - privateKeyRef
+                type: object
+            required:
+            - kind
+            type: object
+          status:
+            description: AgentNetworkStatus is reported by the controller.
+            properties:
+              boundAgents:
+                format: int32
+                type: integer
+              message:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              proxyResourceCount:
+                format: int32
+                type: integer
+              reason:
+                type: string
+              wgPeerCount:
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
