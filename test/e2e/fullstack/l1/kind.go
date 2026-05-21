@@ -162,6 +162,8 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 	for _, img := range []struct{ tag, dockerfile, ctx string }{
 		{"smol-agents/fake-llm:dev", "deploy/docker/fake-llm.Dockerfile", root},
 		{"smol-agents/fake-gateway:dev", "deploy/docker/fake-gateway.Dockerfile", root},
+		{"smol-agents/fake-github:dev", "deploy/docker/fake-github.Dockerfile", root},
+		{"smol-agents/fake-tts:dev", "deploy/docker/fake-tts.Dockerfile", root},
 		{"smol-agents/spiffe-probe:dev", "deploy/docker/spiffe-probe.Dockerfile", root},
 		{"smol-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
 	} {
@@ -214,6 +216,7 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 	if err := runCmd(ctx, "kubectl", "--context", e.context,
 		"-n", "tenant-a", "wait", "--for=condition=available",
 		"deployment/fake-llm", "deployment/fake-gateway",
+		"deployment/fake-github", "deployment/fake-tts",
 		"--timeout=120s"); err != nil {
 		return fmt.Errorf("wait fakes ready: %w", err)
 	}

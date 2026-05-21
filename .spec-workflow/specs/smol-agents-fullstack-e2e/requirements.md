@@ -110,7 +110,7 @@ every ring that has the required capability.
 
 **R-E2E-SCN-KA-PHASE** (L1+) — When the operator reconciles a minimal `SmolAgent` CR (e.g. `tenant-a/hello` from kind-verify), the CR's `Status.Phase` **shall** transition to `Ready` within 60 s. Verifies the operator's status reconciliation path works end-to-end against a live apiserver (CRDs admitted, conditions populated, aggregate Ready computed).
 
-**R-E2E-SCN-SECRETLESS** (L1+) — When the agent egresses to `fake-github` through the sidecar's credential resource, the upstream **shall** observe an `Authorization` carrying a token the broker minted (not the agent's JWT-SVID), and a direct call presenting a non-minted token **shall** be rejected `401`. Cross-references `smol-agents-secretless-egress`. The full mint→inject chain self-skips until the TTS + broker dynamic backend are deployed in the ring; the upstream-strictness half runs wherever `fake-github` is deployed.
+**R-E2E-SCN-SECRETLESS** (L1+) — When the agent egresses to `fake-github` through the sidecar's credential resource, the upstream **shall** observe an `Authorization` carrying a token the broker minted (not the agent's JWT-SVID), and a call presenting a non-minted token **shall** be rejected `401`. Exercised in-cluster by `spiffe-probe --scenarios=secretless`, which runs a real broker (SO_PEERCRED attestation, `GitHubAppBackend`→`fake-github`, JWKS verifier→`fake-tts`) + a real agentnet proxy that mints a TraT, mints a GitHub token via the broker, and injects it. Cross-references `smol-agents-secretless-egress`. Requires `CapInClusterProbe` (the sidecar listener binds loopback).
 
 ## Verification (R-E2E-VRF-*)
 
