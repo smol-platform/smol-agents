@@ -153,6 +153,24 @@ kubectl exec -n spire-server -it deploy/spire-server -- /opt/spire/bin/spire-ser
 # Should list at least one node-local agent.
 ```
 
+### 1.6 Secretless egress prerequisites (optional)
+
+Only needed if agents will reach external APIs (e.g. GitHub) without holding
+long-lived tokens — the sidecar mints a short-lived credential per request.
+Requires, in addition to SPIRE above:
+
+- A **TTS** (RFC 8693 transaction-token endpoint) reachable in-cluster, with a
+  published **JWKS** URL.
+- The **secret broker** configured with the dynamic-mint path (a
+  `DynamicBackend` such as `GitHubAppBackend`, a `trat.Verifier`, and a
+  `CredentialPolicy`).
+- A registered **GitHub App** (App ID + private key, installed on the target
+  repos) if using the GitHub backend.
+- **eBPF egress enforcement** (`### 1.2`) so a minted credential can only reach
+  allow-listed hosts.
+
+Full setup: [`docs/runbooks/secretless-egress.md`](runbooks/secretless-egress.md).
+
 ---
 
 ## 2. Install path 1 — Developer shell with devenv
