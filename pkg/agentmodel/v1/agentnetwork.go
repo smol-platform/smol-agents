@@ -45,6 +45,56 @@ type IdentityProxySpec struct {
 
 	// +optional
 	Egress EgressPolicy `json:"egress,omitempty"`
+
+	// TTS configures the Tokenetes Transaction Token Service used to mint
+	// (and verify) TraTs. Required when any resource sets trat or credential.
+	// +optional
+	TTS *TTSRef `json:"tts,omitempty"`
+}
+
+// TTSRef configures the Tokenetes TTS. R-TRAT-API-2 / R-SEGR.
+type TTSRef struct {
+	// URL is the TTS token-exchange endpoint (RFC 8693).
+	URL string `json:"url"`
+	// SubjectTokenType for the JWT-SVID subject_token; default
+	// urn:ietf:params:oauth:token-type:jwt.
+	// +optional
+	SubjectTokenType string `json:"subjectTokenType,omitempty"`
+	// SubjectAudience is the audience the JWT-SVID subject_token is minted
+	// for (the TTS's identity); default = the TraT audience.
+	// +optional
+	SubjectAudience string `json:"subjectAudience,omitempty"`
+	// JWKSURL is the TTS signing key set; required when a resource sets
+	// credential (the broker verifies the TraT before minting). R-SEGR-AUTH-1.
+	// +optional
+	JWKSURL string `json:"jwksUrl,omitempty"`
+}
+
+// TraTInjection enables injecting a TraT (Txn-Token) on egress to a resource.
+// R-TRAT-API-1.
+type TraTInjection struct {
+	// Scope is the RFC 8693 scope (the transaction intent) for this resource.
+	Scope string `json:"scope"`
+	// Audience overrides the trust-domain audience; default = platform trust domain.
+	// +optional
+	Audience string `json:"audience,omitempty"`
+	// Header overrides the conveyance header; default "Txn-Token".
+	// +optional
+	Header string `json:"header,omitempty"`
+}
+
+// CredentialInjection enables secretless injection of a broker-minted provider
+// credential on egress to a resource. The agent never sees the value.
+// R-SEGR-API-1.
+type CredentialInjection struct {
+	// Name is the broker credential/policy key (e.g. "github").
+	Name string `json:"name"`
+	// Header overrides where the value is placed; default "Authorization".
+	// +optional
+	Header string `json:"header,omitempty"`
+	// Scheme prefixes the value; default "Bearer".
+	// +optional
+	Scheme string `json:"scheme,omitempty"`
 }
 
 // ResourceTarget describes one upstream resource the agent reaches
@@ -77,6 +127,16 @@ type ResourceTarget struct {
 	// JWT-SVIDs for. Required when kind=http.
 	// +optional
 	JWTAudience string `json:"jwtAudience,omitempty"`
+
+	// TraT, when set, injects a Transaction Token (Txn-Token header) on
+	// egress to this resource. http only. R-TRAT-API-1.
+	// +optional
+	TraT *TraTInjection `json:"trat,omitempty"`
+
+	// Credential, when set, injects a broker-minted provider credential on
+	// egress to this resource (the agent never sees it). http only. R-SEGR-API-1.
+	// +optional
+	Credential *CredentialInjection `json:"credential,omitempty"`
 }
 
 // EgressPolicy carries the eBPF-driven host policy — both transparent
@@ -216,6 +276,7 @@ func validateIdentityProxy(p IdentityProxySpec) []error {
 	if len(p.Resources) == 0 {
 		errs = append(errs, errors.New("identityProxy.resources is empty"))
 	}
+	needsTTS, usesCred := false, false
 	for i, r := range p.Resources {
 		if r.Name == "" {
 			errs = append(errs, fmt.Errorf("resources[%d].name is required", i))
@@ -243,6 +304,30 @@ func validateIdentityProxy(p IdentityProxySpec) []error {
 		if r.Gateway == "" {
 			errs = append(errs, fmt.Errorf("resources[%d].gateway is required", i))
 		}
+		if r.TraT != nil {
+			needsTTS = true
+			if r.Kind != "http" {
+				errs = append(errs, fmt.Errorf("resources[%d].trat requires kind=http", i))
+			}
+			if r.TraT.Scope == "" {
+				errs = append(errs, fmt.Errorf("resources[%d].trat.scope is required", i))
+			}
+		}
+		if r.Credential != nil {
+			needsTTS, usesCred = true, true
+			if r.Kind != "http" {
+				errs = append(errs, fmt.Errorf("resources[%d].credential requires kind=http", i))
+			}
+			if r.Credential.Name == "" {
+				errs = append(errs, fmt.Errorf("resources[%d].credential.name is required", i))
+			}
+		}
+	}
+	if needsTTS && (p.TTS == nil || p.TTS.URL == "") {
+		errs = append(errs, errors.New("identityProxy.tts.url is required when a resource sets trat or credential"))
+	}
+	if usesCred && (p.TTS == nil || p.TTS.JWKSURL == "") {
+		errs = append(errs, errors.New("identityProxy.tts.jwksUrl is required when a resource sets credential (broker verifies the TraT)"))
 	}
 	for i, rule := range p.Egress.Allow {
 		if _, _, err := net.ParseCIDR(rule.CIDR); err != nil {
