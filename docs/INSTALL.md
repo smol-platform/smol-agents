@@ -126,6 +126,10 @@ Notes:
 - The chart does **not** install Kata or gVisor binaries — those are
   per-node concerns and should be managed by the platform team using
   the upstream installers above.
+- For a **self-managed k0s** node (local/dev box), see
+  [`docs/runbooks/k0s-local-cluster.md`](runbooks/k0s-local-cluster.md) — it
+  walks through k0s + kata-fc + the devmapper thin-pool and its reboot
+  persistence end-to-end (the parts the upstream installers leave to you).
 - The chart does **not** install SPIRE (deliberately — most platforms have an
   existing tenant). To install SPIRE for a fresh cluster, use the
   [official Helm chart](https://artifacthub.io/packages/helm/spiffe/spire).
