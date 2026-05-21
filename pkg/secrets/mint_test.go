@@ -113,7 +113,7 @@ func startMintServer(t *testing.T, principal spiffeid.ID, v trat.Verifier, dyn D
 func TestServer_Mint_OK(t *testing.T) {
 	claims := &trat.Claims{
 		Subject: idA.String(), Scope: "github:repo:read",
-		ReqWL: "agent-a", ReqCtx: map[string]any{"repo": "stigen/app"},
+		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "stigen/app"},
 	}
 	dyn := &fakeDynBackend{lease: Lease{Value: []byte("ghs_installation_token"), ExpiresAt: mintNow.Add(time.Hour)}}
 	socket := startMintServer(t, idA, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("stigen/app"))
@@ -157,7 +157,7 @@ func TestServer_Mint_InvalidTraT(t *testing.T) {
 
 func TestServer_Mint_PolicyDeny_RepoNotAllowed(t *testing.T) {
 	claims := &trat.Claims{Subject: idA.String(), Scope: "github:repo:read",
-		ReqCtx: map[string]any{"repo": "evil/exfil"}}
+		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "evil/exfil"}}
 	dyn := &fakeDynBackend{lease: Lease{Value: []byte("x")}}
 	socket := startMintServer(t, idA, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("stigen/app"))
 	c := NewClient(socket)
@@ -168,6 +168,28 @@ func TestServer_Mint_PolicyDeny_RepoNotAllowed(t *testing.T) {
 	}
 	if dyn.got.Name != "" {
 		t.Error("backend must not be called when policy denies")
+	}
+}
+
+// A valid TraT minted for workload A (req_wl=idA) but presented over a
+// connection attested as workload B must be rejected: the token is bound to
+// its requesting workload and is not a replayable bearer token. R-SEGR-SEC-1.
+func TestServer_Mint_RejectsReplayedTraT(t *testing.T) {
+	claims := &trat.Claims{
+		Subject: idA.String(), Scope: "github:repo:read",
+		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "stigen/app"},
+	}
+	dyn := &fakeDynBackend{lease: Lease{Value: []byte("x")}}
+	// Peer attests as idB, but the (otherwise valid) TraT was minted for idA.
+	socket := startMintServer(t, idB, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("stigen/app"))
+	c := NewClient(socket)
+	defer c.Close()
+	_, err := c.Mint(context.Background(), "github", "stolen.but.valid")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("want ErrUnauthorized for replayed TraT, got %v", err)
+	}
+	if dyn.got.Name != "" {
+		t.Error("backend must not be called for a TraT bound to another workload")
 	}
 }
 

@@ -254,6 +254,15 @@ func (s *Server) handleMint(ctx context.Context, principal spiffeid.ID, req requ
 		s.Logger.Warn("trat verification failed", "principal", principal, "credential", req.Name, "err", err)
 		return errResponse(ErrUnauthorized, "trat invalid")
 	}
+	// Sender-constraint: req_wl binds the TraT to the workload it was minted
+	// for. Enforce it against the SO_PEERCRED-attested peer so a TraT minted
+	// for workload A cannot be replayed by workload B (a bearer TraT would
+	// otherwise be mintable by anyone whose policy overlaps). Fail closed if
+	// the binding is absent. R-SEGR-AUTH-1 / R-SEGR-SEC-1.
+	if claims.ReqWL == "" || claims.ReqWL != principal.String() {
+		s.Logger.Warn("trat not bound to caller", "principal", principal, "req_wl", claims.ReqWL, "credential", req.Name)
+		return errResponse(ErrUnauthorized, "trat not bound to caller")
+	}
 	cr := CredentialRequest{
 		Name:      req.Name,
 		Principal: principal,
