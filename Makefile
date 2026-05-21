@@ -157,10 +157,32 @@ verify-formal:
 .PHONY: verify
 verify: vet lint test verify-formal
 
+# Local single-arch build (host arch) for kind/compose dev. Multiarch
+# manifest lists can't be `docker load`ed, so this path stays single-arch;
+# published images MUST be multiarch — use `images-push` (or build-images.sh).
 .PHONY: docker
 docker:
 	@for cmd in $(DOCKER_IMAGES); do \
 		docker build -f deploy/docker/$$cmd.Dockerfile -t smol-agents/$$cmd:dev .; \
+	done
+
+# Multiarch (amd64+arm64) build + push to a registry. This is the standing
+# default for any published image.
+#   make images-push REGISTRY=ghcr.io/you IMAGE_TAG=v0
+PLATFORMS ?= linux/amd64,linux/arm64
+REGISTRY  ?=
+IMAGE_TAG ?= dev
+.PHONY: images-push
+images-push: ## buildx multiarch (amd64+arm64) build+push of core images to $REGISTRY
+	@: $${REGISTRY:?set REGISTRY=<host>/<org>, e.g. ghcr.io/you}
+	mkdir -p bpf/build
+	docker buildx build --file deploy/docker/bpf-builder.Dockerfile \
+	  --target export --output type=local,dest=. .
+	@for cmd in $(DOCKER_IMAGES); do \
+		echo "=== $$cmd -> $(REGISTRY)/smol-agents/$$cmd:$(IMAGE_TAG) ($(PLATFORMS)) ==="; \
+		docker buildx build --platform $(PLATFORMS) \
+			--file deploy/docker/$$cmd.Dockerfile \
+			--tag $(REGISTRY)/smol-agents/$$cmd:$(IMAGE_TAG) --push . || exit 1; \
 	done
 
 .PHONY: build-operator

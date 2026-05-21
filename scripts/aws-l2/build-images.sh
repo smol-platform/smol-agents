@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# build-images.sh — build all smol-agents images for linux/arm64
-# and push them to ECR under the given tag.
+# build-images.sh — build all smol-agents images multiarch
+# (linux/amd64 + linux/arm64) and push them to ECR under the given tag.
 #
 # Usage:
 #   L2_ECR_REGISTRY=123.dkr.ecr.us-east-2.amazonaws.com \
@@ -30,7 +30,7 @@ aws --profile "$PROFILE" --region "$REGION" ecr get-login-password \
 # Compile CO-RE BPF objects FIRST. ebpf-loader.Dockerfile copies
 # bpf/build/*.bpf.o into the image; without this step those files
 # are 0-byte placeholders and the loader attaches nothing.
-step "compile bpf/build/*.bpf.o (arm64 CO-RE)"
+step "compile bpf/build/*.bpf.o (CO-RE; bpfel objects are arch-portable)"
 mkdir -p bpf/build
 docker buildx build \
   --platform linux/arm64 \
@@ -58,15 +58,12 @@ for entry in "${images[@]}"; do
   read -r name dockerfile ctx <<<"$entry"
   full=$REGISTRY/smol-agents/$name:$TAG
 
-  step "build + push $name → $full"
-  # --build-arg TARGETARCH=arm64 overrides Dockerfiles whose ARG
-  # has a default of amd64; without this, the binary inside the
-  # arm64-tagged image is still x86 and fails with `exec format
-  # error` on bare-metal Graviton.
+  step "build + push $name → $full (multiarch)"
+  # buildx injects TARGETOS/TARGETARCH per platform, so each Go
+  # Dockerfile cross-compiles correctly; one multiarch manifest list
+  # (amd64+arm64) is pushed under the tag.
   docker buildx build \
-    --platform linux/arm64 \
-    --build-arg TARGETOS=linux \
-    --build-arg TARGETARCH=arm64 \
+    --platform linux/amd64,linux/arm64 \
     --file "$dockerfile" \
     --tag  "$full" \
     --push \
