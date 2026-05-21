@@ -1,0 +1,52 @@
+# fake-tts Deployment + Service for the secretless-egress scenario. Runs the
+# real cmd/fake-tts binary: an RFC 8693 token-exchange endpoint that mints
+# Transaction Tokens (bound to the subject's req_wl, carrying a configured
+# rctx.repo) and serves the JWKS the broker verifies against.
+# Implements R-E2E-SCN-SECRETLESS (TTS side).
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-tts
+  namespace: tenant-a
+spec:
+  selector:
+    app.kubernetes.io/name: fake-tts
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-tts
+  namespace: tenant-a
+  labels:
+    app.kubernetes.io/name: fake-tts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fake-tts
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fake-tts
+    spec:
+      containers:
+        - name: fake-tts
+          image: smol-agents/fake-tts:dev
+          imagePullPolicy: Never
+          args:
+            - "-addr=:8080"
+            - "-repo=stigen/app"   # rctx.repo authorized for minted TraTs (P1: fixed)
+            - "-ttl=5m"
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 1
+            periodSeconds: 1
+          resources:
+            requests: { cpu: "10m", memory: "32Mi" }
+            limits:   { cpu: "200m", memory: "128Mi" }
