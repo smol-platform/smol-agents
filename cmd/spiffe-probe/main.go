@@ -47,6 +47,9 @@ func main() {
 	tcpAddr := flag.String("tcp-addr", "", "fake-gateway TCP echo addr (host:port) for proxy-tcp")
 	httpURL := flag.String("http-url", "", "fake-gateway HTTP URL for proxy-http")
 	httpAud := flag.String("http-audience", "", "JWT-SVID audience for proxy-http")
+	githubURL := flag.String("github-url", "", "fake-github base URL for secretless")
+	ttsURL := flag.String("tts-url", "", "fake-tts base URL for secretless")
+	ttsAud := flag.String("tts-audience", "spiffe://stigen.ai/ns/security/sa/tts", "audience the JWT-SVID subject_token is minted for")
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -77,6 +80,8 @@ func main() {
 			ok = runProxyTCP(ctx, x509src, *tcpAddr)
 		case "proxy-http":
 			ok = runProxyHTTP(ctx, x509src, jwtSrc, *httpURL, *httpAud)
+		case "secretless":
+			ok = runSecretless(ctx, *socket, *githubURL, *ttsURL, *ttsAud)
 		default:
 			fail(s, "unknown scenario")
 			ok = false
