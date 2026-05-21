@@ -70,8 +70,8 @@ func TestBuildKataLayer_FlatcarUsesOptBin(t *testing.T) {
 
 func TestBuildKataLayer_Amd64Arch(t *testing.T) {
 	got := BuildKataLayer("al2023", "amd64", defaultThinPool(), true)
-	if !strings.Contains(got, "kata-static-3.10.0-x86_64.tar.xz") {
-		t.Error("amd64 should pull the x86_64 bundle")
+	if !strings.Contains(got, "kata-static-3.10.0-amd64.tar.xz") {
+		t.Error("amd64 should pull the amd64 bundle")
 	}
 }
 

@@ -11,10 +11,11 @@ import (
 // scripts/aws-l2/cloud-init-*.tmpl (kept in sync there for the e2e ring).
 const kataVersion = "3.10.0"
 
-// kataArch maps a node arch to the kata-static release suffix.
+// kataArch maps a node arch to the kata-static release suffix. kata's static
+// tarballs use the GOARCH-style names (amd64, arm64) — NOT x86_64.
 func kataArch(arch string) string {
 	if arch == "amd64" {
-		return "x86_64"
+		return "amd64"
 	}
 	return "arm64"
 }

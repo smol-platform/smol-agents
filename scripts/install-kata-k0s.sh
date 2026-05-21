@@ -28,7 +28,7 @@ RESTART=${RESTART:-1} # set 0 to skip the k0s restart (apply drop-ins manually)
 [ "$(id -u)" = 0 ] || { echo "FATAL: run as root on the node" >&2; exit 1; }
 
 case "$(uname -m)" in
-x86_64) KARCH=x86_64 ;;
+x86_64) KARCH=amd64 ;;
 aarch64 | arm64) KARCH=arm64 ;;
 *) echo "FATAL: unsupported arch $(uname -m)" >&2; exit 1 ;;
 esac
