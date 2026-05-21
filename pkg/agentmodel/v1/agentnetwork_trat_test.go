@@ -25,7 +25,7 @@ func TestValidate_TraT_OK(t *testing.T) {
 
 func TestValidate_Credential_OK(t *testing.T) {
 	r := httpRes()
-	r.Credential = &CredentialInjection{Name: "github"}
+	r.Credential = &CredentialInjection{Name: "github", Scope: "github:repo:read"}
 	s := ipSpec(IdentityProxySpec{
 		Resources: []ResourceTarget{r},
 		TTS:       &TTSRef{URL: "https://tts/token", JWKSURL: "https://tts/jwks"},
@@ -59,7 +59,7 @@ func TestValidate_RequiresTTS(t *testing.T) {
 
 func TestValidate_Credential_RequiresJWKS(t *testing.T) {
 	r := httpRes()
-	r.Credential = &CredentialInjection{Name: "github"}
+	r.Credential = &CredentialInjection{Name: "github", Scope: "github:repo:read"}
 	s := ipSpec(IdentityProxySpec{Resources: []ResourceTarget{r}, TTS: &TTSRef{URL: "https://tts/token"}}) // no JWKSURL
 	mustErr(t, ValidateAgentNetwork(s), "tts.jwksUrl is required")
 }

@@ -89,6 +89,10 @@ type TraTInjection struct {
 type CredentialInjection struct {
 	// Name is the broker credential/policy key (e.g. "github").
 	Name string `json:"name"`
+	// Scope is the RFC 8693 transaction intent of the authorizing TraT the
+	// broker verifies before minting. This TraT is internal-only (never sent
+	// to the upstream). R-SEGR-AUTH-1.
+	Scope string `json:"scope"`
 	// Header overrides where the value is placed; default "Authorization".
 	// +optional
 	Header string `json:"header,omitempty"`
@@ -320,6 +324,9 @@ func validateIdentityProxy(p IdentityProxySpec) []error {
 			}
 			if r.Credential.Name == "" {
 				errs = append(errs, fmt.Errorf("resources[%d].credential.name is required", i))
+			}
+			if r.Credential.Scope == "" {
+				errs = append(errs, fmt.Errorf("resources[%d].credential.scope is required", i))
 			}
 		}
 	}

@@ -18,7 +18,22 @@ import (
 
 	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 	"github.com/stigen/smol-agents/pkg/identity"
+	"github.com/stigen/smol-agents/pkg/trat"
 )
+
+// CredentialMinter mints a provider credential authorized by a TraT (the
+// broker verifies the TraT). The agentnet sidecar wires this to the secret
+// broker (secrets.Client.Mint). The agent never sees the returned value.
+type CredentialMinter interface {
+	Mint(ctx context.Context, name, compactTraT string) (value []byte, expiry time.Time, err error)
+}
+
+func orStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
 
 // HTTPProxy is a per-resource reverse proxy that injects a JWT-SVID
 // into every upstream request. Implements R-AN-PROXY-2.
@@ -30,6 +45,16 @@ type HTTPProxy struct {
 	// JWTFetcher is optional; default uses the identity source's
 	// JWTSource. Tests inject fakes.
 	JWTFetcher func(ctx context.Context, audience string) (string, error)
+
+	// TraTMinter mints Txn-Tokens for resources with a TraT/Credential
+	// injection (optional; required only for those resources). R-SEGR-MINT-1.
+	TraTMinter trat.Minter
+	// Broker mints provider credentials for Credential resources, authorized
+	// by an internal TraT (optional; secretless egress). R-SEGR-INJECT-1.
+	Broker CredentialMinter
+	// TraTAudience is the trust-domain audience used for minted TraTs when a
+	// resource does not pin its own. R-SEGR-AUTH-1.
+	TraTAudience string
 
 	mu  sync.Mutex
 	srv *http.Server
@@ -67,15 +92,54 @@ func (p *HTTPProxy) Run(ctx context.Context) error {
 	origDirector := rp.Director
 	rp.Director = func(r *http.Request) {
 		origDirector(r)
-		token, err := p.fetchJWT(r.Context())
-		if err != nil {
-			// Stamp a header so the ErrorHandler-equivalent (we use
-			// Transport below) can short-circuit.
-			r.Header.Set("X-Agentnet-JWT-Error", err.Error())
-			return
-		}
-		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("X-Agentnet-Resource", p.Resource.Name)
+
+		// A credential injection that targets Authorization owns that header
+		// (the agent's JWT-SVID identity must not clobber the minted secret).
+		cred := p.Resource.Credential
+		credOwnsAuth := cred != nil && orStr(cred.Header, "Authorization") == "Authorization"
+		if !credOwnsAuth {
+			token, err := p.fetchJWT(r.Context())
+			if err != nil {
+				// Stamp a header so the Transport below can short-circuit.
+				r.Header.Set("X-Agentnet-JWT-Error", err.Error())
+				return
+			}
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+
+		// Txn-Token injection: forward an internal TraT to an internal
+		// upstream that consumes it. R-SEGR-INJECT-1.
+		if t := p.Resource.TraT; t != nil {
+			compact, err := p.mintTraT(r.Context(), t.Scope, orStr(t.Audience, p.TraTAudience))
+			if err != nil {
+				r.Header.Set("X-Agentnet-TraT-Error", err.Error())
+				return
+			}
+			r.Header.Set(orStr(t.Header, trat.Header), compact)
+		}
+
+		// Secretless credential injection: mint an authorizing TraT (internal
+		// only, never sent upstream), ask the broker to mint the provider
+		// credential, then inject it. The agent never sees the value.
+		// R-SEGR-INJECT-1 / R-SEGR-SEC-1.
+		if cred != nil {
+			if p.Broker == nil {
+				r.Header.Set("X-Agentnet-Cred-Error", "no broker configured")
+				return
+			}
+			authz, err := p.mintTraT(r.Context(), cred.Scope, p.TraTAudience)
+			if err != nil {
+				r.Header.Set("X-Agentnet-Cred-Error", "trat: "+err.Error())
+				return
+			}
+			value, _, err := p.Broker.Mint(r.Context(), cred.Name, authz)
+			if err != nil {
+				r.Header.Set("X-Agentnet-Cred-Error", "mint: "+err.Error())
+				return
+			}
+			r.Header.Set(orStr(cred.Header, "Authorization"), orStr(cred.Scheme, "Bearer")+" "+string(value))
+		}
 	}
 	rp.Transport = &jwtTransport{base: http.DefaultTransport, metrics: p.Metrics, resource: p.Resource.Name}
 
@@ -105,6 +169,14 @@ func (p *HTTPProxy) Run(ctx context.Context) error {
 		}
 		return err
 	}
+}
+
+// mintTraT mints a Txn-Token for scope/audience via the configured minter.
+func (p *HTTPProxy) mintTraT(ctx context.Context, scope, audience string) (string, error) {
+	if p.TraTMinter == nil {
+		return "", errors.New("agentnet/proxy: no TraT minter configured")
+	}
+	return p.TraTMinter.Token(ctx, trat.ExchangeParams{Scope: scope, Audience: audience})
 }
 
 // fetchJWT mints a JWT-SVID for the resource's audience.
@@ -142,16 +214,24 @@ type jwtTransport struct {
 }
 
 func (t *jwtTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if errMsg := req.Header.Get("X-Agentnet-JWT-Error"); errMsg != "" {
-		// Director couldn't mint a token. Surface 503 so the agent
-		// retries with backoff.
-		metricsOf(t.metrics).DialError(t.resource, "jwt:"+errMsg)
-		return &http.Response{
-			StatusCode: http.StatusServiceUnavailable,
-			Body:       http.NoBody,
-			Header:     http.Header{"X-Agentnet-Reason": {"jwt-svid-unavailable"}},
-			Request:    req,
-		}, nil
+	// The Director stamps an error header when it cannot mint a token or
+	// credential. Fail closed: surface 503 and never forward the request
+	// upstream (a missing credential must not become an anonymous call).
+	// R-SEGR-SEC-1.
+	for _, h := range []struct{ header, reason string }{
+		{"X-Agentnet-JWT-Error", "jwt-svid-unavailable"},
+		{"X-Agentnet-TraT-Error", "trat-unavailable"},
+		{"X-Agentnet-Cred-Error", "credential-unavailable"},
+	} {
+		if msg := req.Header.Get(h.header); msg != "" {
+			metricsOf(t.metrics).DialError(t.resource, h.reason+":"+msg)
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       http.NoBody,
+				Header:     http.Header{"X-Agentnet-Reason": {h.reason}},
+				Request:    req,
+			}, nil
+		}
 	}
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
