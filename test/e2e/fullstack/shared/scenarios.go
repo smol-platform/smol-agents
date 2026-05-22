@@ -271,21 +271,10 @@ func runProxyHTTP(t *testing.T, env Env) {
 		t.Fatalf("FetchJWTSVID: %v", err)
 	}
 
-	x509Src, err := workloadapi.NewX509Source(ctx,
-		workloadapi.WithClientOptions(workloadapi.WithAddr(socket)))
-	if err != nil {
-		t.Fatalf("x509 source: %v", err)
-	}
-	defer x509Src.Close()
-
-	httpClient := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			// fake-gateway HTTP listener uses an X509-SVID; trust
-			// the bundle from our SPIRE.
-			TLSClientConfig: tlsconfig.TLSClientConfig(x509Src, tlsconfig.AuthorizeAny()),
-		},
-	}
+	// The fake-gateway HTTP listener serves plain HTTP and authorizes by
+	// validating the JWT-SVID in the Authorization header (the in-cluster
+	// probe path dials http:// too) — no server TLS, so no X509 source here.
+	httpClient := &http.Client{Timeout: 10 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gwURL+"/billing/charge", nil)
 	if err != nil {

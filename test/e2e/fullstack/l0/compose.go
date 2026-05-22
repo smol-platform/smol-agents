@@ -43,7 +43,7 @@ func composeUp(ctx context.Context) (*composeEnv, error) {
 		socketDir:   filepath.Join(os.TempDir(), "smol-agents-e2e-l0-spire-sockets"),
 		endpoints: map[string]string{
 			"fake-llm":          "http://127.0.0.1:18080",
-			"fake-gateway-http": "https://127.0.0.1:18081",
+			"fake-gateway-http": "http://127.0.0.1:18081",
 			"fake-gateway-tcp":  "127.0.0.1:18443",
 			"wg-hub":            "127.0.0.1:51820",
 		},
