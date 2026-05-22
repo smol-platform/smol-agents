@@ -469,8 +469,16 @@ func (g *Gateway) doMergeFS(
 	}
 
 	onConflict := jsonStr(args["onConflict"])
-	// Per-retriever policy restriction (Phase 2 per-retriever enforcement is
-	// wired here in advance; empty AllowedMergePolicies = allow all).
+	// Apply DefaultMergePolicy when request omits onConflict. This must happen
+	// before the AllowedMergePolicies restriction check so that the effective
+	// policy (after default fill-in) is what is evaluated.
+	if onConflict == "" && info.Spec.DefaultMergePolicy != "" {
+		onConflict = info.Spec.DefaultMergePolicy
+	}
+	// Per-retriever policy restriction: reject if the effective onConflict is
+	// not in the allow-list. Empty AllowedMergePolicies = allow all.
+	// An empty effective onConflict (no default, caller omitted) is treated as
+	// "fail" by the backend; we allow it through (fail is the safe default).
 	if len(info.Spec.AllowedMergePolicies) > 0 && onConflict != "" {
 		allowed := false
 		for _, p := range info.Spec.AllowedMergePolicies {
@@ -485,10 +493,6 @@ func (g *Gateway) doMergeFS(
 				fmt.Sprintf("onConflict=%q not in retriever AllowedMergePolicies", onConflict),
 				memory.KindPermissionDenied)
 		}
-	}
-	// Apply DefaultMergePolicy when request omits onConflict.
-	if onConflict == "" && info.Spec.DefaultMergePolicy != "" {
-		onConflict = info.Spec.DefaultMergePolicy
 	}
 
 	var dryRun bool
