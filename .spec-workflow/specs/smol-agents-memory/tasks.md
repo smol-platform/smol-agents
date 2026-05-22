@@ -103,10 +103,9 @@ Builds on **smol-agents-operator** (reconcile spine), **smol-agents-agent-model*
 - [x] `summarize_memory` (worker retrieve+LLM via ModelProvider; fake for tests)
 - [x] graph / KV / eventlog backend adapters (neo4j/redis/in-mem); `memory://episodes/{agentId}`
 - [x] TraT-required mutations (R-MEM-AUTH-3) — gateway verifies a `trat` arg, subject-bound, fail-closed
-- [x] AgentFS branch merge (fast-forward publish) + the `Merge` Backend op + `merge_memory_fs` tool
+- [x] AgentFS branch merge: **3-way** (file-level + in-tree diff3 hunk-merge) with fail/ours/theirs/markers/union conflict policies, fork-manifest merge-base, atomic commit + dryRun, per-retriever policy restrictions; `spec/quint/memory_merge.qnt` invariant
 - [x] stdio MCP transport; LRU embedding cache
 - [x] gRPC transport (proto + buf + adapter + round-trip tests) AND runtime selector wired into both binaries (`--transport=grpc` worker, `--worker-transport=grpc` gateway); e2e verified over gRPC/mTLS at L1
 
 ## Remaining polish (tracked)
-- [ ] 3-way branch merge + conflict policy (only fast-forward today)
 - [ ] live-infra integration tests for pgvector/qdrant/neo4j/redis/S3/LLM (adapters unit-tested with fakes; integration tests build-tagged + skipped without endpoints)
