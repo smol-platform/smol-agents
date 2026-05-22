@@ -21,6 +21,60 @@ import (
 	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 )
 
+// memoryFSRetriever resolves a MemoryRetriever by name in the same namespace as
+// the run and returns its filesystem mount input for AttachMemoryFS. It returns
+// (zero, false, nil) when no retriever ref is set. It returns (zero, false, err)
+// on a hard API error, and (zero, false, nil) for NotFound (treated as Pending).
+func memoryFSRetriever(
+	ctx context.Context,
+	c client.Reader,
+	run *amv1.AgentRun,
+) (builders.MemoryMountInput, bool, error) {
+	ref := run.Spec.MemoryRetrieverRef
+	if ref == "" {
+		return builders.MemoryMountInput{}, false, nil
+	}
+
+	retriever := &amv1.MemoryRetriever{}
+	key := types.NamespacedName{Namespace: run.Namespace, Name: ref}
+	if err := c.Get(ctx, key, retriever); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Recoverable: the retriever may not exist yet; caller marks Pending.
+			return builders.MemoryMountInput{}, false, nil
+		}
+		return builders.MemoryMountInput{}, false, fmt.Errorf("get MemoryRetriever %q: %w", key, err)
+	}
+
+	// Only filesystem retrievers with mounting enabled produce a volume.
+	if retriever.Spec.Mount == nil || !retriever.Spec.Mount.Enabled {
+		return builders.MemoryMountInput{}, false, nil
+	}
+
+	// Resolve the first filesystem MemoryStore to get its AgentFSSpec.
+	var agentFS *pure.AgentFSSpec
+	for _, storeName := range retriever.Spec.Stores {
+		store := &amv1.MemoryStore{}
+		sk := types.NamespacedName{Namespace: run.Namespace, Name: storeName}
+		if err := c.Get(ctx, sk, store); err != nil {
+			continue // tolerate missing stores; skip non-filesystem ones
+		}
+		if store.Spec.Kind == pure.MemoryStoreFilesystem && store.Spec.AgentFS != nil {
+			agentFS = store.Spec.AgentFS
+			break
+		}
+	}
+	if agentFS == nil {
+		// Retriever references no filesystem store — nothing to mount.
+		return builders.MemoryMountInput{}, false, nil
+	}
+
+	input := builders.MemoryMountInput{
+		AgentFS: agentFS,
+		Mount:   retriever.Spec.Mount,
+	}
+	return input, input.MountEnabled(), nil
+}
+
 // AgentRunReconciler turns an AgentRun CR into a Pod and tracks its
 // lifecycle. State machine mirrors pure.Phase: Pending → Running →
 // Completed | Failed | Cancelled.
@@ -71,6 +125,22 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	err = r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod)
 	if apierrors.IsNotFound(err) {
 		desired := builders.BuildAgentRunPod(run, agent)
+
+		// Attach filesystem MemoryRetriever mount if referenced (R-MEM-FS-2).
+		mountInput, mountEnabled, mountErr := memoryFSRetriever(ctx, r.Client, run)
+		if mountErr != nil {
+			return ctrl.Result{}, fmt.Errorf("resolve memory retriever: %w", mountErr)
+		}
+		if mountEnabled {
+			builders.AttachMemoryFS(desired, mountInput)
+			logger.Info("attached memory AgentFS volume", "retriever", run.Spec.MemoryRetrieverRef)
+		} else if run.Spec.MemoryRetrieverRef != "" && !mountEnabled {
+			// Retriever referenced but not yet resolvable — stay Pending.
+			r.markPending(run, "MemoryRetrieverPending",
+				fmt.Sprintf("MemoryRetriever %q not ready for mounting", run.Spec.MemoryRetrieverRef))
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.Status().Update(ctx, run)
+		}
+
 		if err := ctrl.SetControllerReference(run, desired, r.Scheme); err != nil {
 			return ctrl.Result{}, fmt.Errorf("set controller ref: %w", err)
 		}

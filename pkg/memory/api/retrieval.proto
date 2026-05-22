@@ -1,0 +1,211 @@
+syntax = "proto3";
+
+// Package retrieval is the internal gRPC API between the memory-mcp gateway
+// (client) and the retrieval workers (server).
+//
+// Wire format: gRPC over mTLS (steering requirement). Every request carries a
+// RequestIdentity so the worker can perform defence-in-depth re-checks
+// (R-MEM-WORK-1, R-MEM-AUTH-1). Errors are surfaced as gRPC status codes
+// mapped to the memory.Kind typed error set (R-MEM-SEC-1 fail-closed).
+//
+// Generated Go: pkg/memory/api/grpc/ via buf.gen.yaml.
+//   buf generate     (from pkg/memory/api/)
+package retrieval.v1;
+
+option go_package = "github.com/stigen/smol-agents/pkg/memory/api/grpc;retrievalpb";
+
+// ── Identity header (embedded in every request) ──────────────────────────────
+
+// RequestIdentity carries the gateway-derived identity fields included in
+// every worker request. The worker validates these before dispatching.
+message RequestIdentity {
+  // tenant is derived from the caller's SPIFFE identity by the gateway.
+  string tenant = 1;
+
+  // namespace is the memory namespace the operation targets.
+  string namespace = 2;
+
+  // caller_spiffe_id is the full SPIFFE URI of the authenticated caller.
+  string caller_spiffe_id = 3;
+
+  // retriever_ref is the namespace-qualified name of the MemoryRetriever CR
+  // (e.g. "team-alpha/prod-knowledge").
+  string retriever_ref = 4;
+}
+
+// ── Shared sub-messages ───────────────────────────────────────────────────────
+
+// Document is the atomic unit of storage across all backend kinds.
+message Document {
+  string id = 1;
+  string namespace = 2;
+  string tenant = 3;
+  bytes content = 4;
+  string path = 5;
+  map<string, string> metadata = 6;
+  repeated float embedding = 7;
+  string version = 8;
+  int64 created_at_unix = 9;
+  int64 updated_at_unix = 10;
+}
+
+// Chunk is a sub-document produced by the chunking stage.
+message Chunk {
+  int32 index = 1;
+  string text = 2;
+  repeated float embedding = 3;
+  string document_id = 4;
+  int32 start_byte = 5;
+  int32 end_byte = 6;
+}
+
+// ScoredChunk pairs a Chunk with its relevance score.
+message ScoredChunk {
+  Chunk chunk = 1;
+  float score = 2;
+}
+
+// Filter carries predicate pushdown hints.
+message Filter {
+  string namespace = 1;
+  string tenant = 2;
+  map<string, string> metadata = 3;
+}
+
+// BranchInfo describes one branch in a filesystem store.
+message BranchInfo {
+  string name = 1;
+  string base = 2;
+  int64 created_at_unix = 3;
+  int64 committed_at_unix = 4;
+  int64 discarded_at_unix = 5;
+}
+
+// SnapshotInfo describes a point-in-time snapshot of a filesystem branch.
+message SnapshotInfo {
+  string id = 1;
+  string branch = 2;
+  int64 created_at_unix = 3;
+  int64 size_bytes = 4;
+}
+
+// ── Retrieve ─────────────────────────────────────────────────────────────────
+
+message RetrieveRequest {
+  RequestIdentity identity = 1;
+  string query = 2;
+  int32 top_k = 3;
+  Filter filters = 4;
+  string store_ref = 5;
+}
+
+message RetrieveResponse {
+  repeated ScoredChunk chunks = 1;
+  int64 total = 2;
+}
+
+// ── Write ─────────────────────────────────────────────────────────────────────
+
+message WriteRequest {
+  RequestIdentity identity = 1;
+  Document document = 2;
+  string trat = 3;
+}
+
+message WriteResponse {
+  string id = 1;
+  string version = 2;
+}
+
+// ── Get ───────────────────────────────────────────────────────────────────────
+
+message GetRequest {
+  RequestIdentity identity = 1;
+  string id = 2;
+}
+
+message GetResponse {
+  Document document = 1;
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+
+message DeleteRequest {
+  RequestIdentity identity = 1;
+  string id = 2;
+  string trat = 3;
+}
+
+message DeleteResponse {}
+
+// ── ListNamespaces ────────────────────────────────────────────────────────────
+
+message ListNamespacesRequest {
+  RequestIdentity identity = 1;
+}
+
+message ListNamespacesResponse {
+  repeated string namespaces = 1;
+}
+
+// ── Summarize ─────────────────────────────────────────────────────────────────
+
+message SummarizeRequest {
+  RequestIdentity identity = 1;
+  string query = 2;
+}
+
+message SummarizeResponse {
+  string summary = 1;
+}
+
+// ── BranchFS ──────────────────────────────────────────────────────────────────
+
+message BranchFSRequest {
+  RequestIdentity identity = 1;
+  string base_branch = 2;
+  string new_branch = 3;
+}
+
+message BranchFSResponse {
+  BranchInfo branch = 1;
+}
+
+// ── SnapshotFS ────────────────────────────────────────────────────────────────
+
+message SnapshotFSRequest {
+  RequestIdentity identity = 1;
+  string branch = 2;
+}
+
+message SnapshotFSResponse {
+  SnapshotInfo snapshot = 1;
+}
+
+// ── ListBranches ──────────────────────────────────────────────────────────────
+
+message ListBranchesRequest {
+  RequestIdentity identity = 1;
+}
+
+message ListBranchesResponse {
+  repeated BranchInfo branches = 1;
+}
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+// RetrievalService is the internal gRPC service implemented by retrieval workers
+// and called by the memory-mcp gateway. It mirrors the api.RetrievalService Go
+// interface exactly; the generated Go client/server satisfy that interface via
+// the adapter layer in pkg/memory/api/grpc/adapter.go.
+service RetrievalService {
+  rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+  rpc Summarize(SummarizeRequest) returns (SummarizeResponse);
+  rpc BranchFS(BranchFSRequest) returns (BranchFSResponse);
+  rpc SnapshotFS(SnapshotFSRequest) returns (SnapshotFSResponse);
+  rpc ListBranches(ListBranchesRequest) returns (ListBranchesResponse);
+}

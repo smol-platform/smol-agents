@@ -1,0 +1,12 @@
+version: v2
+modules:
+  - path: .
+    name: buf.build/stigen/smol-agents-memory
+lint:
+  use:
+    - STANDARD
+  except:
+    - FIELD_NOT_REQUIRED  # request/response fields are intentionally optional
+breaking:
+  use:
+    - FILE
