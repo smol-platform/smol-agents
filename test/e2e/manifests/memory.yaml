@@ -58,6 +58,7 @@ spec:
             - "-addr=:8444"
             - "-backend=vector-inmem"
             - "-embed-fake-dims=64"
+            - "-transport=grpc"                                        # gRPC/mTLS internal transport
             - "-identity-mode=strict"                                  # mTLS server
             - "-spire-socket=unix:///run/spire/agent-sockets/api.sock"
           ports: [{ name: http, containerPort: 8444 }]
@@ -96,7 +97,8 @@ spec:
           imagePullPolicy: Never
           args:
             - "-listen=:8443"
-            - "-worker-url=https://memory-worker.tenant-a.svc.cluster.local:8444"  # mTLS
+            - "-worker-url=https://memory-worker.tenant-a.svc.cluster.local:8444"  # mTLS (scheme stripped for gRPC target)
+            - "-worker-transport=grpc"                                              # gRPC/mTLS to the worker
             - "-retrievers-config=/etc/memory/retrievers.json"
             - "-spire-socket=unix:///run/spire/agent-sockets/api.sock"
             - "-trust-domain=stigen.ai"

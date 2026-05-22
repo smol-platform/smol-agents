@@ -37,10 +37,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	grpcinsecure "google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -49,7 +54,9 @@ import (
 	operatorv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
 	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 	"github.com/stigen/smol-agents/pkg/identity"
+	"github.com/stigen/smol-agents/pkg/memory"
 	"github.com/stigen/smol-agents/pkg/memory/api"
+	apigrpc "github.com/stigen/smol-agents/pkg/memory/api/grpc"
 	"github.com/stigen/smol-agents/pkg/memory/audit"
 	"github.com/stigen/smol-agents/pkg/memory/mcp"
 	"github.com/stigen/smol-agents/pkg/memory/quota"
@@ -60,6 +67,7 @@ func main() {
 	transport := flag.String("transport", "http", `transport mode: "http" or "stdio"`)
 	listen := flag.String("listen", ":8443", "bind address (HTTP transport)")
 	workerURL := flag.String("worker-url", "", "base URL of the retrieval worker (required when not using k8s store with per-retriever URLs)")
+	workerTransport := flag.String("worker-transport", "http", "transport to the worker: http|grpc (both mTLS unless --insecure)")
 	audience := flag.String("audience", "", "expected JWT-SVID audience (empty=any)")
 	trustDomain := flag.String("trust-domain", "", "expected SPIFFE trust domain (empty=any)")
 	insecure := flag.Bool("insecure", false, "skip JWT signature verification + call worker over plain HTTP (dev/test only)")
@@ -167,9 +175,18 @@ func main() {
 		AuditLog:   &audit.SlogLogger{Logger: log},
 	}
 
+	if *workerTransport != "http" && *workerTransport != "grpc" {
+		log.Error("--worker-transport must be http or grpc", slog.String("got", *workerTransport))
+		os.Exit(1)
+	}
+
 	if *insecure {
-		log.Warn("memory-mcp: INSECURE mode — JWT signatures not verified, worker called over plain HTTP")
-		// BundleSource nil → ParseInsecure; default WorkerFactory → plain HTTP.
+		log.Warn("memory-mcp: INSECURE mode — JWT signatures not verified")
+		// BundleSource nil → ParseInsecure.
+		if *workerTransport == "grpc" {
+			gw.WorkerFactory = grpcWorkerFactory(grpcinsecure.NewCredentials(), log)
+			log.Warn("memory-mcp: worker transport gRPC over INSECURE (no mTLS)")
+		} // else: default WorkerFactory → plain HTTP.
 	} else {
 		// Secure transport: validate inbound JWT-SVIDs against the SPIRE JWT
 		// bundle (R-MEM-AUTH-1) and call the worker over mTLS with our X509-SVID.
@@ -184,14 +201,15 @@ func main() {
 		}
 		defer src.Close()
 		authCfg.BundleSource = src.JWTSource()
-		mtls := &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: tlsconfig.MTLSClientConfig(src.X509Source(), src.X509Source(), tlsconfig.AuthorizeAny()),
-			},
+		mtlsClient := tlsconfig.MTLSClientConfig(src.X509Source(), src.X509Source(), tlsconfig.AuthorizeAny())
+		if *workerTransport == "grpc" {
+			gw.WorkerFactory = grpcWorkerFactory(credentials.NewTLS(mtlsClient), log)
+			log.Info("memory-mcp: secure transport (JWT-SVID validation + gRPC/mTLS to worker)")
+		} else {
+			httpc := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: mtlsClient}}
+			gw.WorkerFactory = func(url string) api.RetrievalService { return api.NewHTTPClient(url, httpc) }
+			log.Info("memory-mcp: secure transport (JWT-SVID validation + HTTP/mTLS to worker)")
 		}
-		gw.WorkerFactory = func(url string) api.RetrievalService { return api.NewHTTPClient(url, mtls) }
-		log.Info("memory-mcp: secure transport (JWT-SVID validation + mTLS to worker)")
 	}
 	gw.Auth = authCfg
 
@@ -243,3 +261,75 @@ func main() {
 		log.Error("memory-mcp: shutdown error", slog.Any("err", err))
 	}
 }
+
+// grpcWorkerFactory returns a Gateway.WorkerFactory that dials each worker URL
+// over gRPC (with the given mTLS or insecure creds) and caches one client per
+// target. grpc.NewClient is lazy, so the conn is created once and reused.
+func grpcWorkerFactory(creds credentials.TransportCredentials, log *slog.Logger) func(string) api.RetrievalService {
+	var mu sync.Mutex
+	cache := map[string]api.RetrievalService{}
+	return func(url string) api.RetrievalService {
+		target := grpcTarget(url)
+		mu.Lock()
+		defer mu.Unlock()
+		if c, ok := cache[target]; ok {
+			return c
+		}
+		conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(creds))
+		if err != nil {
+			log.Error("memory-mcp: grpc.NewClient", slog.String("target", target), slog.Any("err", err))
+			return brokenWorker{err: err} // fail-closed; never a nil RetrievalService
+		}
+		c := apigrpc.NewGRPCClient(conn)
+		cache[target] = c
+		return c
+	}
+}
+
+// grpcTarget strips an http(s):// scheme from a worker URL for gRPC dialing.
+func grpcTarget(url string) string {
+	if i := strings.Index(url, "://"); i >= 0 {
+		return url[i+3:]
+	}
+	return url
+}
+
+// brokenWorker is returned when a gRPC client conn can't be created (rare —
+// only on a malformed target). Every call fails closed (R-MEM-SEC-1).
+type brokenWorker struct{ err error }
+
+func (b brokenWorker) fail() error {
+	return memory.BackendUnavailable("worker gRPC client unavailable: " + b.err.Error())
+}
+func (b brokenWorker) Retrieve(context.Context, *api.RetrieveRequest) (*api.RetrieveResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) Write(context.Context, *api.WriteRequest) (*api.WriteResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) Get(context.Context, *api.GetRequest) (*api.GetResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) Delete(context.Context, *api.DeleteRequest) (*api.DeleteResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) ListNamespaces(context.Context, *api.ListNamespacesRequest) (*api.ListNamespacesResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) Summarize(context.Context, *api.SummarizeRequest) (*api.SummarizeResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) BranchFS(context.Context, *api.BranchFSRequest) (*api.BranchFSResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) SnapshotFS(context.Context, *api.SnapshotFSRequest) (*api.SnapshotFSResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) ListBranches(context.Context, *api.ListBranchesRequest) (*api.ListBranchesResponse, error) {
+	return nil, b.fail()
+}
+func (b brokenWorker) MergeFS(context.Context, *api.MergeFSRequest) (*api.MergeFSResponse, error) {
+	return nil, b.fail()
+}
+
+var _ api.RetrievalService = brokenWorker{}

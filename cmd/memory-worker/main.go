@@ -49,17 +49,22 @@ import (
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+
 	"github.com/stigen/smol-agents/pkg/agentfs"
 	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 	"github.com/stigen/smol-agents/pkg/identity"
 	"github.com/stigen/smol-agents/pkg/memory"
 	"github.com/stigen/smol-agents/pkg/memory/api"
+	apigrpc "github.com/stigen/smol-agents/pkg/memory/api/grpc"
 	"github.com/stigen/smol-agents/pkg/memory/worker"
 	"github.com/stigen/smol-agents/pkg/secrets"
 )
 
 func main() {
 	addr := flag.String("addr", ":8444", "listener address")
+	transport := flag.String("transport", "http", "internal transport: http|grpc (both over mTLS in non-insecure mode)")
 	backendKind := flag.String("backend", "vector-inmem", "backend kind: vector-inmem|agentfs|pgvector|qdrant|redis|neo4j|eventlog")
 	backendEndpoint := flag.String("backend-endpoint", "", "backend DSN/address (pgvector: DSN, qdrant: host:port, redis: host:port, neo4j: bolt URI)")
 	backendAuthSecret := flag.String("backend-auth-secret", "", "broker secret for backend credentials (format: user:password for neo4j, password-only for redis)")
@@ -298,24 +303,26 @@ func main() {
 		svc.WithSummarizer(summ)
 	}
 
-	// ── mTLS listener ────────────────────────────────────────────────────────
+	if *transport != "http" && *transport != "grpc" {
+		logger.Error("--transport must be http or grpc", "got", *transport)
+		os.Exit(2)
+	}
+
+	// ── Listener + (optional) mTLS ─────────────────────────────────────────────
 	mode, err := identity.ParseMode(*identityMode)
 	if err != nil {
 		logger.Error("identity mode", "err", err)
 		os.Exit(2)
 	}
-
-	var ln net.Listener
-	switch mode {
-	case identity.ModeInsecure:
-		ln, err = net.Listen("tcp", *addr)
-		if err != nil {
-			logger.Error("listen (insecure)", "addr", *addr, "err", err)
-			os.Exit(1)
-		}
+	rawLn, err := net.Listen("tcp", *addr)
+	if err != nil {
+		logger.Error("listen", "addr", *addr, "err", err)
+		os.Exit(1)
+	}
+	var tlsCfg *tls.Config // nil ⇒ insecure (no mTLS)
+	if mode == identity.ModeInsecure {
 		logger.Warn("running without mTLS — insecure mode", "addr", *addr)
-
-	default: // permissive or strict
+	} else {
 		idSrc, srcErr := identity.Open(ctx, identity.SourceConfig{
 			WorkloadAPIAddr: *spireSocket,
 			BootTimeout:     30 * time.Second,
@@ -326,40 +333,44 @@ func main() {
 			os.Exit(1)
 		}
 		defer func() { _ = idSrc.Close() }()
-
-		tlsCfg := tlsconfig.MTLSServerConfig(
-			idSrc.X509Source(),
-			idSrc.X509Source(),
-			tlsconfig.AuthorizeAny(), // gateway identity is checked at deploy time via NetworkPolicy/RBAC
+		tlsCfg = tlsconfig.MTLSServerConfig(
+			idSrc.X509Source(), idSrc.X509Source(),
+			tlsconfig.AuthorizeAny(), // peer identity gated at deploy time (NetworkPolicy/RBAC)
 		)
-		rawLn, listenErr := net.Listen("tcp", *addr)
-		if listenErr != nil {
-			logger.Error("listen", "addr", *addr, "err", listenErr)
+		logger.Info("mTLS enabled", "mode", mode)
+	}
+
+	// ── Serve (gRPC or HTTP, same RetrievalService over the same mTLS) ─────────
+	if *transport == "grpc" {
+		var opts []grpc.ServerOption
+		if tlsCfg != nil {
+			opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+		}
+		grpcSrv := apigrpc.NewGRPCServer(svc, opts...)
+		go func() { <-ctx.Done(); logger.Info("shutting down (grpc)"); grpcSrv.GracefulStop() }()
+		logger.Info("memory-worker ready", "addr", *addr, "transport", "grpc", "backend", *backendKind)
+		if serveErr := grpcSrv.Serve(rawLn); serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+			logger.Error("serve grpc", "err", serveErr)
 			os.Exit(1)
 		}
+		return
+	}
+
+	ln := rawLn
+	if tlsCfg != nil {
 		ln = tls.NewListener(rawLn, tlsCfg)
-		logger.Info("mTLS listener ready", "addr", *addr, "mode", mode)
 	}
-
-	// ── HTTP server ──────────────────────────────────────────────────────────
-	handler := api.NewHTTPServer(svc)
-	srv := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-
-	// Shut down the listener when the signal context is cancelled.
+	srv := &http.Server{Handler: api.NewHTTPServer(svc), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
-		logger.Info("shutting down")
+		logger.Info("shutting down (http)")
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer shutCancel()
 		_ = srv.Shutdown(shutCtx)
 	}()
-
-	logger.Info("memory-worker ready", "addr", *addr, "backend", *backendKind)
+	logger.Info("memory-worker ready", "addr", *addr, "transport", "http", "backend", *backendKind)
 	if serveErr := srv.Serve(ln); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-		logger.Error("serve", "err", serveErr)
+		logger.Error("serve http", "err", serveErr)
 		os.Exit(1)
 	}
 }

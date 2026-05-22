@@ -105,9 +105,8 @@ Builds on **smol-agents-operator** (reconcile spine), **smol-agents-agent-model*
 - [x] TraT-required mutations (R-MEM-AUTH-3) — gateway verifies a `trat` arg, subject-bound, fail-closed
 - [x] AgentFS branch merge (fast-forward publish) + the `Merge` Backend op + `merge_memory_fs` tool
 - [x] stdio MCP transport; LRU embedding cache
-- [x] gRPC transport (proto + buf + adapter + round-trip tests) — drop-in for the RetrievalService contract
+- [x] gRPC transport (proto + buf + adapter + round-trip tests) AND runtime selector wired into both binaries (`--transport=grpc` worker, `--worker-transport=grpc` gateway); e2e verified over gRPC/mTLS at L1
 
 ## Remaining polish (tracked)
-- [ ] gRPC runtime selector in the cmd binaries (transport is built+tested; binaries default to HTTP/mTLS, the e2e-verified path)
 - [ ] 3-way branch merge + conflict policy (only fast-forward today)
 - [ ] live-infra integration tests for pgvector/qdrant/neo4j/redis/S3/LLM (adapters unit-tested with fakes; integration tests build-tagged + skipped without endpoints)
