@@ -12,7 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags '-s -w' -o /out/ebpf-probe ./cmd/ebpf-probe
 

@@ -131,7 +131,32 @@ suite — the cost adds up across active PRs. Recommended cadence:
 - `make e2e-l2` on `main` once per day (cron-driven workflow)
 - `make e2e-l2` manually before tagging a release
 
-The GitHub workflow lives in `.github/workflows/e2e-l2.yml`.
+The GitHub workflow lives in `.github/workflows/e2e.yml` (the `l2` and
+`l2-smoke` jobs).
+
+### Required GitHub Actions configuration
+
+The `l2` / `l2-smoke` jobs assume the AWS workload-identity + bundle
+infrastructure exists **and** that the repository (or its org) exposes the
+following under **Settings → Secrets and variables → Actions**. These do
+**not** transfer when a repo is migrated or forked — a freshly moved repo
+must set them again:
+
+| Kind | Name | Value | Source |
+|---|---|---|---|
+| Secret | `STIGEN_AWS_ACCOUNT_ID` | 12-digit AWS account id of the sandbox account | the account hosting the e2e role |
+| Variable | `L2_ARTIFACT_BUCKET` | S3 bucket for manifest bundles | `terraform -chdir=infra/terraform/aws-e2e output -raw artifact_bucket` |
+| Variable | `L2_ECR_REGISTRY` | ECR registry host | `terraform -chdir=infra/terraform/aws-e2e output -raw ecr_registry` |
+
+The jobs also assume an IAM role **`smol-agents-e2e-runner`** in that
+account whose trust policy allows this repo via GitHub OIDC
+(`token.actions.githubusercontent.com`, `sub: repo:<org>/<repo>:*`). The
+Terraform module in `infra/terraform/aws-e2e/` provisions the role, bucket,
+ECR registry, sweeper Lambda, and budget alarm — apply it once per account.
+
+Symptom when unset: the `l2` job fails at **"configure AWS credentials via
+OIDC"** with an empty role ARN (`arn:aws:iam:::role/smol-agents-e2e-runner`).
+The `l0`, `l1`, and `coverage-gate` jobs need none of this AWS config.
 
 ## When to drop down to L1
 
