@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/stigen/smol-agents/pkg/memory/policy"
 	"github.com/stigen/smol-agents/pkg/memory/quota"
 	"github.com/stigen/smol-agents/pkg/memory/store"
+	"github.com/stigen/smol-agents/pkg/trat"
 )
 
 // Gateway is the memory-mcp business logic layer. It validates identity,
@@ -21,8 +23,29 @@ import (
 // internal api.RetrievalService. It implements the mcp.Handler interface.
 //
 // Design: thin gateway — no embedding, chunking, ranking, or storage.
-// Implements R-MEM-MCP-3, R-MEM-AUTH-1, R-MEM-AUTH-2, R-MEM-QUOTA-1,
-// R-MEM-AUDIT-1, R-MEM-SEC-1.
+// Implements R-MEM-MCP-3, R-MEM-AUTH-1, R-MEM-AUTH-2, R-MEM-AUTH-3,
+// R-MEM-QUOTA-1, R-MEM-AUDIT-1, R-MEM-SEC-1.
+//
+// TraT-gated mutations (R-MEM-AUTH-3):
+//
+// When a MemoryRetriever has MutationsTraT=true, write_memory and delete_memory
+// require the caller to include a valid Transaction Token in the tool arguments
+// as the field "trat" (a string containing the compact JWT).  The gateway verifies
+// the TraT via TratVerifier before forwarding to the worker.  If TratVerifier is
+// nil and MutationsTraT=true, mutations are rejected (fail-closed).
+//
+// The caller (agent or IDE) obtains the TraT from the agentnet sidecar via the
+// standard RFC 8693 token-exchange endpoint (smol-agents-trat-egress), then
+// passes it as:
+//
+//	{
+//	  "content": "...",
+//	  "retrieverRef": "ns/name",
+//	  "trat": "<compact JWT>"
+//	}
+//
+// In stdio transport mode the TraT is passed the same way (field in tool args);
+// the local identity provides the subject.
 type Gateway struct {
 	// Auth configures JWT-SVID validation.
 	Auth AuthConfig
@@ -42,6 +65,12 @@ type Gateway struct {
 
 	// AuditLog receives one Record per call.
 	AuditLog audit.Logger
+
+	// TratVerifier verifies Transaction Tokens for mutation operations.
+	// Required when any MemoryRetriever may have MutationsTraT=true.
+	// When nil and MutationsTraT=true on a retriever, mutations are rejected
+	// fail-closed (R-MEM-AUTH-3, R-MEM-SEC-1).
+	TratVerifier trat.Verifier
 }
 
 // HandleToolCall implements Handler. It is the central dispatch point for all
@@ -160,7 +189,12 @@ func (g *Gateway) HandleResourceRead(r *http.Request, uri string) (ResourceReadR
 		return g.readRetriever(r, caller, path[len("retrievers/"):], start)
 
 	case strings.HasPrefix(path, "episodes/"):
-		return g.readEpisodes(r, caller, path[len("episodes/"):], start)
+		// The agentId may be followed by a query string embedded in the MCP URI,
+		// e.g. "memory://episodes/agent-abc?retrieverRef=ns/name".
+		// We parse it here so the implementation receives clean agentId + retrieverRef.
+		rawSeg := path[len("episodes/"):]
+		agentID, retrieverRef := parseEpisodesSegment(rawSeg, r)
+		return g.readEpisodes(r, caller, agentID, retrieverRef, start)
 
 	default:
 		_, rpcErr := errResult(CodeNotFound, "unknown resource path: "+path)
@@ -240,6 +274,12 @@ func (g *Gateway) doWrite(
 			CodePermissionDenied, err.Error(), memory.KindPermissionDenied)
 	}
 
+	// R-MEM-AUTH-3: when the retriever requires a TraT for mutations, verify it.
+	tratCompact, rpcErr := g.requireTrat(r, caller, "write_memory", identity.RetrieverRef, identity.Namespace, info.Spec.MutationsTraT, args, start)
+	if rpcErr != nil {
+		return ToolCallResult{}, rpcErr
+	}
+
 	content := jsonStr(args["content"])
 	if content == "" {
 		return g.deny(r, caller, "write_memory", identity.RetrieverRef, identity.Namespace, start,
@@ -254,16 +294,13 @@ func (g *Gateway) doWrite(
 
 	doc := memory.Document{
 		ID:        jsonStr(args["id"]),
-		Namespace: caller.Tenant + "/" + identity.Namespace, // partition key
+		Namespace: identity.Namespace,
 		Tenant:    caller.Tenant,
 		Content:   payload,
 		Metadata:  jsonMetadata(args["metadata"]),
 	}
-	// Override namespace and tenant from the gateway-derived identity.
-	doc.Namespace = identity.Namespace
-	doc.Tenant = caller.Tenant
 
-	req := &api.WriteRequest{Identity: identity, Document: doc}
+	req := &api.WriteRequest{Identity: identity, Document: doc, TraT: tratCompact}
 	resp, err := worker.Write(r.Context(), req)
 	if err != nil {
 		return g.denyWorkerError(r, caller, "write_memory", identity.RetrieverRef, identity.Namespace, start, err)
@@ -351,13 +388,19 @@ func (g *Gateway) doDelete(
 			CodePermissionDenied, err.Error(), memory.KindPermissionDenied)
 	}
 
+	// R-MEM-AUTH-3: when the retriever requires a TraT for mutations, verify it.
+	tratCompact, rpcErr := g.requireTrat(r, caller, "delete_memory", identity.RetrieverRef, identity.Namespace, info.Spec.MutationsTraT, args, start)
+	if rpcErr != nil {
+		return ToolCallResult{}, rpcErr
+	}
+
 	id := jsonStr(args["id"])
 	if id == "" {
 		return g.deny(r, caller, "delete_memory", identity.RetrieverRef, identity.Namespace, start,
 			CodeInvalidParams, "id is required", memory.KindInvalid)
 	}
 
-	req := &api.DeleteRequest{Identity: identity, ID: id}
+	req := &api.DeleteRequest{Identity: identity, ID: id, TraT: tratCompact}
 	if _, err := worker.Delete(r.Context(), req); err != nil {
 		return g.denyWorkerError(r, caller, "delete_memory", identity.RetrieverRef, identity.Namespace, start, err)
 	}
@@ -529,16 +572,170 @@ func (g *Gateway) readRetriever(_ *http.Request, caller CallerIdentity, ref stri
 	}}}, nil
 }
 
-func (g *Gateway) readEpisodes(_ *http.Request, caller CallerIdentity, agentID string, start time.Time) (ResourceReadResult, *RPCError) {
-	// Episodes are a P2 feature. We return a not-supported error rather than
-	// silently returning empty results. R-MEM-SEC-1: fail-closed, not silent.
-	_ = caller
-	_ = agentID
-	_ = start
-	return ResourceReadResult{}, &RPCError{
-		Code:    CodeNotSupported,
-		Message: "memory://episodes/{agentId} is not yet implemented (P2)",
+// readEpisodes handles the memory://episodes/{agentId} resource.
+// agentID and retrieverRef are pre-parsed by parseEpisodesSegment; both are
+// validated here before forwarding to readEpisodesImpl.
+func (g *Gateway) readEpisodes(r *http.Request, caller CallerIdentity, agentID, retrieverRef string, start time.Time) (ResourceReadResult, *RPCError) {
+	// R-MEM-MCP-2: episodes resource. Reads are scoped to the caller's tenant.
+	// retrieverRef is required — it must come from either the URI query string
+	// ("memory://episodes/id?retrieverRef=ns/name") or the HTTP query string
+	// ("POST /mcp?retrieverRef=ns/name"), as parsed by parseEpisodesSegment.
+	if retrieverRef == "" {
+		return ResourceReadResult{}, &RPCError{
+			Code:    CodeInvalidParams,
+			Message: "retrieverRef is required for memory://episodes/{agentId} (pass as URI query param: ?retrieverRef=ns/name)",
+		}
 	}
+	if agentID == "" {
+		return ResourceReadResult{}, &RPCError{
+			Code:    CodeInvalidParams,
+			Message: "agentId path segment is required",
+		}
+	}
+	return g.readEpisodesImpl(r.Context(), caller, agentID, retrieverRef, start)
+}
+
+// ── TraT helpers ───────────────────────────────────────────────────────────
+
+// requireTrat enforces R-MEM-AUTH-3. When mutationsTraTRequired is true it:
+//  1. Extracts the "trat" field from args (the compact JWT string).
+//  2. Verifies it via g.TratVerifier.
+//  3. Checks that the TraT subject matches the caller's SPIFFE ID.
+//
+// Returns the compact TraT string (to forward to the worker) on success, or a
+// non-nil *RPCError on failure. When mutationsTraTRequired is false the call
+// is a no-op and "" is returned.
+//
+// Fail-closed behaviour: if TratVerifier is nil but mutationsTraTRequired is
+// true, mutations are rejected with PermissionDenied (R-MEM-SEC-1).
+func (g *Gateway) requireTrat(
+	r *http.Request,
+	caller CallerIdentity,
+	op, ref, ns string,
+	mutationsTraTRequired bool,
+	args map[string]json.RawMessage,
+	start time.Time,
+) (string, *RPCError) {
+	if !mutationsTraTRequired {
+		return "", nil
+	}
+
+	// Fail-closed: if no verifier is configured, reject all mutations.
+	if g.TratVerifier == nil {
+		_, rpcErr := g.deny(r, caller, op, ref, ns, start,
+			CodePermissionDenied,
+			"retriever requires mutation TraT but no TratVerifier is configured",
+			memory.KindPermissionDenied)
+		return "", rpcErr
+	}
+
+	compact := jsonStr(args["trat"])
+	if compact == "" {
+		_, rpcErr := g.deny(r, caller, op, ref, ns, start,
+			CodePermissionDenied,
+			"mutation requires a TraT (trat field missing or empty)",
+			memory.KindPermissionDenied)
+		return "", rpcErr
+	}
+
+	claims, err := g.TratVerifier.Verify(r.Context(), compact)
+	if err != nil {
+		_, rpcErr := g.deny(r, caller, op, ref, ns, start,
+			CodePermissionDenied,
+			"invalid TraT: "+err.Error(),
+			memory.KindPermissionDenied)
+		return "", rpcErr
+	}
+
+	// The TraT subject must be bound to the authenticated caller — it must not
+	// be possible to replay a TraT minted for a different identity.
+	if claims.Subject != caller.SPIFFEID {
+		_, rpcErr := g.deny(r, caller, op, ref, ns, start,
+			CodePermissionDenied,
+			fmt.Sprintf("TraT subject %q does not match caller %q", claims.Subject, caller.SPIFFEID),
+			memory.KindPermissionDenied)
+		return "", rpcErr
+	}
+
+	return compact, nil
+}
+
+// ── episodes resource handler ──────────────────────────────────────────────
+
+// episodesWorkerRequest is the canonical request shape for the episodes
+// resource. The worker reads the event log for the given agentID.
+// The retrieverRef is extracted from the URL query string (same convention
+// as other resource reads).
+func (g *Gateway) readEpisodesImpl(
+	ctx context.Context,
+	caller CallerIdentity,
+	agentID string,
+	retrieverRef string,
+	start time.Time,
+) (ResourceReadResult, *RPCError) {
+	info, err := g.Retrievers.Get(ctx, retrieverRef)
+	if err != nil {
+		return ResourceReadResult{}, &RPCError{Code: CodeNotFound, Message: "retriever not found: " + retrieverRef}
+	}
+
+	// Tenant gate: the caller can only see episodes for their own tenant.
+	if info.Spec.Tenant != "" && info.Spec.Tenant != caller.Tenant {
+		return ResourceReadResult{}, &RPCError{
+			Code:    CodePermissionDenied,
+			Message: fmt.Sprintf("retriever tenant %q does not match caller tenant %q", info.Spec.Tenant, caller.Tenant),
+		}
+	}
+
+	identity := api.RequestIdentity{
+		Tenant:         caller.Tenant,
+		Namespace:      agentID, // agentID is the namespace scoping episodes
+		CallerSPIFFEID: caller.SPIFFEID,
+		RetrieverRef:   retrieverRef,
+	}
+
+	if err := g.Policy.Allow(caller.SPIFFEID, v1.MemoryOpRead, identity.Namespace, info.Spec.Policy); err != nil {
+		return ResourceReadResult{}, &RPCError{Code: CodePermissionDenied, Message: err.Error()}
+	}
+
+	// Retrieve episodes from the worker. The worker's event log backend
+	// uses the namespace (agentID) to scope results.
+	worker := g.workerFor(info.WorkerURL)
+	req := &api.ListNamespacesRequest{Identity: identity}
+	// For the episodes resource we use ListNamespaces with agentID as namespace
+	// to enumerate available episode namespaces for this agent. The actual
+	// episode records are retrieved via the Retrieve path; see design doc §episodes.
+	resp, err := worker.ListNamespaces(ctx, req)
+	if err != nil {
+		return ResourceReadResult{}, &RPCError{
+			Code:    memKindToRPCCode(memory.KindOf(err)),
+			Message: err.Error(),
+		}
+	}
+
+	if g.AuditLog != nil {
+		g.AuditLog.Log(ctx, audit.Record{
+			CallerSPIFFEID: caller.SPIFFEID,
+			Tenant:         caller.Tenant,
+			RetrieverRef:   retrieverRef,
+			Op:             "resource:episodes/" + agentID,
+			Namespace:      agentID,
+			ResultCount:    len(resp.Namespaces),
+			Decision:       audit.DecisionAllow,
+			LatencyMs:      msElapsed(start),
+			Timestamp:      time.Now(),
+		})
+	}
+
+	out, _ := json.Marshal(map[string]any{
+		"agentId":    agentID,
+		"tenant":     caller.Tenant,
+		"namespaces": resp.Namespaces,
+	})
+	return ResourceReadResult{Contents: []ResourceContent{{
+		URI:      "memory://episodes/" + agentID,
+		MIMEType: "application/json",
+		Text:     string(out),
+	}}}, nil
 }
 
 // ── Audit helpers ──────────────────────────────────────────────────────────
@@ -668,6 +865,39 @@ func memKindToRPCCode(k memory.Kind) int {
 	default:
 		return CodeBackendError
 	}
+}
+
+// parseEpisodesSegment extracts the agentId and retrieverRef from the raw
+// segment after "episodes/" in a resource URI path. It accepts two forms:
+//
+//   - "agent-abc?retrieverRef=ns/name"  (retrieverRef in URI query string)
+//   - "agent-abc"                        (retrieverRef from HTTP query string)
+//
+// In the second form, r.URL.Query().Get("retrieverRef") is the fallback.
+func parseEpisodesSegment(raw string, r *http.Request) (agentID, retrieverRef string) {
+	qIdx := strings.Index(raw, "?")
+	if qIdx >= 0 {
+		agentID = raw[:qIdx]
+		// Parse the query fragment from the URI.
+		qs := raw[qIdx+1:]
+		for _, pair := range strings.Split(qs, "&") {
+			eq := strings.IndexByte(pair, '=')
+			if eq < 0 {
+				continue
+			}
+			key := pair[:eq]
+			val := pair[eq+1:]
+			if key == "retrieverRef" {
+				retrieverRef = val
+				break
+			}
+		}
+		return agentID, retrieverRef
+	}
+	// No query string in the URI — fall back to the HTTP query string.
+	agentID = raw
+	retrieverRef = r.URL.Query().Get("retrieverRef")
+	return agentID, retrieverRef
 }
 
 // parseResourceURI splits "memory://namespaces/foo" into ("memory", "namespaces/foo", true).

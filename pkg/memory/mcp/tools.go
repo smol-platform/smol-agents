@@ -20,7 +20,7 @@ var memoryTools = []Tool{
 	},
 	{
 		Name:        "write_memory",
-		Description: "Store a document in memory within the caller's tenant and namespace.",
+		Description: "Store a document in memory within the caller's tenant and namespace. When the retriever requires mutation authorization (MutationsTraT=true), a Transaction Token must be supplied in the 'trat' field.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -29,6 +29,7 @@ var memoryTools = []Tool{
 				"retrieverRef": map[string]any{"type": "string", "description": "Namespace-qualified MemoryRetriever name (ns/name)"},
 				"metadata":     map[string]any{"type": "object", "description": "Optional key/value metadata"},
 				"id":           map[string]any{"type": "string", "description": "Optional stable document ID (upsert if exists)"},
+				"trat":         map[string]any{"type": "string", "description": "Transaction Token (TraT) — required when the retriever has MutationsTraT=true. Obtain from the agentnet sidecar token-exchange endpoint."},
 			},
 			"required": []string{"content", "retrieverRef"},
 		},
@@ -59,13 +60,14 @@ var memoryTools = []Tool{
 	},
 	{
 		Name:        "delete_memory",
-		Description: "Delete a document by ID. The document must belong to the caller's tenant.",
+		Description: "Delete a document by ID. The document must belong to the caller's tenant. When the retriever requires mutation authorization (MutationsTraT=true), a Transaction Token must be supplied in the 'trat' field.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"id":           map[string]any{"type": "string", "description": "Stable document identifier"},
 				"retrieverRef": map[string]any{"type": "string", "description": "Namespace-qualified MemoryRetriever name (ns/name)"},
 				"namespace":    map[string]any{"type": "string", "description": "Memory namespace containing the document"},
+				"trat":         map[string]any{"type": "string", "description": "Transaction Token (TraT) — required when the retriever has MutationsTraT=true. Obtain from the agentnet sidecar token-exchange endpoint."},
 			},
 			"required": []string{"id", "retrieverRef"},
 		},
