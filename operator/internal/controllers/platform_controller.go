@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/internal/builders"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
 )
 
 // SmolAgentPlatformReconciler reconciles cluster-scoped platform

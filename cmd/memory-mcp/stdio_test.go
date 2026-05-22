@@ -11,13 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/audit"
-	"github.com/stigen/smol-agents/pkg/memory/mcp"
-	"github.com/stigen/smol-agents/pkg/memory/quota"
-	"github.com/stigen/smol-agents/pkg/memory/store"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/audit"
+	"github.com/smol-platform/smol-agents/pkg/memory/mcp"
+	"github.com/smol-platform/smol-agents/pkg/memory/quota"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
 )
 
 // buildTestDispatcher returns a Dispatcher backed by a Gateway configured

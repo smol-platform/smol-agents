@@ -39,7 +39,7 @@ import (
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 const (

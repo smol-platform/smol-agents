@@ -177,7 +177,7 @@ Cleanup belt-and-suspenders (per the e2e_architecture memory):
 - L2 trigger: `/test-l2` PR comment, `main`, nightly. Not on every PR.
 - Build target: `linux/arm64` everywhere (OrbStack is arm64; bare-metal
   Graviton is arm64; no cross-build needed).
-- **AWS account**: `stigen` sandbox profile.
+- **AWS account**: `smol-agents` sandbox profile.
 - **Region**: `us-east-2` (Ohio).
 - **Monthly cap**: $50/month enforced by AWS Budget alarm + nuke Lambda
   at 100% threshold.

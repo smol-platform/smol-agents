@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/stigen/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // newRedisBackend starts a miniredis server and connects a RedisBackend to it.

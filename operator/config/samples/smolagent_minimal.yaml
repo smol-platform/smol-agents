@@ -1,9 +1,9 @@
 # Minimal tenant agent — every feature on its default state.
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgent
 metadata:
   name: hello
   namespace: tenant-a
 spec:
-  trustDomain: stigen.ai
+  trustDomain: smol-agents.ai
   mode: strict

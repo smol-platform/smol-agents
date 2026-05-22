@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // TestAgentNodePool_setCondition_UpsertStableTimestamp covers the pure
@@ -63,7 +63,7 @@ type stubPlatformClient struct {
 func (s stubPlatformClient) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
 	if s.platform == nil {
 		return apierrors.NewNotFound(schema.GroupResource{
-			Group: "agents.stigen.ai", Resource: "smolagentplatforms",
+			Group: "agents.smol-agents.ai", Resource: "smolagentplatforms",
 		}, key.Name)
 	}
 	if p, ok := obj.(*v1.SmolAgentPlatform); ok {

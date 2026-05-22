@@ -1,6 +1,6 @@
 # Sample Agent + ModelProvider + Tool that the operator will resolve.
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: ModelProvider
 metadata:
   name: openai-prod
@@ -11,7 +11,7 @@ spec:
   secretRef:
     secretName: openai-key
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Tool
 metadata:
   name: search
@@ -36,7 +36,7 @@ spec:
     auth:
       secretName: tavily-key
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata:
   name: researcher
@@ -55,7 +55,7 @@ spec:
     maxWallClockSeconds: 120
     maxToolCalls: 8
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentRun
 metadata:
   name: researcher-001

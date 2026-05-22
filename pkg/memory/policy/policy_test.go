@@ -3,9 +3,9 @@ package policy_test
 import (
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/policy"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/policy"
 )
 
 var checker = policy.Checker{}

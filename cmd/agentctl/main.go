@@ -11,8 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/stigen/smol-agents/internal/version"
-	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/internal/version"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
 func main() {

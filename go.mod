@@ -1,4 +1,4 @@
-module github.com/stigen/smol-agents
+module github.com/smol-platform/smol-agents
 
 go 1.26.0
 

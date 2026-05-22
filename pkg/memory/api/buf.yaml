@@ -1,7 +1,7 @@
 version: v2
 modules:
   - path: .
-    name: buf.build/stigen/smol-agents-memory
+    name: buf.build/smol-platform/smol-agents-memory
 lint:
   use:
     - STANDARD

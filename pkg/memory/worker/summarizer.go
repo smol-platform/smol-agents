@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
 // Summarizer produces a natural-language summary of a body of text.

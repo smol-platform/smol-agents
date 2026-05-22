@@ -1,7 +1,7 @@
 # Filesystem memory store backed by Turso AgentFS (SQLite-canonical, branchable).
 # Reuses AgentFSSpec verbatim (sizeGiB, mountPath, backup, restore).
 # S3 backup credentials are broker-resolved via backup.s3.credentialsRef.
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: MemoryStore
 metadata:
   name: prod-agentfs

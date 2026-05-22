@@ -1,6 +1,6 @@
 # Vector memory store backed by pgvector (PostgreSQL with pgvector extension).
 # Backend credentials are broker-resolved — never a literal secret.
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: MemoryStore
 metadata:
   name: prod-vectors

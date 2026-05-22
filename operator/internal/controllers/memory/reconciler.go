@@ -17,8 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // MemoryRetrieverReconciler reconciles MemoryRetriever CRs into the data-plane

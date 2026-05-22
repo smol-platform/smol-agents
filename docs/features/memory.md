@@ -116,7 +116,7 @@ work independently, and merge:
 ### `MemoryStore` — a backend
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: MemoryStore
 metadata: { name: prod-vectors, namespace: tenant-alpha }
 spec:
@@ -130,7 +130,7 @@ spec:
 ### `MemoryRetriever` — a retrieval pipeline (with the access policy)
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: MemoryRetriever
 metadata: { name: prod-knowledge-default, namespace: tenant-alpha }
 spec:
@@ -143,8 +143,8 @@ spec:
   quota: { maxTopK: 100, requestsPerMinute: 120, maxWriteBytes: 1048576 }
   mutationsTraT: false
   policy:                                  # deny-by-default
-    - { identity: spiffe://stigen.ai/ns/agents/sa/coder,     operations: [read, write], namespaces: [default, code] }
-    - { identity: spiffe://stigen.ai/ns/agents/sa/researcher, operations: [read],        namespaces: [default, docs] }
+    - { identity: spiffe://smol-agents.ai/ns/agents/sa/coder,     operations: [read, write], namespaces: [default, code] }
+    - { identity: spiffe://smol-agents.ai/ns/agents/sa/researcher, operations: [read],        namespaces: [default, docs] }
 ```
 
 Samples: `memorystore_vector.yaml`, `memorystore_filesystem.yaml`,

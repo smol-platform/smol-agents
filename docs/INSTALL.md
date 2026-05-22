@@ -139,13 +139,13 @@ Notes:
 smol-agents expects:
 
 - **Trust domain** matches the value of `trustDomain` in `values.yaml`
-  (default `stigen.ai`).
+  (default `smol-agents.ai`).
 - **Workload API** is mounted into agent Pods via the SPIRE CSI driver at
   `/run/spire/agent-sockets/api.sock`.
 - **ClusterSPIFFEID** matches the agent ServiceAccount and namespace. The
   default template renders:
   ```yaml
-  spiffeIDTemplate: "spiffe://stigen.ai/ns/{{ .Release.Namespace }}/sa/{{ .Values.serviceAccount.name }}"
+  spiffeIDTemplate: "spiffe://smol-agents.ai/ns/{{ .Release.Namespace }}/sa/{{ .Values.serviceAccount.name }}"
   ```
 - **Selectors** include `k8s:ns:<namespace>` and
   `k8s:sa:<serviceaccount>`. The chart renders these by default.
@@ -267,7 +267,7 @@ Use this to validate the entire stack on a laptop.
 
 - 3-node kind cluster
 - Knative Serving + Kourier networking
-- SPIRE server + agent (DaemonSet) with trust domain `stigen.ai`
+- SPIRE server + agent (DaemonSet) with trust domain `smol-agents.ai`
 - smol-agents chart installed in namespace `smol-agents`
 - A working agent reachable via Knative
 
@@ -307,7 +307,7 @@ This script (read it before running — it makes destructive cluster changes):
 
 1. `kind create cluster --name smol-agents`
 2. Installs Knative Serving CRDs, core, and Kourier
-3. Installs SPIRE CRDs and the SPIRE chart with `trustDomain=stigen.ai`
+3. Installs SPIRE CRDs and the SPIRE chart with `trustDomain=smol-agents.ai`
 4. `helm upgrade --install agents deploy/helm --namespace smol-agents --create-namespace`
 5. Waits for the Knative Service to be Ready
 
@@ -458,7 +458,7 @@ Highlights:
 
 ```yaml
 mode: strict                # insecure | permissive | strict
-trustDomain: stigen.ai
+trustDomain: smol-agents.ai
 identity:
   workloadAPI: unix:///run/spire/agent-sockets/api.sock
   bootTimeout: 30s          # block this long for first SVID
@@ -468,9 +468,9 @@ transport:
   private:
     addr: "0.0.0.0:8443"
     authorize:              # at least one matcher; OR semantics
-      - "any:spiffe://stigen.ai"
-      - "prefix:spiffe://stigen.ai/ns/agents"
-      - "spiffe://stigen.ai/ns/agents/sa/admin"
+      - "any:spiffe://smol-agents.ai"
+      - "prefix:spiffe://smol-agents.ai/ns/agents"
+      - "spiffe://smol-agents.ai/ns/agents/sa/admin"
   public:
     addr: ""                # empty = disabled
     certPath: /etc/tls/tls.crt
@@ -884,7 +884,7 @@ Before (chart):
 ```bash
 helm install agents-prod deploy/helm \
     --namespace tenant-prod \
-    --set trustDomain=stigen.ai \
+    --set trustDomain=smol-agents.ai \
     --set mode=knative \
     --set sandbox.preset=eks-bottlerocket
 ```
@@ -893,13 +893,13 @@ After (operator):
 
 ```yaml
 # tenant-prod-agent.yaml
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgent
 metadata:
   name: agents-prod
   namespace: tenant-prod
 spec:
-  trustDomain: stigen.ai
+  trustDomain: smol-agents.ai
   mode: strict
   deploymentKind: knative
   features:

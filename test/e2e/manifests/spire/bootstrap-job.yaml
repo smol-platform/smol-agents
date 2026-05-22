@@ -18,7 +18,7 @@ spec:
           # Connects to spire-server via in-cluster Service DNS, then
           # registers entries for each workload that needs an SVID.
           # Entries reference the agent's own SPIFFE ID as parent
-          # (spiffe://stigen.ai/spire/agent/k8s_psat/<cluster>/<node-uid>).
+          # (spiffe://smol-agents.ai/spire/agent/k8s_psat/<cluster>/<node-uid>).
           # We discover those at runtime by listing nodes.
           command: ["/bin/sh", "-c"]
           args:
@@ -49,14 +49,14 @@ spec:
               SERVER=spire-server:8081
               # Use spire-server CLI with the gRPC server flag (1.10+).
               for entry in \
-                "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway:k8s:ns:tenant-a:k8s:sa:default" \
-                "spiffe://stigen.ai/ns/tenant-a/sa/agent:k8s:ns:tenant-a:k8s:sa:default" ; do
+                "spiffe://smol-agents.ai/ns/tenant-a/sa/fake-gateway:k8s:ns:tenant-a:k8s:sa:default" \
+                "spiffe://smol-agents.ai/ns/tenant-a/sa/agent:k8s:ns:tenant-a:k8s:sa:default" ; do
                 spiffeID="${entry%%:*}"
                 rest="${entry#*:}"
                 /opt/spire/bin/spire-server entry create \
                   -serverAddr "$SERVER" \
                   -spiffeID "$spiffeID" \
-                  -parentID spiffe://stigen.ai/spire/agent/k8s_psat/smol-agents-kind/$(cat /etc/hostname || echo any) \
+                  -parentID spiffe://smol-agents.ai/spire/agent/k8s_psat/smol-agents-kind/$(cat /etc/hostname || echo any) \
                   -node \
                   -selector "$rest" 2>&1 | tee -a /tmp/register.log || true
               done

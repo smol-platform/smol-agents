@@ -10,7 +10,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffetls"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 
-	"github.com/stigen/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/identity"
 )
 
 // PrivateConfig configures a private (in-mesh) mTLS endpoint.

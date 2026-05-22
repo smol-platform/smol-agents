@@ -6,8 +6,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // BuildAgentRunPod renders the Pod that executes a single AgentRun.
@@ -50,8 +50,8 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	labels := map[string]string{
 		"app.kubernetes.io/name":      "smol-agents",
 		"app.kubernetes.io/component": "agent-run",
-		"agents.stigen.ai/agent":      agent.Name,
-		"agents.stigen.ai/run":        run.Name,
+		"agents.smol-agents.ai/agent":      agent.Name,
+		"agents.smol-agents.ai/run":        run.Name,
 	}
 
 	return &corev1.Pod{

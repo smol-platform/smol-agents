@@ -3,7 +3,7 @@
 # kata/devmapper layer; agents with features.sandbox.runtimeClass=kata-fc are
 # scheduled onto it. Node→k0s join is supplied by the existing Karpenter
 # deployment (see docs/design/agent-platform.md).
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: AgentNodePool
 metadata:
   name: kata-arm64

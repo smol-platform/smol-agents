@@ -8,7 +8,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 )
 
-var stigen = spiffeid.RequireTrustDomainFromString("stigen.ai")
+var smolAgents = spiffeid.RequireTrustDomainFromString("smol-agents.ai")
 
 func mustID(t *testing.T, s string) spiffeid.ID {
 	t.Helper()
@@ -20,9 +20,9 @@ func mustID(t *testing.T, s string) spiffeid.ID {
 }
 
 func TestAuthorizeAny(t *testing.T) {
-	a := AuthorizeAny{TrustDomain: stigen}
+	a := AuthorizeAny{TrustDomain: smolAgents}
 	cases := map[string]bool{
-		"spiffe://stigen.ai/ns/agents/sa/a": true,
+		"spiffe://smol-agents.ai/ns/agents/sa/a": true,
 		"spiffe://other.test/ns/agents":     false,
 	}
 	for s, want := range cases {
@@ -35,23 +35,23 @@ func TestAuthorizeAny(t *testing.T) {
 }
 
 func TestAuthorizeIDs(t *testing.T) {
-	id := mustID(t, "spiffe://stigen.ai/ns/agents/sa/agent-a")
+	id := mustID(t, "spiffe://smol-agents.ai/ns/agents/sa/agent-a")
 	a := AuthorizeIDs{IDs: []spiffeid.ID{id}}
 	if err := a.Authorize(&x509svid.SVID{ID: id}); err != nil {
 		t.Fatalf("expected match: %v", err)
 	}
-	other := mustID(t, "spiffe://stigen.ai/ns/agents/sa/agent-b")
+	other := mustID(t, "spiffe://smol-agents.ai/ns/agents/sa/agent-b")
 	if err := a.Authorize(&x509svid.SVID{ID: other}); err == nil {
 		t.Fatal("expected reject for non-listed id")
 	}
 }
 
 func TestAuthorizePathPrefix(t *testing.T) {
-	a := AuthorizePathPrefix{TrustDomain: stigen, Prefix: "/ns/agents"}
-	if err := a.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://stigen.ai/ns/agents/sa/a")}); err != nil {
+	a := AuthorizePathPrefix{TrustDomain: smolAgents, Prefix: "/ns/agents"}
+	if err := a.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://smol-agents.ai/ns/agents/sa/a")}); err != nil {
 		t.Fatalf("expected match: %v", err)
 	}
-	if err := a.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://stigen.ai/ns/other/sa/x")}); err == nil {
+	if err := a.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://smol-agents.ai/ns/other/sa/x")}); err == nil {
 		t.Fatal("expected reject for wrong prefix")
 	}
 	if err := a.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://other.test/ns/agents/sa/a")}); err == nil {
@@ -61,36 +61,36 @@ func TestAuthorizePathPrefix(t *testing.T) {
 
 func TestParseAuthorizer(t *testing.T) {
 	for _, d := range []string{
-		"any:spiffe://stigen.ai",
-		"prefix:spiffe://stigen.ai/ns/agents",
-		"spiffe://stigen.ai/ns/agents/sa/a",
+		"any:spiffe://smol-agents.ai",
+		"prefix:spiffe://smol-agents.ai/ns/agents",
+		"spiffe://smol-agents.ai/ns/agents/sa/a",
 	} {
-		if _, err := ParseAuthorizer(stigen, d); err != nil {
+		if _, err := ParseAuthorizer(smolAgents, d); err != nil {
 			t.Errorf("ParseAuthorizer(%q) error: %v", d, err)
 		}
 	}
-	if _, err := ParseAuthorizer(stigen, "garbage"); err == nil {
+	if _, err := ParseAuthorizer(smolAgents, "garbage"); err == nil {
 		t.Error("expected error for garbage descriptor")
 	}
 }
 
 func TestParseAuthorizers_Composite(t *testing.T) {
-	auth, err := ParseAuthorizers(stigen, []string{
-		"prefix:spiffe://stigen.ai/ns/agents",
-		"spiffe://stigen.ai/ns/control/sa/admin",
+	auth, err := ParseAuthorizers(smolAgents, []string{
+		"prefix:spiffe://smol-agents.ai/ns/agents",
+		"spiffe://smol-agents.ai/ns/control/sa/admin",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	good := mustID(t, "spiffe://stigen.ai/ns/agents/sa/x")
+	good := mustID(t, "spiffe://smol-agents.ai/ns/agents/sa/x")
 	if err := auth.Authorize(&x509svid.SVID{ID: good}); err != nil {
 		t.Errorf("expected accept for %q: %v", good, err)
 	}
-	admin := mustID(t, "spiffe://stigen.ai/ns/control/sa/admin")
+	admin := mustID(t, "spiffe://smol-agents.ai/ns/control/sa/admin")
 	if err := auth.Authorize(&x509svid.SVID{ID: admin}); err != nil {
 		t.Errorf("expected accept for %q: %v", admin, err)
 	}
-	bad := mustID(t, "spiffe://stigen.ai/ns/intruder/sa/x")
+	bad := mustID(t, "spiffe://smol-agents.ai/ns/intruder/sa/x")
 	err = auth.Authorize(&x509svid.SVID{ID: bad})
 	if err == nil {
 		t.Error("expected reject")
@@ -101,11 +101,11 @@ func TestParseAuthorizers_Composite(t *testing.T) {
 }
 
 func TestParseAuthorizers_EmptyDescriptors(t *testing.T) {
-	auth, err := ParseAuthorizers(stigen, nil)
+	auth, err := ParseAuthorizers(smolAgents, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := auth.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://stigen.ai/anywhere")}); err != nil {
+	if err := auth.Authorize(&x509svid.SVID{ID: mustID(t, "spiffe://smol-agents.ai/anywhere")}); err != nil {
 		t.Errorf("expected default-any to accept: %v", err)
 	}
 }

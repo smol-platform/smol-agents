@@ -219,7 +219,7 @@ func waitForBottlerocketWorkerReady(ctx context.Context, controller *l2Env, t *t
 	defer tick.Stop()
 	for {
 		out, _ := controller.runSSM(dctx,
-			`k0s kubectl get nodes -l smol-agents.stigen.ai/distro=bottlerocket -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'`,
+			`k0s kubectl get nodes -l smol-agents.smol-agents.ai/distro=bottlerocket -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'`,
 			30*time.Second)
 		if bytes.Contains(out, []byte("=True")) {
 			t.Logf("worker node observed: %s", strings.TrimSpace(string(out)))

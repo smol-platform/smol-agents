@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	tdStigen = spiffeid.RequireTrustDomainFromString("stigen.ai")
-	idA      = spiffeid.RequireFromPath(tdStigen, "/ns/agents/sa/agent-a")
-	idB      = spiffeid.RequireFromPath(tdStigen, "/ns/agents/sa/agent-b")
-	idIntr   = spiffeid.RequireFromPath(tdStigen, "/ns/intruder/sa/x")
+	tdSmolAgents = spiffeid.RequireTrustDomainFromString("smol-agents.ai")
+	idA      = spiffeid.RequireFromPath(tdSmolAgents, "/ns/agents/sa/agent-a")
+	idB      = spiffeid.RequireFromPath(tdSmolAgents, "/ns/agents/sa/agent-b")
+	idIntr   = spiffeid.RequireFromPath(tdSmolAgents, "/ns/intruder/sa/x")
 )
 
 func startServer(t *testing.T, principal spiffeid.ID, attestErr error) (*Server, string) {

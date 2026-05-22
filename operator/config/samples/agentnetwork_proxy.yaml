@@ -1,7 +1,7 @@
 # Identity-aware proxy: agents reach internal Postgres + billing API
 # through a SPIFFE-mTLS sidecar; eBPF on the host transparently
 # redirects 10.42.0.0/16 to the sidecar and drops everything else.
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork
 metadata:
   name: prod-net
@@ -17,12 +17,12 @@ spec:
         localAddr: 127.0.0.1:5432
         gateway: pg-gateway.infra.svc:8443
         authorize:
-          - spiffe://stigen.ai/ns/infra/sa/pg-gateway
+          - spiffe://smol-agents.ai/ns/infra/sa/pg-gateway
       - name: billing-api
         kind: http
         localPort: 9100
         gateway: https://billing.infra.svc/
-        jwtAudience: spiffe://stigen.ai/ns/infra/sa/billing
+        jwtAudience: spiffe://smol-agents.ai/ns/infra/sa/billing
     egress:
       enforcement: ebpfBoth
       redirectCIDRs:

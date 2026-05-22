@@ -42,8 +42,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/stigen/smol-agents/pkg/memory"
-	apipkg "github.com/stigen/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	apipkg "github.com/smol-platform/smol-agents/pkg/memory/api"
 )
 
 // ── Error mapping ─────────────────────────────────────────────────────────────

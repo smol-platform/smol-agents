@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // kataVersion is the kata-containers static bundle we ship. Mirrors

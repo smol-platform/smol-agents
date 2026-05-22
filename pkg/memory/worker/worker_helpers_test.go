@@ -7,9 +7,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/worker"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/worker"
 )
 
 // newWorkerBackend returns a fresh in-memory VectorBackend.

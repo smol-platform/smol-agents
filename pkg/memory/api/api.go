@@ -17,7 +17,7 @@ package api
 import (
 	"context"
 
-	"github.com/stigen/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // RetrievalService is the internal gRPC service contract between the

@@ -22,9 +22,9 @@ Read top-to-bottom for the full picture, or jump to what you need.
 
 smol-agents separates three planes:
 
-- **Substrate** (`agents.stigen.ai/v1`) — *where* agents run. The operator,
+- **Substrate** (`agents.smol-agents.ai/v1`) — *where* agents run. The operator,
   the platform defaults, and node provisioning. Guides **2** and **7**.
-- **Workload** (`runtime.agents.stigen.ai/v1`) — *what* runs. The agent model,
+- **Workload** (`runtime.agents.smol-agents.ai/v1`) — *what* runs. The agent model,
   networking, and memory. Guides **3**, **4**, **5**, **6**.
 - **Foundations** (`pkg/*`) — the guarantees every plane inherits: identity,
   transport, sandbox, secrets, eBPF. Guide **1**, and proven in guide **8**.
@@ -34,10 +34,10 @@ gated by SPIFFE, and held to a budget the model checker proves it cannot exceed.
 
 ## Conventions used in every guide
 
-- **Trust domain** defaults to `stigen.ai`; SPIFFE IDs read
+- **Trust domain** defaults to `smol-agents.ai`; SPIFFE IDs read
   `spiffe://<trust-domain>/ns/<namespace>/sa/<serviceaccount>`.
-- **CRD groups**: `agents.stigen.ai/v1` (substrate) and
-  `runtime.agents.stigen.ai/v1` (workload).
+- **CRD groups**: `agents.smol-agents.ai/v1` (substrate) and
+  `runtime.agents.smol-agents.ai/v1` (workload).
 - **Examples** are taken from `operator/config/samples/` and are kept runnable.
 - **"Proven by"** links a claim to the Quint spec under `spec/quint/` that
   model-checks it.

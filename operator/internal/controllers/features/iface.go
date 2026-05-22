@@ -9,8 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/pkg/features"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 // Result aliases the canonical features.Result so reconciler bodies stay

@@ -39,7 +39,7 @@ spec:
           imagePullPolicy: Never
           args:
             - "-addr=:8080"
-            - "-repo=stigen/app"   # rctx.repo authorized for minted TraTs (P1: fixed)
+            - "-repo=smol-platform/app"   # rctx.repo authorized for minted TraTs (P1: fixed)
             - "-ttl=5m"
           ports:
             - { name: http, containerPort: 8080 }

@@ -24,7 +24,7 @@ agent, so that I can submit it via GitOps.
    operator SHALL reconcile every enabled feature into the cluster.
 2. WHEN required fields (e.g. `spec.trustDomain`) are missing THEN
    the validating webhook SHALL reject the CR with a typed message.
-3. THE CR SHALL be served at `agents.stigen.ai/v1` and include
+3. THE CR SHALL be served at `agents.smol-agents.ai/v1` and include
    `kubectl get` printer columns: `MODE`, `READY`, `IDENTITY`,
    `MTLS`, `EBPF`, `SECRETS`, `RUNTIMECLASS`, `AGE`.
 
@@ -171,7 +171,7 @@ time.
 **Acceptance Criteria:**
 1. THE validating webhook SHALL reject:
    - missing `spec.trustDomain`
-   - `mode: insecure` without `annotations.smol-agents.stigen.ai/allow-insecure: "true"`
+   - `mode: insecure` without `annotations.smol-agents.smol-agents.ai/allow-insecure: "true"`
    - `runtimeClass: runc` without `sandbox.allowHostEscape: true`
    - feature combinations forbidden by `SmolAgentPlatform.spec.featurePolicy`
 
@@ -294,7 +294,7 @@ Reason.
 ### Code Architecture
 - Single binary `manager` built with Kubebuilder ≥ v4.5.
 - One Go module shared with the rest of the repo
-  (`github.com/stigen/smol-agents`); operator code lives under
+  (`github.com/smol-platform/smol-agents`); operator code lives under
   `operator/`.
 - Reconciler logic delegates to the existing `pkg/...` libraries.
 

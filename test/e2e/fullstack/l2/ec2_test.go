@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
+	"github.com/smol-platform/smol-agents/test/e2e/fullstack/shared"
 )
 
 // TestL2 is the full L2 integration: provision Spot c6gd.metal,
 // wait for the cloud-init health gate, run every cross-ring
 // scenario via SSM, terminate. ~12 min, ~$0.22/run.
 //
-// Skipped unless AWS_PROFILE=stigen and us-east-2 is selected.
+// Skipped unless AWS_PROFILE=smol-agents and us-east-2 is selected.
 func TestL2(t *testing.T) {
 	env, ok := provisionAndWaitReady(t)
 	if !ok {

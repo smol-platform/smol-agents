@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 func TestToPure_RoundTrip(t *testing.T) {

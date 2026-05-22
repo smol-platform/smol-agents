@@ -1,6 +1,6 @@
 # OpenAI Codex agent — ephemeral, no persistent storage.
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata:
   name: codex-helper

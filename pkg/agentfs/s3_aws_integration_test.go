@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/smol-agents/pkg/agentfs"
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
 )
 
 func TestAWSS3Integration_PutGetDelete(t *testing.T) {

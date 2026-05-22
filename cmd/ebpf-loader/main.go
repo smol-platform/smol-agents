@@ -24,10 +24,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/stigen/smol-agents/internal/version"
-	"github.com/stigen/smol-agents/pkg/ebpf"
-	"github.com/stigen/smol-agents/pkg/ebpfloader"
-	"github.com/stigen/smol-agents/pkg/observability"
+	"github.com/smol-platform/smol-agents/internal/version"
+	"github.com/smol-platform/smol-agents/pkg/ebpf"
+	"github.com/smol-platform/smol-agents/pkg/ebpfloader"
+	"github.com/smol-platform/smol-agents/pkg/observability"
 )
 
 type loaderConfig struct {

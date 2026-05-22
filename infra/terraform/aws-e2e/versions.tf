@@ -25,7 +25,7 @@ terraform {
   #   bucket         = "smol-agents-e2e-tfstate-us-east-2"
   #   key            = "aws-e2e/terraform.tfstate"
   #   region         = "us-east-2"
-  #   profile        = "stigen-io-tasks/sandbox/AdministratorAccess"
+  #   profile        = "smol-agents-io-tasks/sandbox/AdministratorAccess"
   #   dynamodb_table = "smol-agents-e2e-tfstate-locks"
   #   encrypt        = true
   # }

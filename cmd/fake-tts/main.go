@@ -30,12 +30,12 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/stigen/smol-agents/pkg/trat"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
-	repo := flag.String("repo", "stigen/app", "rctx.repo authorized for minted TraTs")
+	repo := flag.String("repo", "smol-platform/app", "rctx.repo authorized for minted TraTs")
 	ttl := flag.Duration("ttl", 5*time.Minute, "minted TraT lifetime")
 	flag.Parse()
 

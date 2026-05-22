@@ -23,9 +23,9 @@ func validProxy() AgentNetworkSpec {
 			Resources: []ResourceTarget{
 				{Name: "db", Kind: "tcp", LocalAddr: "127.0.0.1:5432",
 					Gateway:   "pg-gw.infra:8443",
-					Authorize: []string{"spiffe://stigen.ai/ns/infra/sa/pg"}},
+					Authorize: []string{"spiffe://smol-agents.ai/ns/infra/sa/pg"}},
 				{Name: "billing", Kind: "http", LocalPort: 9100,
-					Gateway: "https://billing.infra/", JWTAudience: "spiffe://stigen.ai/ns/infra/sa/billing"},
+					Gateway: "https://billing.infra/", JWTAudience: "spiffe://smol-agents.ai/ns/infra/sa/billing"},
 			},
 			Egress: EgressPolicy{
 				Enforcement:   "ebpfBoth",

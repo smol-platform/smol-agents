@@ -23,7 +23,7 @@ agent (model, instructions, tool refs, budget, identity).
    `spec.model.name`, `spec.instructions`, `spec.budget`.
 2. THE `Agent` CR SHALL include printer columns `MODEL`, `PROVIDER`,
    `TOOLS`, `READY`, `RUNS`, `AGE`.
-3. THE CR SHALL be served at `agents.stigen.ai/v1`.
+3. THE CR SHALL be served at `agents.smol-agents.ai/v1`.
 
 #### R-AM-API-2 — `Tool` CR
 **User Story:** As a developer, I want to declare a tool as a separate

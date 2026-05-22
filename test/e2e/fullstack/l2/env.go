@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 
-	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
+	"github.com/smol-platform/smol-agents/test/e2e/fullstack/shared"
 )
 
 const (

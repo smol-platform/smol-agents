@@ -1,11 +1,11 @@
 # Full agent CR exercising every feature flag.
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgent
 metadata:
   name: full
   namespace: tenant-a
 spec:
-  trustDomain: stigen.ai
+  trustDomain: smol-agents.ai
   mode: strict
   deploymentKind: knative
   replicas: 1
@@ -20,7 +20,7 @@ spec:
         enabled: true
         addr: "0.0.0.0:8443"
         authorize:
-          - "prefix:spiffe://stigen.ai/ns/tenant-a"
+          - "prefix:spiffe://smol-agents.ai/ns/tenant-a"
       public:
         enabled: false
     secrets:

@@ -13,12 +13,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/audit"
-	"github.com/stigen/smol-agents/pkg/memory/mcp"
-	"github.com/stigen/smol-agents/pkg/memory/quota"
-	"github.com/stigen/smol-agents/pkg/memory/store"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/audit"
+	"github.com/smol-platform/smol-agents/pkg/memory/mcp"
+	"github.com/smol-platform/smol-agents/pkg/memory/quota"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
 )
 
 // readResource sends a JSON-RPC resources/read request and returns the decoded response.
@@ -69,7 +69,7 @@ func newEpisodesServer(t *testing.T, worker api.RetrievalService, policy []v1.Me
 // TestEpisodes_HappyPath verifies that an authorised caller can read
 // memory://episodes/{agentId} and receives the agent namespaces from the worker.
 func TestEpisodes_HappyPath(t *testing.T) {
-	const spiffeID = "spiffe://stigen.ai/ns/myteam/sa/agent"
+	const spiffeID = "spiffe://smol-agents.ai/ns/myteam/sa/agent"
 	const agentID = "agent-abc123"
 
 	worker := &fakeWorker{
@@ -121,7 +121,7 @@ func TestEpisodes_HappyPath(t *testing.T) {
 // TestEpisodes_MissingRetrieverRef verifies that omitting the retrieverRef
 // query param returns InvalidParams.
 func TestEpisodes_MissingRetrieverRef(t *testing.T) {
-	const spiffeID = "spiffe://stigen.ai/ns/myteam/sa/agent"
+	const spiffeID = "spiffe://smol-agents.ai/ns/myteam/sa/agent"
 	srv := newEpisodesServer(t, &fakeWorker{}, nil, "")
 
 	// No retrieverRef query param.
@@ -170,7 +170,7 @@ func TestEpisodes_TenantIsolation(t *testing.T) {
 			TopK:   10,
 			Tenant: "team-alpha", // scoped to team-alpha
 			Policy: []v1.MemoryGrant{{
-				Identity:   "spiffe://stigen.ai/ns/team-alpha/",
+				Identity:   "spiffe://smol-agents.ai/ns/team-alpha/",
 				Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 				Namespaces: []string{"*"},
 			}},
@@ -190,7 +190,7 @@ func TestEpisodes_TenantIsolation(t *testing.T) {
 
 	// Caller from team-beta tries to read team-alpha's episodes.
 	uri := "memory://episodes/agent-abc?retrieverRef=ns/alpha-retriever"
-	resp := readResource(t, srv, "spiffe://stigen.ai/ns/team-beta/sa/intruder", uri)
+	resp := readResource(t, srv, "spiffe://smol-agents.ai/ns/team-beta/sa/intruder", uri)
 
 	rpcErr, ok := resp["error"].(map[string]any)
 	if !ok {
@@ -204,7 +204,7 @@ func TestEpisodes_TenantIsolation(t *testing.T) {
 
 // TestEpisodes_PolicyDenied verifies that a caller without read grant is denied.
 func TestEpisodes_PolicyDenied(t *testing.T) {
-	const spiffeID = "spiffe://stigen.ai/ns/myteam/sa/agent"
+	const spiffeID = "spiffe://smol-agents.ai/ns/myteam/sa/agent"
 	// Empty policy → deny-by-default.
 	srv := newEpisodesServer(t, &fakeWorker{}, nil, "myteam")
 

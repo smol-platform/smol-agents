@@ -1,15 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - smolagents.stigen.ai_smolagents.yaml
-  - smolagents.stigen.ai_smolagentplatforms.yaml
-  - agents.stigen.ai_agentnodepools.yaml
-  - runtime.agents.stigen.ai_agents.yaml
-  - runtime.agents.stigen.ai_tools.yaml
-  - runtime.agents.stigen.ai_modelproviders.yaml
-  - runtime.agents.stigen.ai_agentruns.yaml
-  - runtime.agents.stigen.ai_agentsessions.yaml
-  - runtime.agents.stigen.ai_agentpolicies.yaml
-  - runtime.agents.stigen.ai_agentnetworks.yaml
-  - runtime.agents.stigen.ai_memorystores.yaml
-  - runtime.agents.stigen.ai_memoryretrievers.yaml
+  - smolagents.smol-agents.ai_smolagents.yaml
+  - smolagents.smol-agents.ai_smolagentplatforms.yaml
+  - agents.smol-agents.ai_agentnodepools.yaml
+  - runtime.agents.smol-agents.ai_agents.yaml
+  - runtime.agents.smol-agents.ai_tools.yaml
+  - runtime.agents.smol-agents.ai_modelproviders.yaml
+  - runtime.agents.smol-agents.ai_agentruns.yaml
+  - runtime.agents.smol-agents.ai_agentsessions.yaml
+  - runtime.agents.smol-agents.ai_agentpolicies.yaml
+  - runtime.agents.smol-agents.ai_agentnetworks.yaml
+  - runtime.agents.smol-agents.ai_memorystores.yaml
+  - runtime.agents.smol-agents.ai_memoryretrievers.yaml

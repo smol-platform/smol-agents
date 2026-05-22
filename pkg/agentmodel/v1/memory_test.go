@@ -213,7 +213,7 @@ func validRetriever() MemoryRetrieverSpec {
 		},
 		Policy: []MemoryGrant{
 			{
-				Identity:   "spiffe://stigen.ai/ns/agents/sa/coder",
+				Identity:   "spiffe://smol-agents.ai/ns/agents/sa/coder",
 				Operations: []MemoryOperation{MemoryOpRead, MemoryOpWrite},
 				Namespaces: []string{"default"},
 			},

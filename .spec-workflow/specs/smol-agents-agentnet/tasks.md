@@ -22,7 +22,7 @@
 
 - [x] 6. AgentNetwork CRD wrapper + sample CRs
   - Files: operator/api/agentmodel/v1/agentnetwork.go,
-    operator/config/crd/runtime.agents.stigen.ai_agentnetworks.yaml,
+    operator/config/crd/runtime.agents.smol-agents.ai_agentnetworks.yaml,
     operator/config/samples/agentnetwork_*.yaml
   - _Requirements: R-AN-API-1_
 

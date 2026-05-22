@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/stigen/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // ChunkSpec controls how a document is split into chunks before embedding.

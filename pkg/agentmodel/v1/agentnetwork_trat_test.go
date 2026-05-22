@@ -7,7 +7,7 @@ import (
 
 func httpRes() ResourceTarget {
 	return ResourceTarget{Name: "gh", Kind: "http", Gateway: "https://api.github.com",
-		JWTAudience: "spiffe://stigen.ai/gh", LocalPort: 8080}
+		JWTAudience: "spiffe://smol-agents.ai/gh", LocalPort: 8080}
 }
 
 func ipSpec(p IdentityProxySpec) AgentNetworkSpec {
@@ -37,7 +37,7 @@ func TestValidate_Credential_OK(t *testing.T) {
 
 func TestValidate_TraT_RejectsTCP(t *testing.T) {
 	r := ResourceTarget{Name: "db", Kind: "tcp", Gateway: "10.0.0.5:5432",
-		LocalAddr: "127.0.0.1:5432", Authorize: []string{"spiffe://stigen.ai/db"}}
+		LocalAddr: "127.0.0.1:5432", Authorize: []string{"spiffe://smol-agents.ai/db"}}
 	r.TraT = &TraTInjection{Scope: "x"}
 	s := ipSpec(IdentityProxySpec{Resources: []ResourceTarget{r}, TTS: &TTSRef{URL: "https://tts/token"}})
 	mustErr(t, ValidateAgentNetwork(s), "requires kind=http")

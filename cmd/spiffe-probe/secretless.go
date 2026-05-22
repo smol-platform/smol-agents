@@ -15,11 +15,11 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/agentnet/proxy"
-	"github.com/stigen/smol-agents/pkg/identity"
-	"github.com/stigen/smol-agents/pkg/secrets"
-	"github.com/stigen/smol-agents/pkg/trat"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/proxy"
+	"github.com/smol-platform/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 // runSecretless exercises the full secretless-egress chain from inside the
@@ -49,10 +49,10 @@ func runSecretless(ctx context.Context, socket, githubURL, ttsURL, ttsAud string
 		return false
 	}
 	meID := svid.ID
-	td := meID.TrustDomain().IDString() // e.g. spiffe://stigen.ai
+	td := meID.TrustDomain().IDString() // e.g. spiffe://smol-agents.ai
 
 	// (1) Upstream strictness: a non-minted token must be rejected.
-	if code, _ := httpGet(ctx, githubURL+"/repos/stigen/app", "Bearer not-a-minted-token"); code != http.StatusUnauthorized {
+	if code, _ := httpGet(ctx, githubURL+"/repos/smol-platform/app", "Bearer not-a-minted-token"); code != http.StatusUnauthorized {
 		fail(id, "fake-github accepted a non-minted token: status %d, want 401", code)
 		return false
 	}
@@ -77,7 +77,7 @@ func runSecretless(ctx context.Context, socket, githubURL, ttsURL, ttsAud string
 	brokerSock := filepath.Join(brokerDir, "b.sock")
 
 	cp := secrets.NewStaticCredentialPolicy()
-	cp.Grant(meID, "github:repo:read", "github", "stigen/app")
+	cp.Grant(meID, "github:repo:read", "github", "smol-platform/app")
 	broker := &secrets.Server{
 		SocketPath:  brokerSock,
 		MaxLeaseTTL: 5 * time.Minute,
@@ -144,7 +144,7 @@ func runSecretless(ctx context.Context, socket, githubURL, ttsURL, ttsAud string
 	}
 
 	// (2) Request through the sidecar: mint → inject → upstream.
-	code, body := httpGet(ctx, "http://"+sidecar+"/repos/stigen/app", "")
+	code, body := httpGet(ctx, "http://"+sidecar+"/repos/smol-platform/app", "")
 	if code != http.StatusOK {
 		fail(id, "sidecar github resource: status %d: %s", code, body)
 		return false

@@ -20,8 +20,8 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/identity"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/identity"
 )
 
 // fakeIdentity implements identity.Source enough for the HTTP proxy
@@ -53,9 +53,9 @@ func TestHTTPProxy_AddsBearerJWT(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "billing", Kind: "http", LocalPort: int32(port),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/infra/sa/billing",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/infra/sa/billing",
 		},
-		Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")},
+		Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")},
 		JWTFetcher: func(_ context.Context, aud string) (string, error) {
 			return "test-jwt-for-" + aud, nil
 		},
@@ -72,7 +72,7 @@ func TestHTTPProxy_AddsBearerJWT(t *testing.T) {
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
-	if !strings.HasPrefix(capturedAuth, "Bearer test-jwt-for-spiffe://stigen.ai/ns/infra/sa/billing") {
+	if !strings.HasPrefix(capturedAuth, "Bearer test-jwt-for-spiffe://smol-agents.ai/ns/infra/sa/billing") {
 		t.Errorf("upstream Auth = %q", capturedAuth)
 	}
 }
@@ -88,9 +88,9 @@ func TestHTTPProxy_UpstreamErrorBubbles(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "x", Kind: "http", LocalPort: int32(freePort(t)),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/x/sa/x",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/x/sa/x",
 		},
-		Identity:   &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")},
+		Identity:   &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")},
 		Metrics:    m,
 		JWTFetcher: func(_ context.Context, _ string) (string, error) { return "tok", nil },
 	}
@@ -116,9 +116,9 @@ func TestHTTPProxy_JWTFailureReturns503(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "x", Kind: "http", LocalPort: int32(freePort(t)),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/x/sa/x",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/x/sa/x",
 		},
-		Identity:   &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")},
+		Identity:   &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")},
 		JWTFetcher: func(_ context.Context, _ string) (string, error) { return "", errors.New("svid down") },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -135,7 +135,7 @@ func TestHTTPProxy_JWTFailureReturns503(t *testing.T) {
 }
 
 func TestSidecar_Run_RequiresResources(t *testing.T) {
-	s := &Sidecar{Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")}}
+	s := &Sidecar{Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")}}
 	if err := s.Run(context.Background()); err == nil {
 		t.Error("expected error for empty resources")
 	}
@@ -143,7 +143,7 @@ func TestSidecar_Run_RequiresResources(t *testing.T) {
 
 func TestSidecar_Run_FailingResourceCancelsAll(t *testing.T) {
 	s := &Sidecar{
-		Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")},
+		Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")},
 		Spec: v1.IdentityProxySpec{Resources: []v1.ResourceTarget{
 			{Name: "bad", Kind: "tcp"}, // no LocalAddr → fails immediately
 		}},
@@ -159,7 +159,7 @@ func TestSidecar_Run_FailingResourceCancelsAll(t *testing.T) {
 func TestTCPProxy_RejectsWrongKind(t *testing.T) {
 	p := &TCPProxy{
 		Resource: v1.ResourceTarget{Kind: "http", LocalAddr: "127.0.0.1:0"},
-		Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")},
+		Identity: &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")},
 	}
 	if err := p.Run(context.Background()); err == nil {
 		t.Error("expected wrong-kind error")

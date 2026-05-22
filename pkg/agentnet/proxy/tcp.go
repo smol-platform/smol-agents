@@ -8,9 +8,9 @@ import (
 	"net"
 	"sync"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/identity"
-	"github.com/stigen/smol-agents/pkg/transport"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/transport"
 )
 
 // TCPProxy is a one-resource byte forwarder. Implements R-AN-PROXY-1.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 func TestCompile_HappyPath(t *testing.T) {

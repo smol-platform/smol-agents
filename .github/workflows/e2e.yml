@@ -82,18 +82,18 @@ jobs:
           go-version-file: go.mod
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
+          role-to-assume: arn:aws:iam::${{ secrets.SMOL_AGENTS_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
           aws-region: us-east-2
       - name: build + push bundles
         env:
-          AWS_PROFILE: stigen
+          AWS_PROFILE: smol-agents
           AWS_REGION: us-east-2
           L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
           L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
         run: make l2-bundle
       - name: make e2e-l2-smoke
         env:
-          AWS_PROFILE: stigen
+          AWS_PROFILE: smol-agents
           AWS_REGION: us-east-2
           L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
           L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
@@ -119,18 +119,18 @@ jobs:
       - name: configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.STIGEN_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
+          role-to-assume: arn:aws:iam::${{ secrets.SMOL_AGENTS_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
           aws-region: us-east-2
       - name: build + push bundles
         env:
-          AWS_PROFILE: stigen
+          AWS_PROFILE: smol-agents
           AWS_REGION: us-east-2
           L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
           L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
         run: make l2-bundle
       - name: make e2e-l2
         env:
-          AWS_PROFILE: stigen
+          AWS_PROFILE: smol-agents
           AWS_REGION: us-east-2
           L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
           L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}

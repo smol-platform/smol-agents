@@ -9,10 +9,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	operatorv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	purev1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/store"
+	operatorv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	purev1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
 )
 
 // scheme registers the operator CRDs so the fake client recognises them.

@@ -30,7 +30,7 @@ func TestGitHubAppBackend_Mint(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/stigen/app/installation", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/smol-platform/app/installation", func(w http.ResponseWriter, r *http.Request) {
 		sawIss = bearerIssuer(t, r)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": 42})
 	})
@@ -57,7 +57,7 @@ func TestGitHubAppBackend_Mint(t *testing.T) {
 	lease, err := b.Mint(context.Background(), CredentialRequest{
 		Name:   "github",
 		Scope:  "github:repo:read",
-		ReqCtx: map[string]any{"repo": "stigen/app"},
+		ReqCtx: map[string]any{"repo": "smol-platform/app"},
 	})
 	if err != nil {
 		t.Fatalf("Mint: %v", err)

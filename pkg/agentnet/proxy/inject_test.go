@@ -12,8 +12,8 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/trat"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 type fakeTraTMinter struct {
@@ -43,7 +43,7 @@ func (f *fakeBroker) Mint(_ context.Context, name, compactTraT string) ([]byte, 
 
 func startProxy(t *testing.T, p *HTTPProxy) string {
 	t.Helper()
-	p.Identity = &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("stigen.ai")}
+	p.Identity = &fakeIdentity{td: spiffeid.RequireTrustDomainFromString("smol-agents.ai")}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = p.Run(ctx) }()
@@ -66,12 +66,12 @@ func TestHTTPProxy_InjectsTraT(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "internal", Kind: "http", LocalPort: int32(freePort(t)),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/x/sa/x",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/x/sa/x",
 			TraT: &v1.TraTInjection{Scope: "github:repo:read"},
 		},
 		JWTFetcher:   func(_ context.Context, _ string) (string, error) { return "svid", nil },
 		TraTMinter:   m,
-		TraTAudience: "spiffe://stigen.ai",
+		TraTAudience: "spiffe://smol-agents.ai",
 	}
 	addr := startProxy(t, p)
 
@@ -88,7 +88,7 @@ func TestHTTPProxy_InjectsTraT(t *testing.T) {
 	if auth != "Bearer svid" {
 		t.Errorf("Authorization = %q, want Bearer svid (agent identity preserved)", auth)
 	}
-	if m.gotScope != "github:repo:read" || m.gotAud != "spiffe://stigen.ai" {
+	if m.gotScope != "github:repo:read" || m.gotAud != "spiffe://smol-agents.ai" {
 		t.Errorf("minter got scope=%q aud=%q", m.gotScope, m.gotAud)
 	}
 }
@@ -110,7 +110,7 @@ func TestHTTPProxy_InjectsCredential_AgentBlind(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "github", Kind: "http", LocalPort: int32(freePort(t)),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/x/sa/x",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/x/sa/x",
 			Credential: &v1.CredentialInjection{Name: "github", Scope: "github:repo:read"},
 		},
 		JWTFetcher: func(_ context.Context, _ string) (string, error) {
@@ -119,11 +119,11 @@ func TestHTTPProxy_InjectsCredential_AgentBlind(t *testing.T) {
 		},
 		TraTMinter:   m,
 		Broker:       b,
-		TraTAudience: "spiffe://stigen.ai",
+		TraTAudience: "spiffe://smol-agents.ai",
 	}
 	addr := startProxy(t, p)
 
-	resp, err := http.Get("http://" + addr + "/repos/stigen/app")
+	resp, err := http.Get("http://" + addr + "/repos/smol-platform/app")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -161,13 +161,13 @@ func TestHTTPProxy_CredentialMintFailureFailsClosed(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "github", Kind: "http", LocalPort: int32(freePort(t)),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/x/sa/x",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/x/sa/x",
 			Credential: &v1.CredentialInjection{Name: "github", Scope: "s"},
 		},
 		JWTFetcher:   func(_ context.Context, _ string) (string, error) { return "svid", nil },
 		TraTMinter:   &fakeTraTMinter{compact: "authz-trat"},
 		Broker:       &fakeBroker{err: fmt.Errorf("broker denied")},
-		TraTAudience: "spiffe://stigen.ai",
+		TraTAudience: "spiffe://smol-agents.ai",
 	}
 	addr := startProxy(t, p)
 
@@ -193,13 +193,13 @@ func TestHTTPProxy_TraTMintFailureFailsClosed(t *testing.T) {
 	p := &HTTPProxy{
 		Resource: v1.ResourceTarget{
 			Name: "github", Kind: "http", LocalPort: int32(freePort(t)),
-			Gateway: upstream.URL, JWTAudience: "spiffe://stigen.ai/ns/x/sa/x",
+			Gateway: upstream.URL, JWTAudience: "spiffe://smol-agents.ai/ns/x/sa/x",
 			Credential: &v1.CredentialInjection{Name: "github", Scope: "s"},
 		},
 		JWTFetcher:   func(_ context.Context, _ string) (string, error) { return "svid", nil },
 		TraTMinter:   &fakeTraTMinter{err: fmt.Errorf("tts down")},
 		Broker:       b,
-		TraTAudience: "spiffe://stigen.ai",
+		TraTAudience: "spiffe://smol-agents.ai",
 	}
 	addr := startProxy(t, p)
 

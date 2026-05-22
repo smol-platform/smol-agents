@@ -12,7 +12,7 @@ something goes wrong.
 
 | Requirement | Notes |
 |---|---|
-| `AWS_PROFILE=stigen` | the sandbox account; set in the shell before any `make e2e-l2*` |
+| `AWS_PROFILE=smol-agents` | the sandbox account; set in the shell before any `make e2e-l2*` |
 | `AWS_REGION=us-east-2` | enforced by both Make and the L2 driver — wrong region fails fast |
 | Terraform module applied | `cd infra/terraform/aws-e2e && terraform apply` once per account; provisions the IAM role, S3 bucket, ECR registry, sweeper Lambda, and budget alarm |
 | Manifest + image bundles | `make l2-bundle` rebuilds both; cloud-init pulls them at instance-start |
@@ -62,7 +62,7 @@ If neither materializes, cloud-init is stuck. From the test log,
 grab the InstanceID and:
 
 ```bash
-aws --profile stigen --region us-east-2 ssm start-session --target i-XXXXXXX
+aws --profile smol-agents --region us-east-2 ssm start-session --target i-XXXXXXX
 sudo journalctl -u cloud-final -b
 sudo tail /var/log/cloud-init-output.log
 ```
@@ -98,7 +98,7 @@ To clean immediately:
 ```bash
 make e2e-clean-aws
 # or, scoped to one instance:
-aws --profile stigen --region us-east-2 ec2 terminate-instances --instance-ids i-XXXXXXX
+aws --profile smol-agents --region us-east-2 ec2 terminate-instances --instance-ids i-XXXXXXX
 ```
 
 The sweeper logs every termination to CloudWatch under
@@ -114,7 +114,7 @@ before AWS reclaims the instance.
 If your test failed with no log on the test host, fetch:
 
 ```bash
-aws --profile stigen s3 cp s3://${L2_ARTIFACT_BUCKET}/spot-interrupt-logs/${RUN_ID}.tgz - \
+aws --profile smol-agents s3 cp s3://${L2_ARTIFACT_BUCKET}/spot-interrupt-logs/${RUN_ID}.tgz - \
   | tar -tz | head
 ```
 
@@ -144,7 +144,7 @@ must set them again:
 
 | Kind | Name | Value | Source |
 |---|---|---|---|
-| Secret | `STIGEN_AWS_ACCOUNT_ID` | 12-digit AWS account id of the sandbox account | the account hosting the e2e role |
+| Secret | `SMOL_AGENTS_AWS_ACCOUNT_ID` | 12-digit AWS account id of the sandbox account | the account hosting the e2e role |
 | Variable | `L2_ARTIFACT_BUCKET` | S3 bucket for manifest bundles | `terraform -chdir=infra/terraform/aws-e2e output -raw artifact_bucket` |
 | Variable | `L2_ECR_REGISTRY` | ECR registry host | `terraform -chdir=infra/terraform/aws-e2e output -raw ecr_registry` |
 

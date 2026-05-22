@@ -15,7 +15,7 @@ components and explains the chosen design.
 - Kata + Firecracker RuntimeClass (`kata-fc`) is the default; gVisor is
   the supported fallback for managed K8s without KVM. Anything outside
   the hardened set requires an explicit `allowHostRuntime=true` override.
-- Trust domain `stigen.ai`, three modes (insecure/permissive/strict).
+- Trust domain `smol-agents.ai`, three modes (insecure/permissive/strict).
 
 ### Project Structure (`steering/structure.md`)
 - Hexagonal: `pkg/<concern>` → small interface + default impl,
@@ -96,7 +96,7 @@ graph TD
   - `type Source interface { X509Source() *workloadapi.X509Source; JWTSource() *workloadapi.JWTSource; Mode() Mode }`
   - `type Authorizer interface { Authorize(*x509svid.SVID) error }`
 - **Dependencies:** `go-spiffe/v2`.
-- **Reuses:** existing `stigen.ai` trust domain, ClusterSPIFFEID CRDs.
+- **Reuses:** existing `smol-agents.ai` trust domain, ClusterSPIFFEID CRDs.
 - **Implements:** R-IDN-1, R-IDN-2, R-IDN-3.
 
 ### `pkg/transport`
@@ -199,13 +199,13 @@ const (
 ### AgentConfig (top-level YAML)
 ```yaml
 mode: strict                 # insecure | permissive | strict
-trustDomain: stigen.ai
+trustDomain: smol-agents.ai
 identity:
   workloadAPI: unix:///run/spire/agent-sockets/api.sock
 transport:
   private:
     addr: 0.0.0.0:8443
-    authorize: spiffe://stigen.ai/ns/agents
+    authorize: spiffe://smol-agents.ai/ns/agents
   public:
     addr: 0.0.0.0:8444
     certPath: /etc/tls/tls.crt

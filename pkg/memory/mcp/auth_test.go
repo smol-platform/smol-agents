@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/stigen/smol-agents/pkg/memory/mcp"
+	"github.com/smol-platform/smol-agents/pkg/memory/mcp"
 )
 
 // tenantFromPath exercises the exported auth logic indirectly through
@@ -46,20 +46,20 @@ func TestAuthConfig_ExtractIdentity_TenantFromPath(t *testing.T) {
 		wantErr    bool
 	}{
 		{
-			spiffeID:   "spiffe://stigen.ai/ns/team-alpha/sa/coder",
+			spiffeID:   "spiffe://smol-agents.ai/ns/team-alpha/sa/coder",
 			wantTenant: "team-alpha",
 		},
 		{
-			spiffeID:   "spiffe://stigen.ai/ns/default",
+			spiffeID:   "spiffe://smol-agents.ai/ns/default",
 			wantTenant: "default",
 		},
 		{
-			spiffeID:   "spiffe://stigen.ai/ns/team-beta/sa/agent/run/abc",
+			spiffeID:   "spiffe://smol-agents.ai/ns/team-beta/sa/agent/run/abc",
 			wantTenant: "team-beta",
 		},
 		{
 			// No /ns/ segment → error
-			spiffeID: "spiffe://stigen.ai/workload/foo",
+			spiffeID: "spiffe://smol-agents.ai/workload/foo",
 			wantErr:  true,
 		},
 	}

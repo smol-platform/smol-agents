@@ -191,7 +191,7 @@ not test-infrastructure work).
   Satisfies: R-E2E-COST-4, R-E2E-CLEAN-3.
 
 - [ ] **T-3.4** — `make terraform-init` + `make terraform-apply`
-  targets that source `--profile stigen` and refuse to apply outside
+  targets that source `--profile smol-agents` and refuse to apply outside
   `us-east-2`.
   Satisfies: R-E2E-L2-1.
 
@@ -234,7 +234,7 @@ not test-infrastructure work).
 ## Phase 5 — L2 test driver
 
 - [ ] **T-5.1** — `l2/cluster.go` `Provision()` per design.md: assumes
-  stigen profile, refuses non-`us-east-2`, counts active L2 instances
+  smol-agents profile, refuses non-`us-east-2`, counts active L2 instances
   before provisioning (refuses if > 3), launches Spot, waits for
   SSM-ready, fetches kubeconfig via SSM. Returns `Env` impl.
   Satisfies: R-E2E-L2-1, R-E2E-L2-2, R-E2E-L2-3, R-E2E-L2-8.

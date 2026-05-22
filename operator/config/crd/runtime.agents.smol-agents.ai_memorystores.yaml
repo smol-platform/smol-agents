@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-  name: memorystores.runtime.agents.stigen.ai
+  name: memorystores.runtime.agents.smol-agents.ai
 spec:
-  group: runtime.agents.stigen.ai
+  group: runtime.agents.smol-agents.ai
   names:
     kind: MemoryStore
     listKind: MemoryStoreList

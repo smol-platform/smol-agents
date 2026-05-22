@@ -14,7 +14,7 @@ substrate](runtime-and-identity.md). You ship an agent the way you ship a
 stayed inside its budget, only called allow-listed tools, and only received
 credentials through the broker under its own SPIFFE identity.
 
-Six CRDs in `runtime.agents.stigen.ai/v1` cover declaration, invocation,
+Six CRDs in `runtime.agents.smol-agents.ai/v1` cover declaration, invocation,
 identity, and policy:
 
 | Kind | Role |
@@ -97,7 +97,7 @@ guarantees. Samples: `agent_claude_code.yaml`, `agent_codex.yaml`,
 `agent_pi.yaml`.
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata: { name: code-reviewer, namespace: tenant-a }
 spec:
@@ -120,7 +120,7 @@ spec:
       sizeGiB: 20
       mountPath: /var/agentfs
       backup:
-        s3: { bucket: stigen-agent-state, prefix: code-reviewer/, region: us-east-1 }
+        s3: { bucket: smol-agents-agent-state, prefix: code-reviewer/, region: us-east-1 }
         schedule: "@hourly"
         walSnapshotInterval: "30s"
       restore: { mode: latest, ifMissing: fresh }

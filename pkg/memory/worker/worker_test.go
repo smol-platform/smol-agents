@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/worker"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/worker"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ func validID(tenant, ns string) api.RequestIdentity {
 	return api.RequestIdentity{
 		Tenant:         tenant,
 		Namespace:      ns,
-		CallerSPIFFEID: "spiffe://stigen.ai/ns/" + tenant + "/sa/agent",
+		CallerSPIFFEID: "spiffe://smol-agents.ai/ns/" + tenant + "/sa/agent",
 		RetrieverRef:   tenant + "/default",
 	}
 }

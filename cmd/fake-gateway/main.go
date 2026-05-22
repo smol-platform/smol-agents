@@ -40,7 +40,7 @@ func main() {
 	tcpAddr := flag.String("tcp-addr", ":8443", "mTLS echo TCP listener")
 	httpAddr := flag.String("http-addr", ":8080", "HTTP echo + JWT validator")
 	jwtAudience := flag.String("jwt-audience", "", "expected JWT-SVID audience for HTTP path")
-	authorizeTCP := flag.String("authorize-tcp", "", "SPIFFE ID prefix that may dial the TCP echo (e.g. spiffe://stigen.ai/ns/tenant-a)")
+	authorizeTCP := flag.String("authorize-tcp", "", "SPIFFE ID prefix that may dial the TCP echo (e.g. spiffe://smol-agents.ai/ns/tenant-a)")
 	socketPath := flag.String("spire-socket", "unix:///run/spire/agent-sockets/api.sock", "SPIRE workload-API socket")
 	flag.Parse()
 

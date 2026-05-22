@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"time"
 
-	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
-	"github.com/stigen/smol-agents/pkg/agentruntime"
+	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
 
 // Client is an LLM that posts ChatRequest to a cmd/fake-llm server.

@@ -68,12 +68,12 @@ smol-agents/
 ### Order
 1. Standard library
 2. External (`github.com/...`, `google.golang.org/...`)
-3. Module-internal (`github.com/stigen/smol-agents/...`)
+3. Module-internal (`github.com/smol-platform/smol-agents/...`)
 
 `goimports` enforces with sections.
 
 ### Module Organization
-- Module path: `github.com/stigen/smol-agents`.
+- Module path: `github.com/smol-platform/smol-agents`.
 - No package may import `cmd/`.
 - `internal/` packages are private to this module.
 

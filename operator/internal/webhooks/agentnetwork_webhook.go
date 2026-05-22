@@ -6,8 +6,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // SetupAgentNetworkWebhook wires a validating webhook for

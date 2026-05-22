@@ -138,7 +138,7 @@ type CredentialInjection struct {
 ### Broker policy (illustrative)
 ```yaml
 # principal + TraT scope -> credential + backend + scoping
-- principal: spiffe://stigen.ai/ns/tenant-a/sa/alice-agent
+- principal: spiffe://smol-agents.ai/ns/tenant-a/sa/alice-agent
   scope: github:repo:read
   credential: github
   backend: github-app

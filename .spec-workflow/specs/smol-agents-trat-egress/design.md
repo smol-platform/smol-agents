@@ -27,7 +27,7 @@ fresh, correctly-scoped TraT.
 - go-spiffe/v2 for identity (the TraT `subject_token` is a JWT-SVID; the TTS
   connection is mTLS via X509-SVID). cilium/ebpf for the unchanged egress
   programs. No new kernel-side code.
-- Trust domain `stigen.ai` maps to the TraT `aud` (trust domain) by default.
+- Trust domain `smol-agents.ai` maps to the TraT `aud` (trust domain) by default.
 - Defense in depth: TraT is additive to mTLS + eBPF allow-list, not a
   replacement.
 

@@ -51,7 +51,7 @@ func TestL2_AgentNodePoolProvision(t *testing.T) {
 
 	name := fmt.Sprintf("e2e-kata-%d", time.Now().Unix())
 	child := "anp-" + name
-	manifest := fmt.Sprintf(`apiVersion: agents.stigen.ai/v1
+	manifest := fmt.Sprintf(`apiVersion: agents.smol-agents.ai/v1
 kind: AgentNodePool
 metadata: { name: %s }
 spec:
@@ -102,13 +102,13 @@ spec:
   restartPolicy: Never
   runtimeClassName: kata-fc
   tolerations:
-    - { key: agents.stigen.ai/isolation, operator: Equal, value: kata-fc, effect: NoSchedule }
+    - { key: agents.smol-agents.ai/isolation, operator: Equal, value: kata-fc, effect: NoSchedule }
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - { key: agents.stigen.ai/pool, operator: In, values: [%s] }
+              - { key: agents.smol-agents.ai/pool, operator: In, values: [%s] }
   containers:
     - name: uname
       image: docker.io/library/busybox:1.36
@@ -127,7 +127,7 @@ spec:
 		"k0s kubectl -n tenant-a get pod "+pod+" -o jsonpath='{.status.phase}'",
 		func(out []byte) bool { return bytes.Contains(out, []byte("Succeeded")) }); err != nil {
 		desc, _ := env.runSSM(ctx, "k0s kubectl -n tenant-a describe pod "+pod, 30*time.Second)
-		nodes, _ := env.runSSM(ctx, "k0s kubectl get nodes -l agents.stigen.ai/pool="+name, 20*time.Second)
+		nodes, _ := env.runSSM(ctx, "k0s kubectl get nodes -l agents.smol-agents.ai/pool="+name, 20*time.Second)
 		t.Fatalf("kata pod never Succeeded on a provisioned node: %v\nnodes=%s\ndescribe=%s", err, nodes, desc)
 	}
 	t.Logf("kata pod ran on a Karpenter-provisioned metal node (pool %q)", name)

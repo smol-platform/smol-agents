@@ -16,11 +16,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/internal/controllers/features"
-	"github.com/stigen/smol-agents/operator/internal/events"
-	"github.com/stigen/smol-agents/operator/internal/metrics"
-	flib "github.com/stigen/smol-agents/operator/pkg/features"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
+	"github.com/smol-platform/smol-agents/operator/internal/events"
+	"github.com/smol-platform/smol-agents/operator/internal/metrics"
+	flib "github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 // SmolAgentReconciler is the top-level controller. It dispatches to

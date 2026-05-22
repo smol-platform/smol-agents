@@ -74,7 +74,7 @@ Discriminated by `kind` (`identityProxy` | `wireguardMesh`). Samples:
 `agentnetwork_wg_server.yaml`, `agentnetwork_secretless_github.yaml`.
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork
 metadata: { name: db-proxy, namespace: tenant-a }
 spec:

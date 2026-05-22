@@ -159,9 +159,9 @@ wait_resource deployment smol-agents-system "" 180 || fail "operator not appeari
 $KCTL wait --for=condition=Available --timeout=180s \
   deployment -n smol-agents-system --all || fail "operator deploy"
 $KCTL wait --for=condition=Established --timeout=60s \
-  crd/smolagents.agents.stigen.ai \
-  crd/agentnetworks.runtime.agents.stigen.ai \
-  crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+  crd/smolagents.agents.smol-agents.ai \
+  crd/agentnetworks.runtime.agents.smol-agents.ai \
+  crd/agentruns.runtime.agents.smol-agents.ai || fail "CRDs established"
 
 touch "$ROOT/var/log/l2-bootstrap.READY"
 echo "=== bootstrap complete; keeping container alive to keep k0s running ==="

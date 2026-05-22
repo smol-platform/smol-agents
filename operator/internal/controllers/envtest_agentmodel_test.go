@@ -22,13 +22,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	"github.com/stigen/smol-agents/operator/internal/controllers/agentmodel"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers/agentmodel"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // agentmodelEnv is a clean envtest environment for the
-// runtime.agents.stigen.ai/v1 controllers — separate from setupEnv()
+// runtime.agents.smol-agents.ai/v1 controllers — separate from setupEnv()
 // so each suite gets its own manager with only its reconciler family
 // registered.
 type agentmodelEnv struct {
@@ -292,7 +292,7 @@ func TestEnvtest_AgentNetwork_ProxyHappyPath(t *testing.T) {
 						Name: "orders-db", Kind: "tcp",
 						LocalAddr: "127.0.0.1:5432",
 						Gateway:   "pg.svc:8443",
-						Authorize: []string{"spiffe://stigen.ai/ns/infra/sa/pg"},
+						Authorize: []string{"spiffe://smol-agents.ai/ns/infra/sa/pg"},
 					},
 				},
 				Egress: pure.EgressPolicy{

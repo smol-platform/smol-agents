@@ -9,7 +9,7 @@ EARS-style. Each requirement gets a stable ID for cross-reference from
 
 **R-E2E-DRV-2** — When the user invokes `go test -tags=e2e_l1`, the system **shall** detect the local container runtime (OrbStack vs native docker), bring up a kind cluster inside it, and run all L0+L1 scenarios.
 
-**R-E2E-DRV-3** — When the user invokes `go test -tags=e2e_l2`, the system **shall** assume the `stigen` AWS profile, provision a single Spot bare-metal EC2 in `us-east-2`, bootstrap k0s + Kata, run all scenarios including L2-only ones, and terminate the instance regardless of test outcome.
+**R-E2E-DRV-3** — When the user invokes `go test -tags=e2e_l2`, the system **shall** assume the `smol-agents` AWS profile, provision a single Spot bare-metal EC2 in `us-east-2`, bootstrap k0s + Kata, run all scenarios including L2-only ones, and terminate the instance regardless of test outcome.
 
 **R-E2E-DRV-4** — Each scenario in `test/e2e/fullstack/shared/scenarios.go` **shall** run unmodified at every ring whose `Env.Capabilities()` advertises the scenario's required capabilities (no copy-pasted scenario logic across rings).
 
@@ -43,7 +43,7 @@ EARS-style. Each requirement gets a stable ID for cross-reference from
 
 ## L2 — single-EC2 + k0s on AWS (R-E2E-L2-*)
 
-**R-E2E-L2-1** — When L2 starts, the system **shall** assume the `stigen` AWS profile (or assume role via OIDC in CI) and operate exclusively in `us-east-2`. If `AWS_REGION` is set to anything else, the driver **shall** abort with a hard error.
+**R-E2E-L2-1** — When L2 starts, the system **shall** assume the `smol-agents` AWS profile (or assume role via OIDC in CI) and operate exclusively in `us-east-2`. If `AWS_REGION` is set to anything else, the driver **shall** abort with a hard error.
 
 **R-E2E-L2-2** — When L2 provisions, the system **shall** request a Spot `c6gd.metal` instance, tagged with `smol-agents-e2e=L2`, `run-id=<uuid>`, and `expires-at=<rfc3339+1h>`.
 
@@ -120,6 +120,6 @@ every ring that has the required capability.
 
 **R-E2E-VRF-2** — A `make e2e-l0` target **shall** exit zero only when every L0-applicable scenario passes. Same for `e2e-l1` and `e2e-l2`.
 
-**R-E2E-VRF-3** — A `make e2e-clean-aws` target **shall** terminate every `smol-agents-e2e=*` resource in the stigen account (manual escape hatch).
+**R-E2E-VRF-3** — A `make e2e-clean-aws` target **shall** terminate every `smol-agents-e2e=*` resource in the smol-agents account (manual escape hatch).
 
 **R-E2E-VRF-4** — CI **shall** run L0+L1 on every PR. L2 **shall** run on `/test-l2` PR comment, on push to `main`, and nightly at 02:00 UTC.

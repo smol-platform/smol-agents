@@ -15,8 +15,8 @@ keywords:
   - knative
   - mtls
   - secrets
-home: https://github.com/stigen/smol-agents
+home: https://github.com/smol-platform/smol-agents
 sources:
-  - https://github.com/stigen/smol-agents
+  - https://github.com/smol-platform/smol-agents
 maintainers:
-  - name: stigen
+  - name: smol-agents

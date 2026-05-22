@@ -227,14 +227,14 @@ Budget alarm:
 
 ### AWS account / region / profile
 
-- **Account**: `stigen` sandbox (assume role via OIDC in CI; `aws
-  --profile stigen` locally).
+- **Account**: `smol-agents` sandbox (assume role via OIDC in CI; `aws
+  --profile smol-agents` locally).
 - **Region**: `us-east-2`.
 - **All AWS SDK calls** must explicitly set region; no implicit `default`
   region usage. Test driver fails loudly if `AWS_REGION` ≠ `us-east-2`
   to prevent accidental cross-region cost.
 - **Terraform backend**: S3 bucket `smol-agents-e2e-tfstate-us-east-2`
-  in the stigen account, with DynamoDB lock table.
+  in the smol-agents account, with DynamoDB lock table.
 
 ### IAM
 
@@ -344,6 +344,6 @@ Pulled from `bootstrap_pitfalls.md`:
 - **No real cloud egress targets**: tests dial only fakes inside the
   cluster; egress to `1.1.1.1` is for the eBPF drop test specifically
   (negligible cost, real kernel path).
-- **No multi-region / DR**: single region (us-east-2, stigen sandbox
+- **No multi-region / DR**: single region (us-east-2, smol-agents sandbox
   account). Region/account hard-coded; switching is a deliberate
   change, not a config flag.

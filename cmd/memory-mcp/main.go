@@ -51,16 +51,16 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	operatorv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/identity"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	apigrpc "github.com/stigen/smol-agents/pkg/memory/api/grpc"
-	"github.com/stigen/smol-agents/pkg/memory/audit"
-	"github.com/stigen/smol-agents/pkg/memory/mcp"
-	"github.com/stigen/smol-agents/pkg/memory/quota"
-	"github.com/stigen/smol-agents/pkg/memory/store"
+	operatorv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	apigrpc "github.com/smol-platform/smol-agents/pkg/memory/api/grpc"
+	"github.com/smol-platform/smol-agents/pkg/memory/audit"
+	"github.com/smol-platform/smol-agents/pkg/memory/mcp"
+	"github.com/smol-platform/smol-agents/pkg/memory/quota"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
 )
 
 func main() {

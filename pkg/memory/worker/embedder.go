@@ -17,7 +17,7 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
 // Embedder turns a text string into a dense float32 vector. Implementations

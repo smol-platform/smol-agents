@@ -98,7 +98,7 @@ This is all configured on an `AgentNetwork` (`identityProxy`). From
 `agentnetwork_secretless_github.yaml`:
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork
 metadata: { name: github-secretless, namespace: tenant-a }
 spec:
@@ -107,14 +107,14 @@ spec:
   identityProxy:
     tts:                                       # mint + verify Txn-Tokens
       url: https://tts.security.svc/token
-      subjectAudience: spiffe://stigen.ai/ns/security/sa/tts
+      subjectAudience: spiffe://smol-agents.ai/ns/security/sa/tts
       jwksUrl: https://tts.security.svc/jwks   # required: broker verifies the TraT
     resources:
       - name: github
         kind: http
         localPort: 9200
         gateway: https://api.github.com/
-        jwtAudience: spiffe://stigen.ai/ns/tenant-a/sa/agent
+        jwtAudience: spiffe://smol-agents.ai/ns/tenant-a/sa/agent
         credential:
           name: github                 # broker credential/policy key
           scope: github:repo:read      # the authorizing TraT's intent

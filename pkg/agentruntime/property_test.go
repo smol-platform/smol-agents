@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"pgregory.net/rapid"
 )
 

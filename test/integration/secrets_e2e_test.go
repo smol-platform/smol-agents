@@ -14,13 +14,13 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
 // Test the full client/server round trip including the wire protocol and
 // in-memory backend. Uses the FixedPeerAttestor so the test is OS-agnostic.
 func TestIntegration_BrokerRoundTrip(t *testing.T) {
-	td := spiffeid.RequireTrustDomainFromString("stigen.ai")
+	td := spiffeid.RequireTrustDomainFromString("smol-agents.ai")
 	a := spiffeid.RequireFromPath(td, "/ns/agents/sa/a")
 
 	// Darwin's UDS path limit is 104 chars; t.TempDir() under /var/folders

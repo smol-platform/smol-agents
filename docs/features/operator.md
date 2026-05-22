@@ -53,16 +53,16 @@ One hardened agent workload. Fields mirror the old `values.yaml` but are typed,
 validated, and feature-flagged:
 
 ```yaml
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgent
 metadata: { name: hello, namespace: tenant-a }
 spec:
-  trustDomain: stigen.ai
+  trustDomain: smol-agents.ai
   mode: strict
   deploymentKind: knative          # knative | deployment | statefulset
   features:
     sandbox:    { runtimeClass: kata-fc }
-    transport:  { private: { authorize: ["prefix:spiffe://stigen.ai/ns/tenant-a"] } }
+    transport:  { private: { authorize: ["prefix:spiffe://smol-agents.ai/ns/tenant-a"] } }
     secrets:    { enabled: true }
     ebpf:       { programs: [syscalls, network] }
     observability: { otlpEndpoint: "otel-collector.observability:4317" }
@@ -139,5 +139,5 @@ and aggregator/status machinery. Coverage is enforced with `envtest`
 ## See also
 
 - [Runtime & Identity](runtime-and-identity.md) — the guarantees being flagged.
-- [Agent Model](agent-model.md) — the richer `runtime.agents.stigen.ai` workload CRDs.
+- [Agent Model](agent-model.md) — the richer `runtime.agents.smol-agents.ai` workload CRDs.
 - [Node Provisioning](node-provisioning.md) — the operator owning node shape.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/agentruntime/harness"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/harness"
 )
 
 // RegistryRunner adapts a harness.Registry to the executor's

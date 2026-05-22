@@ -20,8 +20,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 const (
@@ -57,8 +57,8 @@ func workerLabels(retriever *amv1.MemoryRetriever) map[string]string {
 		"app.kubernetes.io/name":             "memory-worker",
 		"app.kubernetes.io/instance":         retriever.Name,
 		"app.kubernetes.io/managed-by":       "smol-agents-operator",
-		"runtime.agents.stigen.ai/retriever": retriever.Name,
-		"runtime.agents.stigen.ai/component": "memory-worker",
+		"runtime.agents.smol-agents.ai/retriever": retriever.Name,
+		"runtime.agents.smol-agents.ai/component": "memory-worker",
 	}
 }
 
@@ -68,8 +68,8 @@ func mcpLabels(retriever *amv1.MemoryRetriever) map[string]string {
 		"app.kubernetes.io/name":             "memory-mcp",
 		"app.kubernetes.io/instance":         retriever.Name,
 		"app.kubernetes.io/managed-by":       "smol-agents-operator",
-		"runtime.agents.stigen.ai/retriever": retriever.Name,
-		"runtime.agents.stigen.ai/component": "memory-mcp",
+		"runtime.agents.smol-agents.ai/retriever": retriever.Name,
+		"runtime.agents.smol-agents.ai/component": "memory-mcp",
 	}
 }
 
@@ -174,8 +174,8 @@ func BuildWorkerDeployment(
 			Replicas: ptr.To(workerReplicas),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"runtime.agents.stigen.ai/retriever": retriever.Name,
-					"runtime.agents.stigen.ai/component": "memory-worker",
+					"runtime.agents.smol-agents.ai/retriever": retriever.Name,
+					"runtime.agents.smol-agents.ai/component": "memory-worker",
 				},
 			},
 			Template: corev1.PodTemplateSpec{
@@ -275,8 +275,8 @@ func BuildWorkerService(retriever *amv1.MemoryRetriever) *corev1.Service {
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				"runtime.agents.stigen.ai/retriever": retriever.Name,
-				"runtime.agents.stigen.ai/component": "memory-worker",
+				"runtime.agents.smol-agents.ai/retriever": retriever.Name,
+				"runtime.agents.smol-agents.ai/component": "memory-worker",
 			},
 			Ports: []corev1.ServicePort{
 				{
@@ -316,8 +316,8 @@ func BuildMCPDeployment(
 			Replicas: ptr.To(workerReplicas),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"runtime.agents.stigen.ai/retriever": retriever.Name,
-					"runtime.agents.stigen.ai/component": "memory-mcp",
+					"runtime.agents.smol-agents.ai/retriever": retriever.Name,
+					"runtime.agents.smol-agents.ai/component": "memory-mcp",
 				},
 			},
 			Template: corev1.PodTemplateSpec{
@@ -417,8 +417,8 @@ func BuildMCPService(retriever *amv1.MemoryRetriever) *corev1.Service {
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				"runtime.agents.stigen.ai/retriever": retriever.Name,
-				"runtime.agents.stigen.ai/component": "memory-mcp",
+				"runtime.agents.smol-agents.ai/retriever": retriever.Name,
+				"runtime.agents.smol-agents.ai/component": "memory-mcp",
 			},
 			Ports: []corev1.ServicePort{
 				{

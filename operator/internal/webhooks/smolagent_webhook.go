@@ -4,15 +4,15 @@ import (
 	"errors"
 	"fmt"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/pkg/features"
-	pkgsandbox "github.com/stigen/smol-agents/pkg/sandbox"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
+	pkgsandbox "github.com/smol-platform/smol-agents/pkg/sandbox"
 )
 
 // AllowInsecureAnnotation is the annotation a tenant must set to opt
 // into mode=insecure. Mirrors the platform's
 // `SMOL_AGENTS_ALLOW_INSECURE` runtime guard.
-const AllowInsecureAnnotation = "smol-agents.stigen.ai/allow-insecure"
+const AllowInsecureAnnotation = "smol-agents.smol-agents.ai/allow-insecure"
 
 // ValidateAgent runs every R-OP-WH-1 admission rule against cr,
 // optionally consulting platform's featurePolicy when supplied.

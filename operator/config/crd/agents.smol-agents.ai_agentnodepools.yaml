@@ -10,9 +10,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-  name: agentnodepools.agents.stigen.ai
+  name: agentnodepools.agents.smol-agents.ai
 spec:
-  group: agents.stigen.ai
+  group: agents.smol-agents.ai
   names:
     kind: AgentNodePool
     listKind: AgentNodePoolList

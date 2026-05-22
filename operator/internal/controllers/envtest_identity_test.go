@@ -8,7 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // TestEnvtest_Identity_HappyPath drives the controller against a real

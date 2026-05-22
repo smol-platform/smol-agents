@@ -4,7 +4,7 @@
 # and the SPIFFE / mTLS posture described in design.md.
 
 mode: knative           # knative | deployment | statefulset
-trustDomain: stigen.ai
+trustDomain: smol-agents.ai
 
 # ----------------------------------------------------------------------
 # Sandbox (R-SBX-1)
@@ -54,7 +54,7 @@ agent:
       private:
         addr: "0.0.0.0:8443"
         authorize:
-          - "prefix:spiffe://stigen.ai/ns/agents"
+          - "prefix:spiffe://smol-agents.ai/ns/agents"
       public:
         addr: ""               # disable public listener by default
         certPath: /etc/tls/tls.crt
@@ -96,7 +96,7 @@ spire:
   workloadAPISocket: /run/spire/agent-sockets/api.sock
   clusterSPIFFEID:
     create: true
-    spiffeIDTemplate: "spiffe://stigen.ai/ns/{{ .Release.Namespace }}/sa/{{ .Values.serviceAccount.name }}"
+    spiffeIDTemplate: "spiffe://smol-agents.ai/ns/{{ .Release.Namespace }}/sa/{{ .Values.serviceAccount.name }}"
 
 serviceAccount:
   create: true

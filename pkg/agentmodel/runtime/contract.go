@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // RunRef identifies an AgentRun unambiguously across reconciles.

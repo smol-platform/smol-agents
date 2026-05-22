@@ -17,9 +17,9 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"gopkg.in/yaml.v3"
 
-	"github.com/stigen/smol-agents/internal/version"
-	"github.com/stigen/smol-agents/pkg/observability"
-	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/internal/version"
+	"github.com/smol-platform/smol-agents/pkg/observability"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
 // brokerConfig describes the broker's YAML configuration.

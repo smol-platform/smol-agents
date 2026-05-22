@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/audit"
-	"github.com/stigen/smol-agents/pkg/memory/policy"
-	"github.com/stigen/smol-agents/pkg/memory/quota"
-	"github.com/stigen/smol-agents/pkg/memory/store"
-	"github.com/stigen/smol-agents/pkg/trat"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/audit"
+	"github.com/smol-platform/smol-agents/pkg/memory/policy"
+	"github.com/smol-platform/smol-agents/pkg/memory/quota"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 // Gateway is the memory-mcp business logic layer. It validates identity,

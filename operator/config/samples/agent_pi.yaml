@@ -1,6 +1,6 @@
 # Inflection AI Pi — HTTP-based harness.
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata:
   name: pi-companion

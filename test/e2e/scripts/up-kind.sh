@@ -24,7 +24,7 @@ echo "==> installing SPIRE (CRDs + agent + server)"
 "$HELM" repo update
 "$HELM" upgrade --install spire-crds spiffe/spire-crds --namespace spire-server --create-namespace
 "$HELM" upgrade --install spire spiffe/spire --namespace spire-server \
-  --set global.spire.trustDomain=stigen.ai
+  --set global.spire.trustDomain=smol-agents.ai
 
 echo "==> installing smol-agents chart"
 "$HELM" upgrade --install agents deploy/helm --namespace smol-agents --create-namespace

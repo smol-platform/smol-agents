@@ -24,7 +24,7 @@ agent / IDE ──MCP──▶ memory-mcp (gateway: authz · tenant · quota · 
 ## 1. Declare a backend (`MemoryStore`)
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: MemoryStore
 metadata: { name: team-vectors, namespace: team-alpha }
 spec:
@@ -54,7 +54,7 @@ The `metadata` name (namespace-qualified) is the **`retrieverRef`** an MCP clien
 names (e.g. `team-alpha/prod-knowledge`).
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: MemoryRetriever
 metadata: { name: prod-knowledge, namespace: team-alpha }
 spec:
@@ -68,10 +68,10 @@ spec:
   quota: { maxTopK: 50, requestsPerMinute: 120, maxWriteBytes: 1048576 }
   mutationsTraT: false                   # set true to require a TraT for write/delete
   policy:                                # DENY-BY-DEFAULT
-    - identity: spiffe://nixfleet.stigen.ai/ns/team-alpha/sa/agent
+    - identity: spiffe://nixfleet.smol-agents.ai/ns/team-alpha/sa/agent
       operations: [read, write]
       namespaces: [kb]
-    - identity: spiffe://nixfleet.stigen.ai/ns/team-alpha/sa/reviewer
+    - identity: spiffe://nixfleet.smol-agents.ai/ns/team-alpha/sa/reviewer
       operations: [read]
       namespaces: ["*"]
 ```
@@ -85,7 +85,7 @@ Point a `Tool kind=mcp` at the gateway; the agentnet sidecar injects the agent's
 JWT-SVID, which the gateway uses to derive the tenant.
 
 ```yaml
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Tool
 metadata: { name: memory, namespace: team-alpha }
 spec:

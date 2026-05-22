@@ -13,12 +13,12 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/internal/controllers"
-	"github.com/stigen/smol-agents/operator/internal/controllers/agentmodel"
-	memoryctrl "github.com/stigen/smol-agents/operator/internal/controllers/memory"
-	"github.com/stigen/smol-agents/operator/internal/webhooks"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers/agentmodel"
+	memoryctrl "github.com/smol-platform/smol-agents/operator/internal/controllers/memory"
+	"github.com/smol-platform/smol-agents/operator/internal/webhooks"
 )
 
 var (
@@ -49,7 +49,7 @@ func main() {
 		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
-		LeaderElectionID:        "smol-agents-operator.stigen.ai",
+		LeaderElectionID:        "smol-agents-operator.smol-agents.ai",
 		LeaderElectionNamespace: "smol-agents-system",
 	})
 	if err != nil {
@@ -80,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// runtime.agents.stigen.ai/v1 — agent-model CRDs.
+	// runtime.agents.smol-agents.ai/v1 — agent-model CRDs.
 	if err := (&agentmodel.AgentReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
@@ -100,7 +100,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// runtime.agents.stigen.ai/v1 — memory CRDs.
+	// runtime.agents.smol-agents.ai/v1 — memory CRDs.
 	if err := (&memoryctrl.MemoryRetrieverReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {

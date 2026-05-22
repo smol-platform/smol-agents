@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/stigen/smol-agents/pkg/ebpf"
+	"github.com/smol-platform/smol-agents/pkg/ebpf"
 )
 
 // Config drives the host loader.

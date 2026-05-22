@@ -55,7 +55,7 @@ func (a AuthorizeIDs) AsAuthorizer() tlsconfig.Authorizer {
 }
 
 // AuthorizePathPrefix matches any ID whose path begins with Prefix.
-// Useful for allowing all agents in a namespace e.g. spiffe://stigen.ai/ns/agents.
+// Useful for allowing all agents in a namespace e.g. spiffe://smol-agents.ai/ns/agents.
 type AuthorizePathPrefix struct {
 	TrustDomain spiffeid.TrustDomain
 	Prefix      string

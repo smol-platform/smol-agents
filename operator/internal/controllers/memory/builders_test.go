@@ -8,8 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // makeRetriever returns a minimal MemoryRetriever for testing.
@@ -86,7 +86,7 @@ func TestBuildServiceAccount(t *testing.T) {
 	if sa.Name != "mr-my-ret-sa" {
 		t.Errorf("name = %q, want mr-my-ret-sa", sa.Name)
 	}
-	if sa.Labels["runtime.agents.stigen.ai/retriever"] != "my-ret" {
+	if sa.Labels["runtime.agents.smol-agents.ai/retriever"] != "my-ret" {
 		t.Error("retriever label missing")
 	}
 	if sa.Labels["app.kubernetes.io/managed-by"] != "smol-agents-operator" {
@@ -160,10 +160,10 @@ func TestBuildWorkerDeployment_VectorStore(t *testing.T) {
 
 	// Selector matches pod labels.
 	sel := d.Spec.Selector.MatchLabels
-	if sel["runtime.agents.stigen.ai/component"] != "memory-worker" {
+	if sel["runtime.agents.smol-agents.ai/component"] != "memory-worker" {
 		t.Error("selector component label mismatch")
 	}
-	if sel["runtime.agents.stigen.ai/retriever"] != "my-ret" {
+	if sel["runtime.agents.smol-agents.ai/retriever"] != "my-ret" {
 		t.Error("selector retriever label mismatch")
 	}
 }
@@ -256,7 +256,7 @@ func TestBuildMCPDeployment(t *testing.T) {
 
 	// Selector.
 	sel := d.Spec.Selector.MatchLabels
-	if sel["runtime.agents.stigen.ai/component"] != "memory-mcp" {
+	if sel["runtime.agents.smol-agents.ai/component"] != "memory-mcp" {
 		t.Error("mcp selector component label mismatch")
 	}
 }
@@ -381,12 +381,12 @@ func TestBuildWorkerDeployment_TmpVolume(t *testing.T) {
 func TestWorkerLabels_ComponentValue(t *testing.T) {
 	r := makeRetriever("ns", "r")
 	lbls := workerLabels(r)
-	if lbls["runtime.agents.stigen.ai/component"] != "memory-worker" {
-		t.Errorf("component = %q, want memory-worker", lbls["runtime.agents.stigen.ai/component"])
+	if lbls["runtime.agents.smol-agents.ai/component"] != "memory-worker" {
+		t.Errorf("component = %q, want memory-worker", lbls["runtime.agents.smol-agents.ai/component"])
 	}
 	mlbls := mcpLabels(r)
-	if mlbls["runtime.agents.stigen.ai/component"] != "memory-mcp" {
-		t.Errorf("component = %q, want memory-mcp", mlbls["runtime.agents.stigen.ai/component"])
+	if mlbls["runtime.agents.smol-agents.ai/component"] != "memory-mcp" {
+		t.Errorf("component = %q, want memory-mcp", mlbls["runtime.agents.smol-agents.ai/component"])
 	}
 }
 

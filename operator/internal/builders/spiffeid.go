@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // ClusterSPIFFEIDGVR is the cluster-scoped CRD shipped by spiffe.io.

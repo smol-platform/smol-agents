@@ -27,7 +27,7 @@ metadata:
   annotations:
     cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
 webhooks:
-  - name: validate.smolagent.agents.stigen.ai
+  - name: validate.smolagent.agents.smol-agents.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
@@ -35,13 +35,13 @@ webhooks:
       service:
         name: smol-agents-operator-webhook
         namespace: smol-agents-system
-        path: /validate-agents-stigen-ai-v1-smolagent
+        path: /validate-agents-smol-agents-ai-v1-smolagent
     rules:
-      - apiGroups: [agents.stigen.ai]
+      - apiGroups: [agents.smol-agents.ai]
         apiVersions: [v1]
         resources: [smolagents]
         operations: [CREATE, UPDATE]
-  - name: validate.smolagentplatform.agents.stigen.ai
+  - name: validate.smolagentplatform.agents.smol-agents.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
@@ -49,9 +49,9 @@ webhooks:
       service:
         name: smol-agents-operator-webhook
         namespace: smol-agents-system
-        path: /validate-agents-stigen-ai-v1-smolagentplatform
+        path: /validate-agents-smol-agents-ai-v1-smolagentplatform
     rules:
-      - apiGroups: [agents.stigen.ai]
+      - apiGroups: [agents.smol-agents.ai]
         apiVersions: [v1]
         resources: [smolagentplatforms]
         operations: [CREATE, UPDATE]
@@ -63,7 +63,7 @@ metadata:
   annotations:
     cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
 webhooks:
-  - name: default.smolagent.agents.stigen.ai
+  - name: default.smolagent.agents.smol-agents.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
@@ -71,9 +71,9 @@ webhooks:
       service:
         name: smol-agents-operator-webhook
         namespace: smol-agents-system
-        path: /mutate-agents-stigen-ai-v1-smolagent
+        path: /mutate-agents-smol-agents-ai-v1-smolagent
     rules:
-      - apiGroups: [agents.stigen.ai]
+      - apiGroups: [agents.smol-agents.ai]
         apiVersions: [v1]
         resources: [smolagents]
         operations: [CREATE, UPDATE]
@@ -90,7 +90,7 @@ metadata:
   annotations:
     cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
 webhooks:
-  - name: validate.agentnetwork.runtime.agents.stigen.ai
+  - name: validate.agentnetwork.runtime.agents.smol-agents.ai
     sideEffects: None
     admissionReviewVersions: [v1]
     failurePolicy: Fail
@@ -98,9 +98,9 @@ webhooks:
       service:
         name: smol-agents-operator-webhook
         namespace: smol-agents-system
-        path: /validate-runtime-agents-stigen-ai-v1-agentnetwork
+        path: /validate-runtime-agents-smol-agents-ai-v1-agentnetwork
     rules:
-      - apiGroups: [runtime.agents.stigen.ai]
+      - apiGroups: [runtime.agents.smol-agents.ai]
         apiVersions: [v1]
         resources: [agentnetworks]
         operations: [CREATE, UPDATE]

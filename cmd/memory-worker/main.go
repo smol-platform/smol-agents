@@ -52,14 +52,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/stigen/smol-agents/pkg/agentfs"
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/identity"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	apigrpc "github.com/stigen/smol-agents/pkg/memory/api/grpc"
-	"github.com/stigen/smol-agents/pkg/memory/worker"
-	"github.com/stigen/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	apigrpc "github.com/smol-platform/smol-agents/pkg/memory/api/grpc"
+	"github.com/smol-platform/smol-agents/pkg/memory/worker"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
 func main() {

@@ -314,9 +314,9 @@ runcmd:
         deployment -n smol-agents-system --all || fail "operator deploy"
 
       $KCTL wait --for=condition=Established --timeout=60s \
-        crd/smolagents.agents.stigen.ai \
-        crd/agentnetworks.runtime.agents.stigen.ai \
-        crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+        crd/smolagents.agents.smol-agents.ai \
+        crd/agentnetworks.runtime.agents.smol-agents.ai \
+        crd/agentruns.runtime.agents.smol-agents.ai || fail "CRDs established"
 
       # tenant-a fakes: PROXY-TCP raced on Ubuntu (connection
       # refused) because fake-gateway hadn't bound its listener

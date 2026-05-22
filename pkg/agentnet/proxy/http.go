@@ -16,9 +16,9 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/identity"
-	"github.com/stigen/smol-agents/pkg/trat"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 // CredentialMinter mints a provider credential authorized by a TraT (the

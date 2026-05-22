@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stigen/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // fakeSvc records the last request and returns a canned result or error.

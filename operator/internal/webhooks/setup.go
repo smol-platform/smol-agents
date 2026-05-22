@@ -8,7 +8,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // SetupAgentWebhook wires the validating + defaulting webhooks for

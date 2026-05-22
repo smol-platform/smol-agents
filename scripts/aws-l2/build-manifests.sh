@@ -4,7 +4,7 @@
 #
 # Usage:
 #   L2_ARTIFACT_BUCKET=smol-agents-e2e-artifacts-us-east-2 \
-#   AWS_PROFILE=stigen \
+#   AWS_PROFILE=smol-agents \
 #     scripts/aws-l2/build-manifests.sh <tag>
 #
 # Outputs s3://${L2_ARTIFACT_BUCKET}/manifests-${tag}.tar.gz
@@ -78,7 +78,7 @@ kind: Namespace
 metadata:
   name: tenant-a
   labels:
-    smol-agents.stigen.ai/tenant: a
+    smol-agents.smol-agents.ai/tenant: a
 ---
 apiVersion: v1
 kind: ServiceAccount

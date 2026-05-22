@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
+	"github.com/smol-platform/smol-agents/test/e2e/fullstack/shared"
 )
 
 // kindEnv is the L1 Env impl. It runs kind-verify.sh for setup

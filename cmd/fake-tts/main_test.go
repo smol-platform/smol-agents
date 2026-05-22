@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/smol-agents/pkg/trat"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 func newDiscardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -24,7 +24,7 @@ func fakeSubjectToken(sub string) string {
 // The real ExchangeMinter and JWKSVerifier must interoperate with fake-tts:
 // mint a TraT, then verify it against the served JWKS.
 func TestFakeTTS_MintVerifyRoundTrip(t *testing.T) {
-	srv, err := newServer("stigen/app", 5*time.Minute)
+	srv, err := newServer("smol-platform/app", 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,12 +32,12 @@ func TestFakeTTS_MintVerifyRoundTrip(t *testing.T) {
 	ts := httptest.NewServer(srv.routes())
 	defer ts.Close()
 
-	const agent = "spiffe://stigen.ai/ns/tenant-a/sa/agent"
-	const td = "spiffe://stigen.ai"
+	const agent = "spiffe://smol-agents.ai/ns/tenant-a/sa/agent"
+	const td = "spiffe://smol-agents.ai"
 
 	minter := &trat.ExchangeMinter{
 		TokenURL:        ts.URL + "/token",
-		SubjectAudience: "spiffe://stigen.ai/ns/security/sa/tts",
+		SubjectAudience: "spiffe://smol-agents.ai/ns/security/sa/tts",
 		SubjectToken: func(_ context.Context, _ string) (string, error) {
 			return fakeSubjectToken(agent), nil
 		},
@@ -70,14 +70,14 @@ func TestFakeTTS_MintVerifyRoundTrip(t *testing.T) {
 	if claims.Audience != td {
 		t.Errorf("aud = %q, want %q", claims.Audience, td)
 	}
-	if repo, _ := claims.ReqCtx["repo"].(string); repo != "stigen/app" {
-		t.Errorf("rctx.repo = %q, want stigen/app", repo)
+	if repo, _ := claims.ReqCtx["repo"].(string); repo != "smol-platform/app" {
+		t.Errorf("rctx.repo = %q, want smol-platform/app", repo)
 	}
 }
 
 // A wrong expected audience must be rejected by the verifier.
 func TestFakeTTS_AudienceMismatchRejected(t *testing.T) {
-	srv, _ := newServer("stigen/app", 5*time.Minute)
+	srv, _ := newServer("smol-platform/app", 5*time.Minute)
 	srv.logger = newDiscardLogger()
 	ts := httptest.NewServer(srv.routes())
 	defer ts.Close()
@@ -85,10 +85,10 @@ func TestFakeTTS_AudienceMismatchRejected(t *testing.T) {
 	minter := &trat.ExchangeMinter{
 		TokenURL: ts.URL + "/token",
 		SubjectToken: func(_ context.Context, _ string) (string, error) {
-			return fakeSubjectToken("spiffe://stigen.ai/x"), nil
+			return fakeSubjectToken("spiffe://smol-agents.ai/x"), nil
 		},
 	}
-	compact, err := minter.Token(context.Background(), trat.ExchangeParams{Scope: "s", Audience: "spiffe://stigen.ai"})
+	compact, err := minter.Token(context.Background(), trat.ExchangeParams{Scope: "s", Audience: "spiffe://smol-agents.ai"})
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

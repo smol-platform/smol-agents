@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // LLM is the abstract chat model the executor talks to. Implementations

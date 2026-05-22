@@ -70,7 +70,7 @@ kubectl get anp kata-arm64 -o wide                 # Phase=Ready, Capacity
 kubectl get nodepool anp-kata-arm64                 # owned by the AgentNodePool
 kubectl get ec2nodeclass anp-kata-arm64
 # When an agent schedules, Karpenter launches a *.metal node:
-kubectl get nodes -l agents.stigen.ai/pool=kata-arm64
+kubectl get nodes -l agents.smol-agents.ai/pool=kata-arm64
 kubectl get pod <agent-pod> -o jsonpath='{.spec.runtimeClassName}{"\n"}{.metadata.annotations.karpenter\.sh/do-not-disrupt}{"\n"}'
 ```
 

@@ -23,8 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/internal/controllers"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers"
 )
 
 // envTest is the shared test environment. It boots a real api-server
@@ -136,7 +136,7 @@ func applyPlatform(t *testing.T, e *envContext) {
 	t.Helper()
 	p := &v1.SmolAgentPlatform{
 		ObjectMeta: metav1.ObjectMeta{Name: "default"},
-		Spec:       v1.SmolAgentPlatformSpec{DefaultTrustDomain: "stigen.ai"},
+		Spec:       v1.SmolAgentPlatformSpec{DefaultTrustDomain: "smol-agents.ai"},
 	}
 	if err := e.cli.Create(e.ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create platform: %v", err)
@@ -157,7 +157,7 @@ func makeAgent(t *testing.T, e *envContext, ns, name string) *v1.SmolAgent {
 	cr := &v1.SmolAgent{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: v1.SmolAgentSpec{
-			TrustDomain: "stigen.ai",
+			TrustDomain: "smol-agents.ai",
 			Mode:        "strict",
 			Features: v1.Features{
 				Identity: v1.IdentityFeature{FeatureBase: v1.FeatureBase{Enabled: true}, Mode: "strict"},

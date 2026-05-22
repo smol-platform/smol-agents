@@ -4,9 +4,9 @@
 GO ?= go
 GOFLAGS ?= -trimpath
 LDFLAGS ?= -s -w \
-	-X github.com/stigen/smol-agents/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev") \
-	-X github.com/stigen/smol-agents/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none") \
-	-X github.com/stigen/smol-agents/internal/version.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+	-X github.com/smol-platform/smol-agents/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev") \
+	-X github.com/smol-platform/smol-agents/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none") \
+	-X github.com/smol-platform/smol-agents/internal/version.BuildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 BIN_DIR := bin
 CMDS := agent secret-proxy agentctl ebpf-loader
@@ -88,7 +88,7 @@ e2e-l0: ## fullstack-e2e L0 ring (docker-compose, ~1 min)
 e2e-l1: ## fullstack-e2e L1 ring (kind on Linux, ~5 min)
 	$(GO) test -tags=e2e_l1 -timeout 15m ./test/e2e/fullstack/l1/...
 
-# All L2 targets must run against us-east-2 under the stigen
+# All L2 targets must run against us-east-2 under the smol-agents
 # sandbox profile — the IAM role, sweeper Lambda, and budget
 # alarm only exist there.
 .PHONY: _check-l2-aws

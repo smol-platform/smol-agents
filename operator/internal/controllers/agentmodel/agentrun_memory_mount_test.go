@@ -13,9 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	amv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	"github.com/stigen/smol-agents/operator/internal/builders"
-	pure "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // ── stub reader ───────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ func (s *memoryStubReader) Get(_ context.Context, key client.ObjectKey, obj clie
 	case *amv1.MemoryRetriever:
 		if s.retriever == nil || s.retriever.Name != key.Name {
 			return apierrors.NewNotFound(
-				schema.GroupResource{Group: "runtime.agents.stigen.ai", Resource: "memoryretrievers"},
+				schema.GroupResource{Group: "runtime.agents.smol-agents.ai", Resource: "memoryretrievers"},
 				key.Name,
 			)
 		}
@@ -42,7 +42,7 @@ func (s *memoryStubReader) Get(_ context.Context, key client.ObjectKey, obj clie
 		st, ok := s.stores[key.Name]
 		if !ok {
 			return apierrors.NewNotFound(
-				schema.GroupResource{Group: "runtime.agents.stigen.ai", Resource: "memorystores"},
+				schema.GroupResource{Group: "runtime.agents.smol-agents.ai", Resource: "memorystores"},
 				key.Name,
 			)
 		}

@@ -17,15 +17,15 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/stigen/smol-agents/internal/version"
-	"github.com/stigen/smol-agents/pkg/config"
-	"github.com/stigen/smol-agents/pkg/ebpf"
-	"github.com/stigen/smol-agents/pkg/health"
-	"github.com/stigen/smol-agents/pkg/identity"
-	"github.com/stigen/smol-agents/pkg/observability"
-	"github.com/stigen/smol-agents/pkg/runtime"
-	"github.com/stigen/smol-agents/pkg/secrets"
-	"github.com/stigen/smol-agents/pkg/transport"
+	"github.com/smol-platform/smol-agents/internal/version"
+	"github.com/smol-platform/smol-agents/pkg/config"
+	"github.com/smol-platform/smol-agents/pkg/ebpf"
+	"github.com/smol-platform/smol-agents/pkg/health"
+	"github.com/smol-platform/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/observability"
+	"github.com/smol-platform/smol-agents/pkg/runtime"
+	"github.com/smol-platform/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/transport"
 )
 
 func main() {

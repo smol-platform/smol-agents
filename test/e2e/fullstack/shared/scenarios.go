@@ -19,11 +19,11 @@ import (
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 
-	rt "github.com/stigen/smol-agents/pkg/agentmodel/runtime"
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/agentnet/wireguard"
-	"github.com/stigen/smol-agents/pkg/agentruntime"
-	"github.com/stigen/smol-agents/pkg/agentruntime/fakellm"
+	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/wireguard"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/fakellm"
 )
 
 // All returns every cross-ring scenario in registration order. Each
@@ -209,7 +209,7 @@ func runProxyHTTP(t *testing.T, env Env) {
 	if env.Capabilities().Has(CapInClusterProbe) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		audience := "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway"
+		audience := "spiffe://smol-agents.ai/ns/tenant-a/sa/fake-gateway"
 		lines, err := env.RunSpiffeProbe(ctx,
 			[]string{"proxy-http"},
 			"--http-url=http://fake-gateway.tenant-a.svc.cluster.local:8080",
@@ -236,7 +236,7 @@ func runProxyHTTP(t *testing.T, env Env) {
 	}
 	defer jwtSrc.Close()
 
-	audience := "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway"
+	audience := "spiffe://smol-agents.ai/ns/tenant-a/sa/fake-gateway"
 	tok, err := jwtSrc.FetchJWTSVID(ctx, jwtsvid.Params{Audience: audience})
 	if err != nil {
 		t.Fatalf("FetchJWTSVID: %v", err)
@@ -281,8 +281,8 @@ func runProxyHTTP(t *testing.T, env Env) {
 	if got, want := echoed["audience"], audience; got != want {
 		t.Errorf("audience echoed back = %v, want %v", got, want)
 	}
-	if id, _ := echoed["spiffeID"].(string); !strings.HasPrefix(id, "spiffe://stigen.ai/") {
-		t.Errorf("spiffeID echoed back = %v, expected stigen.ai trust domain", id)
+	if id, _ := echoed["spiffeID"].(string); !strings.HasPrefix(id, "spiffe://smol-agents.ai/") {
+		t.Errorf("spiffeID echoed back = %v, expected smol-agents.ai trust domain", id)
 	}
 }
 
@@ -602,11 +602,11 @@ func runWebhook(t *testing.T, env Env) {
 	}{
 		{
 			name: "smolagent-insecure-no-annotation",
-			yaml: `apiVersion: agents.stigen.ai/v1
+			yaml: `apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgent
 metadata: {name: webhook-bad-mode, namespace: tenant-a}
 spec:
-  trustDomain: stigen.ai
+  trustDomain: smol-agents.ai
   mode: insecure
 `,
 			matches: []string{"denied", "allow-insecure"},
@@ -614,7 +614,7 @@ spec:
 		},
 		{
 			name: "agentnetwork-both-transports",
-			yaml: `apiVersion: runtime.agents.stigen.ai/v1
+			yaml: `apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork
 metadata: {name: webhook-bad-anet, namespace: tenant-a}
 spec:

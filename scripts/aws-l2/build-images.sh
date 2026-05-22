@@ -4,7 +4,7 @@
 #
 # Usage:
 #   L2_ECR_REGISTRY=123.dkr.ecr.us-east-2.amazonaws.com \
-#   AWS_PROFILE=stigen \
+#   AWS_PROFILE=smol-agents \
 #     scripts/aws-l2/build-images.sh <tag>
 set -euo pipefail
 

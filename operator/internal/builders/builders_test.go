@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 func sample() *v1.SmolAgent {
 	cr := &v1.SmolAgent{}
 	cr.Name = "alice"
 	cr.Namespace = "tenant-a"
-	cr.Spec.TrustDomain = "stigen.ai"
+	cr.Spec.TrustDomain = "smol-agents.ai"
 	cr.Spec.Mode = "strict"
 	cr.Spec.Features.Identity.Enabled = true
 	cr.Spec.Features.Transport.Private.Enabled = true
@@ -45,7 +45,7 @@ func TestBuildAgentConfigMap_ContainsAllSections(t *testing.T) {
 	yaml := cm.Data["agent.yaml"]
 	for _, want := range []string{
 		"mode: strict",
-		"trustDomain: stigen.ai",
+		"trustDomain: smol-agents.ai",
 		"identity:",
 		"transport:",
 		"private:",
@@ -93,7 +93,7 @@ func TestBuildClusterSPIFFEID(t *testing.T) {
 		t.Fatal("missing spec")
 	}
 	tmpl := spec["spiffeIDTemplate"].(string)
-	if !strings.HasPrefix(tmpl, "spiffe://stigen.ai/") {
+	if !strings.HasPrefix(tmpl, "spiffe://smol-agents.ai/") {
 		t.Errorf("spiffeIDTemplate = %q", tmpl)
 	}
 }

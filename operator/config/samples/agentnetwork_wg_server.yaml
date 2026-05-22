@@ -1,7 +1,7 @@
 # WireGuard server: the agent itself listens for inbound WireGuard
 # connections on 51820. Useful when external operators / on-call
 # tooling needs to reach the agent over a private mesh.
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork
 metadata:
   name: hub-mode

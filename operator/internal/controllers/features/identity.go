@@ -5,8 +5,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/smol-agents/operator/internal/builders"
-	"github.com/stigen/smol-agents/operator/pkg/features"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 // IdentityReconciler reconciles ConfigMap (agent.yaml block for identity)

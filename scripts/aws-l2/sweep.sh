@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sweep.sh — manual escape hatch for stranded L2 EC2 instances.
 # Terminates every instance tagged smol-agents-e2e=L2 in us-east-2
-# under the stigen profile. Use only when the sweeper Lambda + budget
+# under the smol-agents profile. Use only when the sweeper Lambda + budget
 # alarm both failed.
 #
 # Satisfies R-E2E-VRF-3.

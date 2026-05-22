@@ -121,7 +121,7 @@ func (a *Agent) applyDefaults() {
 		a.Mode = ModeStrict
 	}
 	if a.TrustDomain == "" {
-		a.TrustDomain = "stigen.ai"
+		a.TrustDomain = "smol-agents.ai"
 	}
 	if a.Identity.WorkloadAPI == "" {
 		a.Identity.WorkloadAPI = "unix:///run/spire/agent-sockets/api.sock"

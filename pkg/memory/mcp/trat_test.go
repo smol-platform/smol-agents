@@ -20,14 +20,14 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/audit"
-	"github.com/stigen/smol-agents/pkg/memory/mcp"
-	"github.com/stigen/smol-agents/pkg/memory/quota"
-	"github.com/stigen/smol-agents/pkg/memory/store"
-	"github.com/stigen/smol-agents/pkg/trat"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/audit"
+	"github.com/smol-platform/smol-agents/pkg/memory/mcp"
+	"github.com/smol-platform/smol-agents/pkg/memory/quota"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 // ── Fake TraT verifier ─────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ var _ trat.Verifier = (*fakeTratVerifier)(nil)
 // ── Constants ─────────────────────────────────────────────────────────────
 
 const (
-	tratCallerID    = "spiffe://stigen.ai/ns/team/sa/writer"
+	tratCallerID    = "spiffe://smol-agents.ai/ns/team/sa/writer"
 	tratRetriever   = "ns/test-retriever"
 	tratFakeCompact = "fake.trat.compact"
 )
@@ -160,7 +160,7 @@ func TestTraT_InvalidToken(t *testing.T) {
 // TestTraT_SubjectMismatch verifies that a TraT whose subject differs from the
 // caller is rejected (prevents replay by a different identity).
 func TestTraT_SubjectMismatch(t *testing.T) {
-	otherIdentity := "spiffe://stigen.ai/ns/team/sa/other"
+	otherIdentity := "spiffe://smol-agents.ai/ns/team/sa/other"
 	srv, col := newTratServer(t, &fakeTratVerifier{
 		claims: &trat.Claims{
 			Subject: otherIdentity, // different from tratCallerID

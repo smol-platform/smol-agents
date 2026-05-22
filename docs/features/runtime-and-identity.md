@@ -123,7 +123,7 @@ The agent's typed YAML (loaded + validated by `pkg/config`):
 
 ```yaml
 mode: strict                       # insecure | permissive | strict
-trustDomain: stigen.ai
+trustDomain: smol-agents.ai
 identity:
   workloadAPI: unix:///run/spire/agent-sockets/api.sock
   bootTimeout: 30s                 # block this long for the first SVID
@@ -133,7 +133,7 @@ transport:
   private:
     addr: "0.0.0.0:8443"
     authorize:                     # ≥1 matcher; OR semantics
-      - "prefix:spiffe://stigen.ai/ns/agents"
+      - "prefix:spiffe://smol-agents.ai/ns/agents"
   public:
     addr: ""                       # empty = disabled
     certPath: /etc/tls/tls.crt

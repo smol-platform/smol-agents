@@ -17,7 +17,7 @@ agent reaches restricted resources.
 
 **Acceptance Criteria:**
 1. THE CR SHALL be served at
-   `runtime.agents.stigen.ai/v1` (kind `AgentNetwork`).
+   `runtime.agents.smol-agents.ai/v1` (kind `AgentNetwork`).
 2. `spec.kind` SHALL be one of `identityProxy` or `wireguardMesh`.
 3. THE validating webhook SHALL reject CRs whose nested config
    does not match `kind`.

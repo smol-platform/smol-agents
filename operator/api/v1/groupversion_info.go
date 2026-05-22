@@ -1,6 +1,6 @@
 // Package v1 contains API Schema definitions for the agents v1 API group.
 // +kubebuilder:object:generate=true
-// +groupName=agents.stigen.ai
+// +groupName=agents.smol-agents.ai
 package v1
 
 import (
@@ -9,7 +9,7 @@ import (
 )
 
 // GroupVersion is group version used to register these objects.
-var GroupVersion = schema.GroupVersion{Group: "agents.stigen.ai", Version: "v1"}
+var GroupVersion = schema.GroupVersion{Group: "agents.smol-agents.ai", Version: "v1"}
 
 // SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 var SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

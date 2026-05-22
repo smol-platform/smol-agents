@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // Enforcer enforces per-retriever quotas. It is safe for concurrent use.

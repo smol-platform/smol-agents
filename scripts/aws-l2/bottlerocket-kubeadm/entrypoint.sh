@@ -224,9 +224,9 @@ wait_resource deployment smol-agents-system "" 240 || fail "operator not appeari
 $KCTL wait --for=condition=Available --timeout=240s \
   deployment -n smol-agents-system --all || fail "operator deploy"
 $KCTL wait --for=condition=Established --timeout=60s \
-  crd/smolagents.agents.stigen.ai \
-  crd/agentnetworks.runtime.agents.stigen.ai \
-  crd/agentruns.runtime.agents.stigen.ai || fail "CRDs established"
+  crd/smolagents.agents.smol-agents.ai \
+  crd/agentnetworks.runtime.agents.smol-agents.ai \
+  crd/agentruns.runtime.agents.smol-agents.ai || fail "CRDs established"
 
 # --- 7. Sentinel + 8. Disable self ---------------------------------
 touch "$HOST_LOG_DIR/l2-bootstrap.READY"

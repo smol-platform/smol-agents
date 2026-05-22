@@ -17,7 +17,7 @@ data:
         "topK": 5,
         "quota": { "maxTopK": 50, "requestsPerMinute": 600, "maxWriteBytes": 1048576 },
         "policy": [
-          { "identity": "spiffe://stigen.ai/ns/tenant-a/", "operations": ["read", "write"], "namespaces": ["kb"] }
+          { "identity": "spiffe://smol-agents.ai/ns/tenant-a/", "operations": ["read", "write"], "namespaces": ["kb"] }
         ]
       },
       "tenant-b/kb": {
@@ -25,7 +25,7 @@ data:
         "namespaces": ["kb"],
         "topK": 5,
         "policy": [
-          { "identity": "spiffe://stigen.ai/ns/tenant-b/", "operations": ["read", "write"], "namespaces": ["kb"] }
+          { "identity": "spiffe://smol-agents.ai/ns/tenant-b/", "operations": ["read", "write"], "namespaces": ["kb"] }
         ]
       }
     }
@@ -101,8 +101,8 @@ spec:
             - "-worker-transport=grpc"                                              # gRPC/mTLS to the worker
             - "-retrievers-config=/etc/memory/retrievers.json"
             - "-spire-socket=unix:///run/spire/agent-sockets/api.sock"
-            - "-trust-domain=stigen.ai"
-            - "-audience=spiffe://stigen.ai/memory"
+            - "-trust-domain=smol-agents.ai"
+            - "-audience=spiffe://smol-agents.ai/memory"
           ports: [{ name: http, containerPort: 8443 }]
           readinessProbe:
             httpGet: { path: /healthz, port: 8443 }

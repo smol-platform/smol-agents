@@ -16,7 +16,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/stigen/smol-agents/pkg/trat"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 // Server is the broker process serving Lease requests over a UDS.

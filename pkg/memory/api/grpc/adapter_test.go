@@ -21,9 +21,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/stigen/smol-agents/pkg/memory"
-	apipkg "github.com/stigen/smol-agents/pkg/memory/api"
-	retrievalpb "github.com/stigen/smol-agents/pkg/memory/api/grpc"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	apipkg "github.com/smol-platform/smol-agents/pkg/memory/api"
+	retrievalpb "github.com/smol-platform/smol-agents/pkg/memory/api/grpc"
 )
 
 // ── fake service (mirrors transport_test.go fakeSvc) ─────────────────────────

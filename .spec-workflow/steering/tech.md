@@ -37,7 +37,7 @@ and StatefulSet.
   (used only when business logic requires it).
 
 ### External Integrations
-- **SPIRE** (existing in stigen.ai infra) — workload API on a CSI volume.
+- **SPIRE** (existing in smol-agents.ai infra) — workload API on a CSI volume.
 - **Vault / OpenBao** — secret backend.
 - **Knative Serving** — for scale-to-zero deployments.
 
@@ -80,7 +80,7 @@ and StatefulSet.
 - gVisor `release-20240916.0` or newer.
 
 ### Security & Compliance
-- Trust domain: `stigen.ai` (existing convention).
+- Trust domain: `smol-agents.ai` (existing convention).
 - All transports require valid SVIDs in `strict` mode.
 - Reproducible builds (`-trimpath`, `-ldflags '-s -w -buildid='`).
 - Cosign signing in CI.

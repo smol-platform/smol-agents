@@ -9,9 +9,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/stigen/smol-agents/operator/internal/builders"
-	"github.com/stigen/smol-agents/operator/pkg/features"
-	pkgsandbox "github.com/stigen/smol-agents/pkg/sandbox"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
+	pkgsandbox "github.com/smol-platform/smol-agents/pkg/sandbox"
 )
 
 // SandboxReconciler enforces RuntimeClass selection. R-SBX-1.

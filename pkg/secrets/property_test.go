@@ -17,7 +17,7 @@ func TestProperty_LeaseImpliesAuthorized(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		policy := NewStaticPolicy()
 		backend := NewStaticBackend()
-		td := spiffeid.RequireTrustDomainFromString("stigen.ai")
+		td := spiffeid.RequireTrustDomainFromString("smol-agents.ai")
 
 		// Generate a small principal/secret universe.
 		principalNames := rapid.SliceOfN(rapid.StringMatching(`[a-z]{1,8}`), 1, 4).Draw(t, "principals")

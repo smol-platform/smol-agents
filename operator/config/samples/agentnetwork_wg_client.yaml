@@ -1,7 +1,7 @@
 # WireGuard client: agents join an existing WireGuard hub at
 # vpn.example.com. The userspace device runs inside the agent Pod
 # (Kata-FC sandbox), no kernel module needed.
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork
 metadata:
   name: corp-vpn

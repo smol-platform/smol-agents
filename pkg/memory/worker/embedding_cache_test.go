@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stigen/smol-agents/pkg/memory/worker"
+	"github.com/smol-platform/smol-agents/pkg/memory/worker"
 )
 
 // ── basic cache hit / miss ────────────────────────────────────────────────────

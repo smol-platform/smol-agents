@@ -61,7 +61,7 @@ deployment already uses to join nodes.
 
 ### What's new (in scope)
 
-1. `AgentNodePool` — a cluster-scoped CRD (group `agents.stigen.ai`) that
+1. `AgentNodePool` — a cluster-scoped CRD (group `agents.smol-agents.ai`) that
    declares a kata-capable node shape and compiles to a Karpenter `NodePool` +
    `EC2NodeClass`.
 2. **Kata-layer composition** — the operator's `EC2NodeClass` carries the
@@ -144,7 +144,7 @@ deployment already uses to join nodes.
 
 ```mermaid
 graph TD
-    subgraph User_API[agents.stigen.ai]
+    subgraph User_API[agents.smol-agents.ai]
         KNAP[SmolAgentPlatform<br/>nodeProvisioning defaults]
         ANP[AgentNodePool<br/>isolation: kata-fc]
         KNA[SmolAgent<br/>sandbox.runtimeClass=kata-fc]
@@ -191,7 +191,7 @@ layer makes it run microVMs; Karpenter binds the pods.
 
 ### 1. `AgentNodePool` CRD (`operator/api/v1/agentnodepool_types.go`)
 - **Purpose:** provider-neutral declaration of a kata-capable node shape.
-- **Scope:** Cluster (`scope=Cluster`, shortName `anp`), group `agents.stigen.ai`,
+- **Scope:** Cluster (`scope=Cluster`, shortName `anp`), group `agents.smol-agents.ai`,
   `+kubebuilder:subresource:status`.
 
 ### 2. AgentNodePool controller (`operator/internal/controllers/nodepool/`)
@@ -267,7 +267,7 @@ type ThinPoolConfig struct {
 
 | AgentNodePool | NodePool (`karpenter.sh/v1`) | EC2NodeClass (`karpenter.k8s.aws/v1`) |
 |---|---|---|
-| `isolation: kata-fc` | requirement `node.kubernetes.io/instance-type In [<family>.metal]` + taint `agents.stigen.ai/isolation=kata-fc:NoSchedule` | — |
+| `isolation: kata-fc` | requirement `node.kubernetes.io/instance-type In [<family>.metal]` + taint `agents.smol-agents.ai/isolation=kata-fc:NoSchedule` | — |
 | `arch` | requirement `kubernetes.io/arch In [arch]` | — |
 | `instanceFamilies` | requirement `karpenter.k8s.aws/instance-family In […]` | — |
 | `capacityType` | requirement `karpenter.sh/capacity-type In […]` | — |
@@ -278,7 +278,7 @@ type ThinPoolConfig struct {
 | `thinPool` | — | created at firstboot on raw instance-store NVMe (ephemeral → always at boot); matching `blockDeviceMappings`; **not** `instanceStorePolicy: RAID0` |
 | (cluster defaults) | `nodeClassRef` | base-AMI/join reference, IAM role, subnet/SG selectors from `SmolAgentPlatform.nodeProvisioning` |
 
-Pool label `agents.stigen.ai/pool: <name>` + taint are the workload builder's join keys.
+Pool label `agents.smol-agents.ai/pool: <name>` + taint are the workload builder's join keys.
 
 ## Bootstrap Strategy (kata layer; both modes, one recipe)
 

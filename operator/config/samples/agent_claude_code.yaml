@@ -1,7 +1,7 @@
 # Claude Code agent with AgentFS persistent storage backed by S3.
 # Demonstrates Mode=harness + AgentFS + S3 backup + WAL snapshotting.
 ---
-apiVersion: runtime.agents.stigen.ai/v1
+apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata:
   name: code-reviewer
@@ -35,7 +35,7 @@ spec:
       mountPath: /var/agentfs
       backup:
         s3:
-          bucket: stigen-agent-state
+          bucket: smol-agents-agent-state
           prefix: code-reviewer/
           region: us-east-1
           sseAlgorithm: aws:kms

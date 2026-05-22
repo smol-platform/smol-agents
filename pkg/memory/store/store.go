@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // RetrieverInfo bundles the resolved configuration for one MemoryRetriever.

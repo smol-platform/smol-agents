@@ -12,7 +12,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	"github.com/stigen/smol-agents/pkg/trat"
+	"github.com/smol-platform/smol-agents/pkg/trat"
 )
 
 type fakeVerifier struct {
@@ -113,10 +113,10 @@ func startMintServer(t *testing.T, principal spiffeid.ID, v trat.Verifier, dyn D
 func TestServer_Mint_OK(t *testing.T) {
 	claims := &trat.Claims{
 		Subject: idA.String(), Scope: "github:repo:read",
-		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "stigen/app"},
+		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "smol-platform/app"},
 	}
 	dyn := &fakeDynBackend{lease: Lease{Value: []byte("ghs_installation_token"), ExpiresAt: mintNow.Add(time.Hour)}}
-	socket := startMintServer(t, idA, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("stigen/app"))
+	socket := startMintServer(t, idA, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("smol-platform/app"))
 
 	c := NewClient(socket)
 	defer c.Close()
@@ -136,14 +136,14 @@ func TestServer_Mint_OK(t *testing.T) {
 	}
 	// Backend received the verified TraT context.
 	if dyn.got.Subject != idA.String() || dyn.got.Scope != "github:repo:read" ||
-		dyn.got.ReqCtx["repo"] != "stigen/app" || dyn.got.Principal != idA {
+		dyn.got.ReqCtx["repo"] != "smol-platform/app" || dyn.got.Principal != idA {
 		t.Errorf("backend got = %+v", dyn.got)
 	}
 }
 
 func TestServer_Mint_InvalidTraT(t *testing.T) {
 	dyn := &fakeDynBackend{lease: Lease{Value: []byte("x")}}
-	socket := startMintServer(t, idA, fakeVerifier{err: errors.New("bad signature")}, dyn, repoAllowListPolicy("stigen/app"))
+	socket := startMintServer(t, idA, fakeVerifier{err: errors.New("bad signature")}, dyn, repoAllowListPolicy("smol-platform/app"))
 	c := NewClient(socket)
 	defer c.Close()
 	_, err := c.Mint(context.Background(), "github", "forged")
@@ -159,7 +159,7 @@ func TestServer_Mint_PolicyDeny_RepoNotAllowed(t *testing.T) {
 	claims := &trat.Claims{Subject: idA.String(), Scope: "github:repo:read",
 		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "evil/exfil"}}
 	dyn := &fakeDynBackend{lease: Lease{Value: []byte("x")}}
-	socket := startMintServer(t, idA, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("stigen/app"))
+	socket := startMintServer(t, idA, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("smol-platform/app"))
 	c := NewClient(socket)
 	defer c.Close()
 	_, err := c.Mint(context.Background(), "github", "valid.but.wrong.repo")
@@ -177,11 +177,11 @@ func TestServer_Mint_PolicyDeny_RepoNotAllowed(t *testing.T) {
 func TestServer_Mint_RejectsReplayedTraT(t *testing.T) {
 	claims := &trat.Claims{
 		Subject: idA.String(), Scope: "github:repo:read",
-		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "stigen/app"},
+		ReqWL: idA.String(), ReqCtx: map[string]any{"repo": "smol-platform/app"},
 	}
 	dyn := &fakeDynBackend{lease: Lease{Value: []byte("x")}}
 	// Peer attests as idB, but the (otherwise valid) TraT was minted for idA.
-	socket := startMintServer(t, idB, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("stigen/app"))
+	socket := startMintServer(t, idB, fakeVerifier{claims: claims}, dyn, repoAllowListPolicy("smol-platform/app"))
 	c := NewClient(socket)
 	defer c.Close()
 	_, err := c.Mint(context.Background(), "github", "stolen.but.valid")

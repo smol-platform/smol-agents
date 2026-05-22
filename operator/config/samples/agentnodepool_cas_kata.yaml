@@ -4,7 +4,7 @@
 # smol-agents-system/anp-<name>-clusterautoscaler for your IaC to apply to a
 # matching ASG. The in-cluster workload coupling (pool label + isolation taint)
 # is identical to the Karpenter pool. See docs/runbooks/agent-node-pools.md.
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: AgentNodePool
 metadata:
   name: kata-arm64-cas

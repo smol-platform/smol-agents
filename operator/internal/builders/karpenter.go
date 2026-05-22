@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // Karpenter object rendering for AgentNodePool. We emit Karpenter v1
@@ -18,10 +18,10 @@ const (
 	// PoolLabelKey ties a provisioned node (and the agents scheduled onto
 	// it) back to its AgentNodePool. The workload builder uses it for
 	// nodeAffinity.
-	PoolLabelKey = "agents.stigen.ai/pool"
+	PoolLabelKey = "agents.smol-agents.ai/pool"
 	// IsolationTaintKey keeps general workloads off dedicated agent nodes;
 	// the workload builder adds the matching toleration for sandboxed agents.
-	IsolationTaintKey = "agents.stigen.ai/isolation"
+	IsolationTaintKey = "agents.smol-agents.ai/isolation"
 
 	karpenterManagedBy = "smol-agents-operator"
 )

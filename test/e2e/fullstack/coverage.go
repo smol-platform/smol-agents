@@ -51,7 +51,7 @@ var Coverage = map[string]string{
 	"R-E2E-L1-6": "l1.TestL1:linux-arm64-kind-load",
 
 	// L2 ring requirements (test bodies pending Phase 5).
-	"R-E2E-L2-1": "(pending) l2.TestL2:assume-stigen-us-east-2",
+	"R-E2E-L2-1": "(pending) l2.TestL2:assume-smol-agents-us-east-2",
 	"R-E2E-L2-2": "(pending) l2.TestL2:spot-c6gd-metal-tagged",
 	"R-E2E-L2-3": "(pending) l2.TestL2:wait-ssm-ready",
 	"R-E2E-L2-4": "(pending) l2.TestL2:bootstrap-sentinel",

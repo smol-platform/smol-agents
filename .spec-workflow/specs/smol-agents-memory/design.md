@@ -38,7 +38,7 @@ the existing AgentFS volume mechanism), so a coding agent does normal file I/O
 - New binaries `cmd/memory-mcp` (gateway) and `cmd/memory-worker` (data plane),
   Dockerfiles under `deploy/docker/`.
 - New CRDs in `pkg/agentmodel/v1` (pure) + `operator/api/agentmodel/v1` (k8s
-  wrappers, group `runtime.agents.stigen.ai`); controller under
+  wrappers, group `runtime.agents.smol-agents.ai`); controller under
   `operator/internal/controllers/memory/`.
 - DAG preserved: `memory-mcp → pkg/memory(api) + identity`; `memory-worker →
   pkg/memory + pkg/agentfs + secrets(client) + ModelProvider`; operator →
@@ -141,7 +141,7 @@ flowchart TB
 
 ## Data Models
 
-### CRDs (`pkg/agentmodel/v1`, group `runtime.agents.stigen.ai`)
+### CRDs (`pkg/agentmodel/v1`, group `runtime.agents.smol-agents.ai`)
 ```go
 type MemoryStoreSpec struct {
     Kind     string   // vector | graph | kv | eventlog | filesystem

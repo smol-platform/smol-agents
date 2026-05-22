@@ -1,10 +1,10 @@
 # Singleton platform CR. Required for any SmolAgent to leave Pending.
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgentPlatform
 metadata:
   name: default
 spec:
-  defaultTrustDomain: stigen.ai
+  defaultTrustDomain: smol-agents.ai
   ebpfLoader:
     enabled: true
     preset: generic

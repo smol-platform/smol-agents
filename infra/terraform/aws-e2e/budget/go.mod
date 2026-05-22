@@ -1,4 +1,4 @@
-module github.com/stigen/smol-agents/infra/aws-e2e/budget
+module github.com/smol-platform/smol-agents/infra/aws-e2e/budget
 
 go 1.26.0
 

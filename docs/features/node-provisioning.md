@@ -42,7 +42,7 @@ that compiles to a Karpenter `NodePool` + `EC2NodeClass`:
 
 | `AgentNodePool` | compiles to |
 |---|---|
-| `isolation: kata-fc` | instance-type requirement `*.metal` + taint `agents.stigen.ai/isolation=kata-fc:NoSchedule` |
+| `isolation: kata-fc` | instance-type requirement `*.metal` + taint `agents.smol-agents.ai/isolation=kata-fc:NoSchedule` |
 | `arch` / `instanceFamilies` / `capacityType` | matching Karpenter requirements |
 | `bootstrap: UserData` | `amiFamily: Custom`; userData = existing join snippet **+** appended kata/devmapper recipe |
 | `bootstrap: PrebakedAMI` | `amiSelectorTerms` = kata-ready AMI (join baked in); userData = thin-pool create only |

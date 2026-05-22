@@ -1841,7 +1841,7 @@ const file_retrieval_proto_rawDesc = "" +
 	"\n" +
 	"SnapshotFS\x12\x1f.retrieval.v1.SnapshotFSRequest\x1a .retrieval.v1.SnapshotFSResponse\x12U\n" +
 	"\fListBranches\x12!.retrieval.v1.ListBranchesRequest\x1a\".retrieval.v1.ListBranchesResponse\x12F\n" +
-	"\aMergeFS\x12\x1c.retrieval.v1.MergeFSRequest\x1a\x1d.retrieval.v1.MergeFSResponseB?Z=github.com/stigen/smol-agents/pkg/memory/api/grpc;retrievalpbb\x06proto3"
+	"\aMergeFS\x12\x1c.retrieval.v1.MergeFSRequest\x1a\x1d.retrieval.v1.MergeFSResponseBFZDgithub.com/smol-platform/smol-agents/pkg/memory/api/grpc;retrievalpbb\x06proto3"
 
 var (
 	file_retrieval_proto_rawDescOnce sync.Once

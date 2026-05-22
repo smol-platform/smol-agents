@@ -5,15 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/pkg/features"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 func validCR() *v1.SmolAgent {
 	cr := &v1.SmolAgent{}
 	cr.Name = "alice"
 	cr.Namespace = "tenant-a"
-	cr.Spec.TrustDomain = "stigen.ai"
+	cr.Spec.TrustDomain = "smol-agents.ai"
 	cr.Spec.Features.Sandbox.Enabled = true
 	cr.Spec.Features.Sandbox.RuntimeClass = "kata-fc"
 	cr.Spec.Features.Identity.Mode = "strict"
@@ -90,9 +90,9 @@ func TestValidateAgent_AllowedFeaturePasses(t *testing.T) {
 func TestDefaultAgent_FillsAllUnsetFields(t *testing.T) {
 	cr := &v1.SmolAgent{}
 	platform := &v1.SmolAgentPlatform{}
-	platform.Spec.DefaultTrustDomain = "stigen.ai"
+	platform.Spec.DefaultTrustDomain = "smol-agents.ai"
 	DefaultAgent(cr, platform)
-	if cr.Spec.TrustDomain != "stigen.ai" {
+	if cr.Spec.TrustDomain != "smol-agents.ai" {
 		t.Errorf("trustDomain default: %q", cr.Spec.TrustDomain)
 	}
 	if cr.Spec.DeploymentKind != "knative" {
@@ -125,7 +125,7 @@ func TestDefaultAgent_DoesNotOverrideExplicit(t *testing.T) {
 func TestValidatePlatformSingleton_NameEnforced(t *testing.T) {
 	p := &v1.SmolAgentPlatform{}
 	p.Name = "wrong-name"
-	p.Spec.DefaultTrustDomain = "stigen.ai"
+	p.Spec.DefaultTrustDomain = "smol-agents.ai"
 	if err := ValidatePlatformSingleton(p, "default"); err == nil {
 		t.Error("expected non-singleton rejection")
 	}
@@ -138,7 +138,7 @@ func TestValidatePlatformSingleton_NameEnforced(t *testing.T) {
 func TestValidatePlatformSingleton_PolicyFeatureMustExist(t *testing.T) {
 	p := &v1.SmolAgentPlatform{}
 	p.Name = "default"
-	p.Spec.DefaultTrustDomain = "stigen.ai"
+	p.Spec.DefaultTrustDomain = "smol-agents.ai"
 	p.Spec.FeaturePolicy = []v1.FeaturePolicyRow{{Feature: "garbage", Allowed: true}}
 	if err := ValidatePlatformSingleton(p, "default"); err == nil {
 		t.Error("expected unknown-feature rejection")

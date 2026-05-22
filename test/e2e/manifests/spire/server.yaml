@@ -9,7 +9,7 @@ data:
       bind_address = "0.0.0.0"
       bind_port = "8081"
       socket_path = "/tmp/spire-server/private/api.sock"
-      trust_domain = "stigen.ai"
+      trust_domain = "smol-agents.ai"
       data_dir = "/run/spire/data"
       log_level = "INFO"
       ca_ttl = "24h"
@@ -107,20 +107,20 @@ spec:
               done
 
               # k8s_psat-attested agents have parent IDs of the form:
-              #   spiffe://stigen.ai/spire/agent/k8s_psat/<cluster>/<node-uid>
+              #   spiffe://smol-agents.ai/spire/agent/k8s_psat/<cluster>/<node-uid>
               # Use a node-alias entry that matches all such agents
               # in our test cluster so workload entries don't have to
               # know specific node UUIDs.
-              NODE_ID=spiffe://stigen.ai/agents/test
+              NODE_ID=spiffe://smol-agents.ai/agents/test
               /opt/spire/bin/spire-server entry create \
                 -socketPath "$SOCKET" -node \
                 -spiffeID "$NODE_ID" \
                 -selector "k8s_psat:cluster:smol-agents-kind" || true
 
               for entry in \
-                "spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway|k8s:ns:tenant-a|k8s:sa:default" \
-                "spiffe://stigen.ai/ns/tenant-a/sa/agent|k8s:ns:tenant-a|k8s:sa:default" \
-                "spiffe://stigen.ai/ns/tenant-a/sa/probe|k8s:ns:tenant-a|k8s:sa:default" ; do
+                "spiffe://smol-agents.ai/ns/tenant-a/sa/fake-gateway|k8s:ns:tenant-a|k8s:sa:default" \
+                "spiffe://smol-agents.ai/ns/tenant-a/sa/agent|k8s:ns:tenant-a|k8s:sa:default" \
+                "spiffe://smol-agents.ai/ns/tenant-a/sa/probe|k8s:ns:tenant-a|k8s:sa:default" ; do
                 spiffeID=$(echo "$entry" | cut -d'|' -f1)
                 sel1=$(echo "$entry" | cut -d'|' -f2)
                 sel2=$(echo "$entry" | cut -d'|' -f3)

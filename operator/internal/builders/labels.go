@@ -1,7 +1,7 @@
 package builders
 
 import (
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 // Labels returns the canonical label set for resources owned by cr.
@@ -11,7 +11,7 @@ func Labels(cr *v1.SmolAgent) map[string]string {
 		"app.kubernetes.io/name":       "smol-agents",
 		"app.kubernetes.io/instance":   cr.Name,
 		"app.kubernetes.io/managed-by": "smol-agents-operator",
-		"agents.stigen.ai/agent":       cr.Name,
+		"agents.smol-agents.ai/agent":       cr.Name,
 	}
 }
 

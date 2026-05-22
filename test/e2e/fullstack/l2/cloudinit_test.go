@@ -31,7 +31,7 @@ func TestRenderCloudInit_FullTemplate(t *testing.T) {
 		"--for=condition=Ready",
 		"app=spire-server",
 		"app=spire-agent",
-		"crd/smolagents.agents.stigen.ai",
+		"crd/smolagents.agents.smol-agents.ai",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered template missing %q", want)

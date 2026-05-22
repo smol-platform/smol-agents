@@ -55,7 +55,7 @@ func TestMintThenResourceAccepts(t *testing.T) {
 	}
 
 	// Agent (via sidecar) reaches the resource WITH the injected minted token.
-	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/stigen/app", nil)
+	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/smol-platform/app", nil)
 	req2.Header.Set("Authorization", "Bearer "+minted.Token)
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestResourceRejectsUnmintedAndMissing(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/stigen/app", nil)
+			req, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/smol-platform/app", nil)
 			if c.auth != "" {
 				req.Header.Set("Authorization", c.auth)
 			}
@@ -127,7 +127,7 @@ func TestInstallationIssuerCheck(t *testing.T) {
 	defer ts.Close()
 
 	// Correct issuer → 200 with installation id.
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/stigen/app/installation", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/smol-platform/app/installation", nil)
 	req.Header.Set("Authorization", "Bearer "+fakeAppJWT("123"))
 	resp, _ := http.DefaultClient.Do(req)
 	var got struct {
@@ -140,7 +140,7 @@ func TestInstallationIssuerCheck(t *testing.T) {
 	}
 
 	// Wrong issuer → 401.
-	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/stigen/app/installation", nil)
+	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/smol-platform/app/installation", nil)
 	req2.Header.Set("Authorization", "Bearer "+fakeAppJWT("999"))
 	resp2, _ := http.DefaultClient.Do(req2)
 	resp2.Body.Close()

@@ -8,8 +8,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	operatorv1 "github.com/stigen/smol-agents/operator/api/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
+	operatorv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
 )
 
 // WorkerURLAnnotation is the annotation the operator sets on a MemoryRetriever
@@ -19,9 +19,9 @@ import (
 // during reconciliation, once the worker Deployment + Service are ready.
 // Format: "https://worker-svc.namespace.svc.cluster.local:8080" (no trailing slash).
 //
-// The annotation key is in the stigen.ai namespace to avoid collisions with
+// The annotation key is in the smol-agents.ai namespace to avoid collisions with
 // other controllers.
-const WorkerURLAnnotation = "runtime.agents.stigen.ai/worker-url"
+const WorkerURLAnnotation = "runtime.agents.smol-agents.ai/worker-url"
 
 // K8sStoreConfig parameterises the Kubernetes RetrieverStore.
 type K8sStoreConfig struct {

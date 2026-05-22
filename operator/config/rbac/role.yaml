@@ -6,13 +6,13 @@ metadata:
   name: smol-agents-operator
 rules:
   # CR access — control-plane CRs.
-  - apiGroups: [agents.stigen.ai]
+  - apiGroups: [agents.smol-agents.ai]
     resources: [smolagents, smolagentplatforms, agentnodepools]
     verbs: [get, list, watch, update, patch]
-  - apiGroups: [agents.stigen.ai]
+  - apiGroups: [agents.smol-agents.ai]
     resources: [smolagents/status, smolagentplatforms/status, agentnodepools/status]
     verbs: [get, update, patch]
-  - apiGroups: [agents.stigen.ai]
+  - apiGroups: [agents.smol-agents.ai]
     resources: [smolagents/finalizers, smolagentplatforms/finalizers, agentnodepools/finalizers]
     verbs: [update]
 
@@ -25,10 +25,10 @@ rules:
     verbs: [get, list, watch, create, update, patch, delete]
 
   # CR access — runtime CRs (Agent, AgentRun, AgentNetwork, Memory*, etc).
-  - apiGroups: [runtime.agents.stigen.ai]
+  - apiGroups: [runtime.agents.smol-agents.ai]
     resources: [agents, tools, modelproviders, agentruns, agentsessions, agentpolicies, agentnetworks, memorystores, memoryretrievers]
     verbs: [get, list, watch, update, patch]
-  - apiGroups: [runtime.agents.stigen.ai]
+  - apiGroups: [runtime.agents.smol-agents.ai]
     resources:
       - agents/status
       - agentruns/status

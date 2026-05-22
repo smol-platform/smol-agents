@@ -4,15 +4,15 @@ import (
 	"context"
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/pkg/features"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 func sample() *v1.SmolAgent {
 	cr := &v1.SmolAgent{}
 	cr.Name = "alice"
 	cr.Namespace = "tenant-a"
-	cr.Spec.TrustDomain = "stigen.ai"
+	cr.Spec.TrustDomain = "smol-agents.ai"
 	cr.Spec.Features.Identity.Enabled = true
 	cr.Spec.Features.Sandbox.Enabled = true
 	cr.Spec.Features.Sandbox.RuntimeClass = "kata-fc"

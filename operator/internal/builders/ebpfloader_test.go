@@ -3,13 +3,13 @@ package builders
 import (
 	"testing"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
 
 func samplePlatform() *v1.SmolAgentPlatform {
 	p := &v1.SmolAgentPlatform{}
 	p.Name = "default"
-	p.Spec.DefaultTrustDomain = "stigen.ai"
+	p.Spec.DefaultTrustDomain = "smol-agents.ai"
 	p.Spec.EBPFLoader.Enabled = true
 	p.Spec.EBPFLoader.Preset = "generic"
 	return p

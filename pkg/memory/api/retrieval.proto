@@ -12,7 +12,7 @@ syntax = "proto3";
 //   buf generate     (from pkg/memory/api/)
 package retrieval.v1;
 
-option go_package = "github.com/stigen/smol-agents/pkg/memory/api/grpc;retrievalpb";
+option go_package = "github.com/smol-platform/smol-agents/pkg/memory/api/grpc;retrievalpb";
 
 // ── Identity header (embedded in every request) ──────────────────────────────
 

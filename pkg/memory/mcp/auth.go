@@ -23,7 +23,7 @@ type CallerIdentity struct {
 	// yields tenant "team-alpha".
 	Tenant string
 
-	// TrustDomain is the SPIFFE trust domain, e.g. "stigen.ai".
+	// TrustDomain is the SPIFFE trust domain, e.g. "smol-agents.ai".
 	TrustDomain string
 }
 

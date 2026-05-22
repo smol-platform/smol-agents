@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
-	"github.com/stigen/smol-agents/pkg/memory/audit"
-	"github.com/stigen/smol-agents/pkg/memory/mcp"
-	"github.com/stigen/smol-agents/pkg/memory/quota"
-	"github.com/stigen/smol-agents/pkg/memory/store"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory/audit"
+	"github.com/smol-platform/smol-agents/pkg/memory/mcp"
+	"github.com/smol-platform/smol-agents/pkg/memory/quota"
+	"github.com/smol-platform/smol-agents/pkg/memory/store"
 )
 
 // ── Fake RetrievalService ─────────────────────────────────────────────────
@@ -253,7 +253,7 @@ func TestGateway_TenantInjection(t *testing.T) {
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team-alpha/sa/coder",
+			Identity:   "spiffe://smol-agents.ai/ns/team-alpha/sa/coder",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -263,7 +263,7 @@ func TestGateway_TenantInjection(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	spiffeID := "spiffe://stigen.ai/ns/team-alpha/sa/coder"
+	spiffeID := "spiffe://smol-agents.ai/ns/team-alpha/sa/coder"
 	resp := callTool(t, srv, spiffeID, "retrieve_memory", map[string]any{
 		"query":        "test query",
 		"retrieverRef": "ns/test-retriever",
@@ -296,7 +296,7 @@ func TestGateway_CrossTenantDenial(t *testing.T) {
 		TopK:   10,
 		Tenant: "team-alpha", // retriever scoped to team-alpha
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team-alpha/",
+			Identity:   "spiffe://smol-agents.ai/ns/team-alpha/",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -307,7 +307,7 @@ func TestGateway_CrossTenantDenial(t *testing.T) {
 	defer srv.Close()
 
 	// Caller is from team-beta — should be denied.
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team-beta/sa/intruder",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team-beta/sa/intruder",
 		"retrieve_memory", map[string]any{
 			"query":        "secret docs",
 			"retrieverRef": "ns/test-retriever",
@@ -352,7 +352,7 @@ func TestGateway_CrossTenantDenialDirectGetMemory(t *testing.T) {
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team-beta/sa/x",
+			Identity:   "spiffe://smol-agents.ai/ns/team-beta/sa/x",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -362,7 +362,7 @@ func TestGateway_CrossTenantDenialDirectGetMemory(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team-beta/sa/x",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team-beta/sa/x",
 		"get_memory", map[string]any{
 			"id":           "doc-alpha-secret",
 			"retrieverRef": "ns/test-retriever",
@@ -407,7 +407,7 @@ func TestGateway_DenyByDefault(t *testing.T) {
 			args = map[string]any{"id": "doc-1", "retrieverRef": "ns/test-retriever"}
 		}
 
-		resp := callTool(t, srv, "spiffe://stigen.ai/ns/any/sa/caller", tool, args)
+		resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/any/sa/caller", tool, args)
 		rpcErr, ok := resp["error"].(map[string]any)
 		if !ok {
 			t.Errorf("tool %q: expected deny, got result: %v", tool, resp["result"])
@@ -438,7 +438,7 @@ func TestGateway_QuotaClamp(t *testing.T) {
 		TopK:  10,
 		Quota: v1.QuotaSpec{MaxTopK: 20},
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team/sa/agent",
+			Identity:   "spiffe://smol-agents.ai/ns/team/sa/agent",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -449,7 +449,7 @@ func TestGateway_QuotaClamp(t *testing.T) {
 	defer srv.Close()
 
 	// Request topK=100 > MaxTopK=20 → must error, not truncate.
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team/sa/agent",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team/sa/agent",
 		"retrieve_memory", map[string]any{
 			"query":        "find stuff",
 			"retrieverRef": "ns/test-retriever",
@@ -484,7 +484,7 @@ func TestGateway_QuotaClamp_WithinCeiling(t *testing.T) {
 		TopK:  10,
 		Quota: v1.QuotaSpec{MaxTopK: 20},
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team/sa/agent",
+			Identity:   "spiffe://smol-agents.ai/ns/team/sa/agent",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -494,7 +494,7 @@ func TestGateway_QuotaClamp_WithinCeiling(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team/sa/agent",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team/sa/agent",
 		"retrieve_memory", map[string]any{
 			"query":        "find stuff",
 			"retrieverRef": "ns/test-retriever",
@@ -529,7 +529,7 @@ func TestGateway_AuditNoLeak(t *testing.T) {
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/audit-test/sa/agent",
+			Identity:   "spiffe://smol-agents.ai/ns/audit-test/sa/agent",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -539,7 +539,7 @@ func TestGateway_AuditNoLeak(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	_ = callTool(t, srv, "spiffe://stigen.ai/ns/audit-test/sa/agent",
+	_ = callTool(t, srv, "spiffe://smol-agents.ai/ns/audit-test/sa/agent",
 		"retrieve_memory", map[string]any{
 			"query":        "search query",
 			"retrieverRef": "ns/test-retriever",
@@ -660,7 +660,7 @@ func TestGateway_WriteMemory_PolicyEnforced(t *testing.T) {
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team/sa/reader",
+			Identity:   "spiffe://smol-agents.ai/ns/team/sa/reader",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -670,7 +670,7 @@ func TestGateway_WriteMemory_PolicyEnforced(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team/sa/reader",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team/sa/reader",
 		"write_memory", map[string]any{
 			"content":      "some content",
 			"retrieverRef": "ns/test-retriever",
@@ -692,7 +692,7 @@ func TestGateway_WriteSizeQuota(t *testing.T) {
 		TopK:  10,
 		Quota: v1.QuotaSpec{MaxWriteBytes: 10},
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team/sa/writer",
+			Identity:   "spiffe://smol-agents.ai/ns/team/sa/writer",
 			Operations: []v1.MemoryOperation{v1.MemoryOpWrite},
 			Namespaces: []string{"*"},
 		}},
@@ -703,7 +703,7 @@ func TestGateway_WriteSizeQuota(t *testing.T) {
 	defer srv.Close()
 
 	bigContent := strings.Repeat("x", 100) // 100 bytes > MaxWriteBytes=10
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team/sa/writer",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team/sa/writer",
 		"write_memory", map[string]any{
 			"content":      bigContent,
 			"retrieverRef": "ns/test-retriever",
@@ -772,7 +772,7 @@ func TestGateway_ToolCallRPCMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
 			worker := &fakeWorker{}
-			spiffeID := "spiffe://stigen.ai/ns/team/sa/agent"
+			spiffeID := "spiffe://smol-agents.ai/ns/team/sa/agent"
 			spec := v1.MemoryRetrieverSpec{
 				TopK: 10,
 				Policy: []v1.MemoryGrant{{
@@ -855,7 +855,7 @@ func TestGateway_WorkerErrorMappedToRPC(t *testing.T) {
 		{"internal", memory.Internal("oops"), mcp.CodeBackendError},
 	}
 
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/agent"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/agent"
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
@@ -908,7 +908,7 @@ func TestGateway_AllowedCallAudited(t *testing.T) {
 			},
 		},
 	}
-	spiffeID := "spiffe://stigen.ai/ns/myteam/sa/reader"
+	spiffeID := "spiffe://smol-agents.ai/ns/myteam/sa/reader"
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
@@ -965,7 +965,7 @@ func TestGateway_MergeFSTool_Denied_NoWriteGrant(t *testing.T) {
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
-			Identity:   "spiffe://stigen.ai/ns/team/sa/reader",
+			Identity:   "spiffe://smol-agents.ai/ns/team/sa/reader",
 			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
 			Namespaces: []string{"*"},
 		}},
@@ -975,7 +975,7 @@ func TestGateway_MergeFSTool_Denied_NoWriteGrant(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team/sa/reader",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/team/sa/reader",
 		"merge_memory_fs", map[string]any{
 			"srcBranch":    "run-001",
 			"dstBranch":    "main",
@@ -996,7 +996,7 @@ func TestGateway_MergeFSTool_Denied_NoWriteGrant(t *testing.T) {
 // returns an invalid-params error, not a crash.
 func TestGateway_MergeFSTool_MissingArgs(t *testing.T) {
 	worker := &fakeWorker{}
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/writer"
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
@@ -1031,7 +1031,7 @@ func TestGateway_MergeFSTool_MissingArgs(t *testing.T) {
 // KindNotSupported (non-FS backend), which maps to CodeNotSupported.
 func TestGateway_MergeFSTool_Allowed(t *testing.T) {
 	worker := &fakeWorker{}
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/writer"
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
@@ -1073,7 +1073,7 @@ func TestGateway_MergeFSTool_Allowed(t *testing.T) {
 // TestGateway_MergeFSTool_OnConflictRestriction verifies that the gateway
 // rejects an onConflict value not in AllowedMergePolicies.
 func TestGateway_MergeFSTool_OnConflictRestriction(t *testing.T) {
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/writer"
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
@@ -1109,7 +1109,7 @@ func TestGateway_MergeFSTool_OnConflictRestriction(t *testing.T) {
 // TestGateway_MergeFSTool_DefaultMergePolicy verifies that the DefaultMergePolicy
 // is applied when the request omits onConflict.
 func TestGateway_MergeFSTool_DefaultMergePolicy(t *testing.T) {
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/writer"
 
 	var capturedReq *api.MergeFSRequest
 	worker := &fakeWorkerCapture{
@@ -1179,7 +1179,7 @@ func (f *fakeWorkerCapture) MergeFS(_ context.Context, req *api.MergeFSRequest) 
 // effective policy — after DefaultMergePolicy fill-in — is checked against
 // AllowedMergePolicies. If the default itself isn't allowed, reject.
 func TestGateway_MergeFSTool_DefaultPolicyRejectedByAllowed(t *testing.T) {
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/writer"
 	spec := v1.MemoryRetrieverSpec{
 		TopK: 10,
 		Policy: []v1.MemoryGrant{{
@@ -1218,7 +1218,7 @@ func TestGateway_MergeFSTool_DefaultPolicyRejectedByAllowed(t *testing.T) {
 // TestGateway_MergeFSTool_AllowedPolicies_ExplicitMarkers verifies that
 // explicitly requesting "markers" passes when it is in AllowedMergePolicies.
 func TestGateway_MergeFSTool_AllowedPolicies_ExplicitMarkers(t *testing.T) {
-	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spiffeID := "spiffe://smol-agents.ai/ns/team/sa/writer"
 
 	var capturedReq *api.MergeFSRequest
 	worker := &fakeWorkerCapture{
@@ -1285,7 +1285,7 @@ func TestGateway_FakeStoreNotFound(t *testing.T) {
 	srv := httptest.NewServer(disp)
 	defer srv.Close()
 
-	resp := callTool(t, srv, "spiffe://stigen.ai/ns/x/sa/y",
+	resp := callTool(t, srv, "spiffe://smol-agents.ai/ns/x/sa/y",
 		"retrieve_memory", map[string]any{
 			"query":        "q",
 			"retrieverRef": "ns/does-not-exist",

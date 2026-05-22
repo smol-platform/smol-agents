@@ -1,25 +1,25 @@
-domain: stigen.ai
+domain: smol-agents.ai
 layout:
   - go.kubebuilder.io/v4
 projectName: smol-agents-operator
-repo: github.com/stigen/smol-agents/operator
+repo: github.com/smol-platform/smol-agents/operator
 version: "3"
 resources:
   - api:
       crdVersion: v1
       namespaced: true
     controller: true
-    domain: stigen.ai
+    domain: smol-agents.ai
     group: agents
     kind: SmolAgent
-    path: github.com/stigen/smol-agents/operator/api/v1
+    path: github.com/smol-platform/smol-agents/operator/api/v1
     version: v1
   - api:
       crdVersion: v1
       namespaced: false
     controller: true
-    domain: stigen.ai
+    domain: smol-agents.ai
     group: agents
     kind: SmolAgentPlatform
-    path: github.com/stigen/smol-agents/operator/api/v1
+    path: github.com/smol-platform/smol-agents/operator/api/v1
     version: v1

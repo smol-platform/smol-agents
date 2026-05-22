@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/stigen/smol-agents/pkg/memory"
-	"github.com/stigen/smol-agents/pkg/memory/api"
+	"github.com/smol-platform/smol-agents/pkg/memory"
+	"github.com/smol-platform/smol-agents/pkg/memory/api"
 )
 
 // Config holds the runtime configuration for a Worker.

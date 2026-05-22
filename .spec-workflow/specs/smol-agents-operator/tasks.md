@@ -10,8 +10,8 @@ controllers → webhooks → wiring → e2e.
 - [x] 1. Add Kubebuilder scaffolding under `operator/`
   - File: `operator/PROJECT`, `operator/Dockerfile`, `operator/Makefile`,
     `operator/cmd/manager/main.go`
-  - Action: `kubebuilder init --domain stigen.ai --repo
-    github.com/stigen/smol-agents/operator --multigroup=false`
+  - Action: `kubebuilder init --domain smol-agents.ai --repo
+    github.com/smol-platform/smol-agents/operator --multigroup=false`
   - _Requirements: R-OP-API-1, R-OP-API-2_
 
 - [x] 2. Generate API skeletons for `SmolAgent` and

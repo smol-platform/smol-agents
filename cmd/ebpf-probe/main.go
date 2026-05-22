@@ -44,7 +44,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
 
-	"github.com/stigen/smol-agents/pkg/agentnet/cgroup"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/cgroup"
 )
 
 func main() {

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stigen/smol-agents/test/e2e/fullstack/shared"
+	"github.com/smol-platform/smol-agents/test/e2e/fullstack/shared"
 )
 
 // composeEnv is the L0 Env impl. It drives a docker-compose stack

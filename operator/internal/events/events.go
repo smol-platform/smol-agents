@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 
-	"github.com/stigen/smol-agents/operator/pkg/features"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 // Reason names — kept here so test asserts can reference them.

@@ -47,7 +47,7 @@ retrievers and workers can bind to it without embedding connection details in
 agents.
 
 **Acceptance Criteria:**
-- The system SHALL provide a `MemoryStore` CRD (group `runtime.agents.stigen.ai`)
+- The system SHALL provide a `MemoryStore` CRD (group `runtime.agents.smol-agents.ai`)
   declaring a backend `kind` ∈ {`vector`, `graph`, `kv`, `eventlog`, `filesystem`},
   an endpoint, a driver (e.g. `pgvector`, `qdrant`, `neo4j`, `redis`, `agentfs`),
   and a credential `AuthRef` resolved via the secret broker (never a literal

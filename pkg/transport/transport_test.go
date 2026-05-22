@@ -18,7 +18,7 @@ import (
 )
 
 func TestPeerCtx(t *testing.T) {
-	id := spiffeid.RequireFromString("spiffe://stigen.ai/ns/agents/sa/a")
+	id := spiffeid.RequireFromString("spiffe://smol-agents.ai/ns/agents/sa/a")
 	ctx := WithPeer(context.Background(), id)
 	got, ok := PeerID(ctx)
 	if !ok {

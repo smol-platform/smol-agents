@@ -12,7 +12,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 
-	"github.com/stigen/smol-agents/pkg/identity"
+	"github.com/smol-platform/smol-agents/pkg/identity"
 )
 
 // runMemory exercises the memory-mcp gateway end-to-end against real SPIRE:

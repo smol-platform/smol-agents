@@ -107,8 +107,8 @@ services:
     command:
       - "-tcp-addr=:8443"
       - "-http-addr=:8080"
-      - "-jwt-audience=spiffe://stigen.ai/ns/tenant-a/sa/fake-gateway"
-      - "-authorize-tcp=spiffe://stigen.ai/ns/tenant-a"
+      - "-jwt-audience=spiffe://smol-agents.ai/ns/tenant-a/sa/fake-gateway"
+      - "-authorize-tcp=spiffe://smol-agents.ai/ns/tenant-a"
     ports:
       - "18081:8080"
       - "18443:8443"

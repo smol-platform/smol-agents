@@ -16,8 +16,8 @@ func TestExchangeMinter_Token(t *testing.T) {
 	priv := newKey(t)
 	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
 	traT := signTraT(t, priv, josejwt.Claims{
-		Subject:  "spiffe://stigen.ai/ns/tenant-a/sa/alice-agent",
-		Audience: josejwt.Audience{"stigen.ai"},
+		Subject:  "spiffe://smol-agents.ai/ns/tenant-a/sa/alice-agent",
+		Audience: josejwt.Audience{"smol-agents.ai"},
 		Expiry:   josejwt.NewNumericDate(now.Add(5 * time.Minute)),
 	}, map[string]any{"scope": "github:repo:read"})
 
@@ -38,11 +38,11 @@ func TestExchangeMinter_Token(t *testing.T) {
 
 	m := &ExchangeMinter{
 		TokenURL:        srv.URL,
-		SubjectAudience: "tts.stigen.ai",
+		SubjectAudience: "tts.smol-agents.ai",
 		SubjectToken:    func(_ context.Context, aud string) (string, error) { return "jwt-svid-for:" + aud, nil },
 		Now:             func() time.Time { return now },
 	}
-	p := ExchangeParams{Scope: "github:repo:read", Audience: "stigen.ai"}
+	p := ExchangeParams{Scope: "github:repo:read", Audience: "smol-agents.ai"}
 
 	got, err := m.Token(context.Background(), p)
 	if err != nil {
@@ -54,9 +54,9 @@ func TestExchangeMinter_Token(t *testing.T) {
 	// Form correctness (RFC 8693).
 	if gotForm.Get("grant_type") != GrantTokenExchange ||
 		gotForm.Get("requested_token_type") != TokenTypeTxn ||
-		gotForm.Get("subject_token") != "jwt-svid-for:tts.stigen.ai" ||
+		gotForm.Get("subject_token") != "jwt-svid-for:tts.smol-agents.ai" ||
 		gotForm.Get("subject_token_type") != TokenTypeJWT ||
-		gotForm.Get("audience") != "stigen.ai" ||
+		gotForm.Get("audience") != "smol-agents.ai" ||
 		gotForm.Get("scope") != "github:repo:read" {
 		t.Errorf("form = %v", gotForm)
 	}
@@ -79,7 +79,7 @@ func TestExchangeMinter_Token_TTSError(t *testing.T) {
 		TokenURL:     srv.URL,
 		SubjectToken: func(context.Context, string) (string, error) { return "svid", nil },
 	}
-	if _, err := m.Token(context.Background(), ExchangeParams{Scope: "s", Audience: "stigen.ai"}); err == nil {
+	if _, err := m.Token(context.Background(), ExchangeParams{Scope: "s", Audience: "smol-agents.ai"}); err == nil {
 		t.Fatal("expected error on TTS 403")
 	}
 }

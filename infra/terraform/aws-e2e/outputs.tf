@@ -15,7 +15,7 @@ output "instance_profile" {
 }
 
 output "runner_role_arn" {
-  description = "ARN to plug into .github/workflows/e2e.yml as STIGEN_AWS_ACCOUNT_ID derives from."
+  description = "ARN to plug into .github/workflows/e2e.yml as SMOL_AGENTS_AWS_ACCOUNT_ID derives from."
   value       = aws_iam_role.runner.arn
 }
 

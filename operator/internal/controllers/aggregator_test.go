@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/stigen/smol-agents/operator/api/v1"
-	"github.com/stigen/smol-agents/operator/pkg/features"
+	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
+	"github.com/smol-platform/smol-agents/operator/pkg/features"
 )
 
 func TestAggregatePhase_Ready(t *testing.T) {

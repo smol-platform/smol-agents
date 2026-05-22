@@ -9,7 +9,7 @@
 // registration on top.
 //
 // +kubebuilder:object:generate=true
-// +groupName=runtime.agents.stigen.ai
+// +groupName=runtime.agents.smol-agents.ai
 package v1
 
 import (
@@ -17,10 +17,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
-// GroupVersion is `runtime.agents.stigen.ai/v1`. We use a different
-// group from the operator's `agents.stigen.ai/v1` (SmolAgent) so
+// GroupVersion is `runtime.agents.smol-agents.ai/v1`. We use a different
+// group from the operator's `agents.smol-agents.ai/v1` (SmolAgent) so
 // the two specs evolve independently.
-var GroupVersion = schema.GroupVersion{Group: "runtime.agents.stigen.ai", Version: "v1"}
+var GroupVersion = schema.GroupVersion{Group: "runtime.agents.smol-agents.ai", Version: "v1"}
 
 // SchemeBuilder is used to add go types to the scheme.
 var SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

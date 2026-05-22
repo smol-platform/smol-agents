@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stigen/smol-agents/pkg/agentfs"
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────

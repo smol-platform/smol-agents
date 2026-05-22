@@ -27,17 +27,17 @@ func TestBuildClusterAutoscalerConfigMap(t *testing.T) {
 		t.Errorf("instanceFamilies = %q", d["instanceFamilies"])
 	}
 	// Coupling keys the kata pod carries — the ASG must surface the same.
-	if d["poolLabel"] != "agents.stigen.ai/pool=kata-arm64" {
+	if d["poolLabel"] != "agents.smol-agents.ai/pool=kata-arm64" {
 		t.Errorf("poolLabel = %q", d["poolLabel"])
 	}
-	if d["isolationTaint"] != "agents.stigen.ai/isolation=kata-fc:NoSchedule" {
+	if d["isolationTaint"] != "agents.smol-agents.ai/isolation=kata-fc:NoSchedule" {
 		t.Errorf("isolationTaint = %q", d["isolationTaint"])
 	}
 	// CAS auto-discovery + node-template tags mirror the coupling keys.
 	for _, want := range []string{
 		`k8s.io/cluster-autoscaler/enabled: "true"`,
-		"node-template/label/agents.stigen.ai/pool",
-		"node-template/taint/agents.stigen.ai/isolation",
+		"node-template/label/agents.smol-agents.ai/pool",
+		"node-template/taint/agents.smol-agents.ai/isolation",
 	} {
 		if !strings.Contains(d["requiredASGTags"], want) {
 			t.Errorf("requiredASGTags missing %q\n%s", want, d["requiredASGTags"])

@@ -1,11 +1,11 @@
 # Standalone ClusterSPIFFEID binding for tenants who manage SPIRE
-# resources outside the Helm chart (matches existing stigen-flux pattern).
+# resources outside the Helm chart (matches existing smol-agents-flux pattern).
 apiVersion: spire.spiffe.io/v1alpha1
 kind: ClusterSPIFFEID
 metadata:
   name: smol-agents
 spec:
-  spiffeIDTemplate: "spiffe://stigen.ai/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  spiffeIDTemplate: "spiffe://smol-agents.ai/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
   podSelector:
     matchLabels:
       app.kubernetes.io/name: smol-agents

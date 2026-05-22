@@ -17,8 +17,8 @@ func TestLoadAgent_Defaults(t *testing.T) {
 	if cfg.Mode != ModeStrict {
 		t.Errorf("default mode = %q, want strict", cfg.Mode)
 	}
-	if cfg.TrustDomain != "stigen.ai" {
-		t.Errorf("default trustDomain = %q, want stigen.ai", cfg.TrustDomain)
+	if cfg.TrustDomain != "smol-agents.ai" {
+		t.Errorf("default trustDomain = %q, want smol-agents.ai", cfg.TrustDomain)
 	}
 	if cfg.Identity.RotationThreshold != 0.5 {
 		t.Errorf("rotationThreshold = %v, want 0.5", cfg.Identity.RotationThreshold)

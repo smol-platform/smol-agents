@@ -28,7 +28,7 @@ variable "active_l2_instance_cap" {
 variable "github_repository" {
   description = "github_owner/repo for GHA OIDC trust. Format: owner/repo."
   type        = string
-  default     = "stigen/smol-agents"
+  default     = "smol-agents/smol-agents"
 }
 
 # IP allow-list for NodePort ingress used by the L2 driver to reach

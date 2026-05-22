@@ -9,7 +9,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // HarnessRunner is the abstract harness driver. The agentruntime/harness

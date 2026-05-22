@@ -74,7 +74,7 @@ srv := &secrets.Server{
     },
     TraTVerifier: &trat.JWKSVerifier{
         Keys:     &trat.HTTPKeySource{URL: ttsJWKSURL},
-        Audience: "spiffe://stigen.ai", // expected TraT audience (trust domain)
+        Audience: "spiffe://smol-agents.ai", // expected TraT audience (trust domain)
     },
     CredPolicy: credPolicy, // built below
 }
@@ -87,10 +87,10 @@ allow-list:
 ```go
 credPolicy := secrets.NewStaticCredentialPolicy()
 credPolicy.Grant(
-    spiffeid.RequireFromString("spiffe://stigen.ai/ns/tenant-a/sa/agent"),
+    spiffeid.RequireFromString("spiffe://smol-agents.ai/ns/tenant-a/sa/agent"),
     "github:repo:read", // TraT scope that authorizes this
     "github",           // credential name (matches AgentNetwork credential.name)
-    "stigen/app",       // repo allow-list; the TraT's rctx.repo must be in here
+    "smol-platform/app",       // repo allow-list; the TraT's rctx.repo must be in here
 )
 ```
 
@@ -116,13 +116,13 @@ spec:
       url:     https://tts.security.svc/token   # RFC 8693 token-exchange
       jwksUrl: https://tts.security.svc/jwks     # required for credential resources
       subjectTokenType: urn:ietf:params:oauth:token-type:jwt
-      subjectAudience:  spiffe://stigen.ai/ns/security/sa/tts
+      subjectAudience:  spiffe://smol-agents.ai/ns/security/sa/tts
     resources:
       - name: github
         kind: http                                # credentials are http-only
         localPort: 9200
         gateway: https://api.github.com/
-        jwtAudience: spiffe://stigen.ai/ns/tenant-a/sa/agent
+        jwtAudience: spiffe://smol-agents.ai/ns/tenant-a/sa/agent
         credential:
           name:  github                           # → broker credential/policy key
           scope: github:repo:read                 # → authorizing TraT's intent
@@ -145,12 +145,12 @@ injects, and forwards.
 kubectl exec -n tenant-a deploy/agent -c agent -- \
   sh -c 'env | grep -i -E "github|token" || echo "no token in env ✔"'
 kubectl exec -n tenant-a deploy/agent -c agent -- \
-  curl -s http://127.0.0.1:9200/repos/stigen/app | head
+  curl -s http://127.0.0.1:9200/repos/smol-platform/app | head
 
 # 2. The agent's own request carries no Authorization — the SIDECAR adds it.
 #    Confirm by pointing curl straight at GitHub (bypassing the sidecar):
 kubectl exec -n tenant-a deploy/agent -c agent -- \
-  curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/stigen/app
+  curl -s -o /dev/null -w '%{http_code}\n' https://api.github.com/repos/smol-platform/app
 #    → 401/403 (no creds) AND/OR dropped by eBPF (host not on the agent's path).
 
 # 3. Exfiltration attempt to a non-allow-listed host is dropped by eBPF.

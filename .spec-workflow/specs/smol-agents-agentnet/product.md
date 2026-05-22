@@ -42,7 +42,7 @@ cannot disable it.
 
 1. **`AgentNetwork` CR** — discriminated by `kind`
    (`identityProxy | wireguardMesh`). Lives in
-   `runtime.agents.stigen.ai/v1`.
+   `runtime.agents.smol-agents.ai/v1`.
 2. **TCP + HTTP identity proxies** as sidecars. TCP is a byte
    forwarder over SPIFFE mTLS; HTTP is a reverse proxy that mints
    JWT-SVIDs per upstream audience.

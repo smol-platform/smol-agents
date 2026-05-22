@@ -74,7 +74,7 @@ built so those four guarantees hold *by construction*.
 flowchart TB
     subgraph CP["Control plane"]
         OP["smol-agents-operator<br/>(controller-runtime)"]
-        CRDS["CRDs · agents.stigen.ai<br/>+ runtime.agents.stigen.ai"]
+        CRDS["CRDs · agents.smol-agents.ai<br/>+ runtime.agents.smol-agents.ai"]
         CRDS --> OP
     end
 
@@ -121,7 +121,7 @@ The agent never holds the credential and cannot reach an unlisted host.
 12 CRDs across two API groups. The substrate group describes *where* agents
 run; the runtime group describes *what* runs.
 
-### `agents.stigen.ai/v1` — substrate
+### `agents.smol-agents.ai/v1` — substrate
 
 | Kind | Scope | Purpose |
 |---|---|---|
@@ -129,7 +129,7 @@ run; the runtime group describes *what* runs.
 | `SmolAgent` | Namespaced | One hardened agent workload; every capability is a feature flag with a status condition. |
 | `AgentNodePool` | Cluster | Kata-capable node shape → compiles to a Karpenter `NodePool` + `EC2NodeClass`. |
 
-### `runtime.agents.stigen.ai/v1` — workload model
+### `runtime.agents.smol-agents.ai/v1` — workload model
 
 | Kind | Purpose |
 |---|---|
@@ -172,13 +172,13 @@ kubectl wait --for=jsonpath='{.status.phase}'=Ready \
 
 ```yaml
 # operator/config/samples/smolagent_minimal.yaml — every feature on its default
-apiVersion: agents.stigen.ai/v1
+apiVersion: agents.smol-agents.ai/v1
 kind: SmolAgent
 metadata:
   name: hello
   namespace: tenant-a
 spec:
-  trustDomain: stigen.ai
+  trustDomain: smol-agents.ai
   mode: strict          # SPIFFE mTLS required on every connection
 ```
 
@@ -269,7 +269,7 @@ hardening).
 ## Contributing & license
 
 Issues and PRs welcome; please run `make verify` before opening one. The Go
-module path is currently `github.com/stigen/smol-agents`.
+module path is currently `github.com/smol-platform/smol-agents`.
 
 Licensed under the **[Apache License 2.0](LICENSE)** — the CNCF-standard
 license (Kubernetes, Prometheus, Envoy, and containerd all use it). See

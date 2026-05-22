@@ -8,7 +8,7 @@ driver needs: VPC, IAM, S3, ECR, sweeper Lambda, budget alarm.
 
 ## Pinned
 
-- **Account**: `stigen` sandbox
+- **Account**: `smol-agents` sandbox
 - **Region**: `us-east-2` (Ohio)
 - **Monthly cap**: $50 — enforced by AWS Budget; 80% notify, 100% nuke
 - **Instance type**: `c6gd.metal` only (cheapest bare-metal arm64)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stigen/smol-agents/pkg/memory/worker"
+	"github.com/smol-platform/smol-agents/pkg/memory/worker"
 )
 
 // ── FakeSummarizer ────────────────────────────────────────────────────────────
