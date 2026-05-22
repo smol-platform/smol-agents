@@ -180,6 +180,15 @@ type AgentRunSpec struct {
 	Seed           int64           `json:"seed,omitempty"`
 	BudgetOverride *Budget         `json:"budgetOverride,omitempty"`
 	Cancel         bool            `json:"cancel,omitempty"`
+
+	// MemoryRetrieverRef is the namespace-local name of a MemoryRetriever CR
+	// whose filesystem store should be mounted into the agent pod when
+	// MemoryRetriever.spec.mount.enabled is true (R-MEM-FS-2).
+	// The run controller resolves this to a MemoryRetriever and calls
+	// builders.AttachMemoryFS on the pod before creating it.
+	// Empty means no memory filesystem is mounted.
+	// +optional
+	MemoryRetrieverRef string `json:"memoryRetrieverRef,omitempty"`
 }
 
 // Step is a single plan-act-observe iteration.
