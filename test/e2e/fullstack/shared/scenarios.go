@@ -131,6 +131,27 @@ var proxyTCP = Scenario{
 	Run:      runProxyTCP,
 }
 
+// retryUntil calls fn every `every` until it returns nil or ctx expires.
+// The proxy scenarios need it because the fake-gateway's own SVID may not
+// have propagated from SPIRE when scenarios start (notably slower on CI
+// runners): until the gateway can present a server cert it resets the mTLS
+// handshake ("connection reset by peer"). Retrying the dial absorbs that
+// warmup without masking a genuinely-broken gateway (it still fails on
+// timeout, reporting the last error).
+func retryUntil(ctx context.Context, every time.Duration, fn func() error) error {
+	var last error
+	for {
+		if last = fn(); last == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w (last attempt: %v)", ctx.Err(), last)
+		case <-time.After(every):
+		}
+	}
+}
+
 func runProxyTCP(t *testing.T, env Env) {
 	t.Helper()
 	tcpAddr, ok := env.Endpoint("fake-gateway-tcp")
@@ -156,7 +177,7 @@ func runProxyTCP(t *testing.T, env Env) {
 		t.Skip("env exposes no SPIFFE socket")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	src, err := workloadapi.NewX509Source(ctx,
@@ -167,15 +188,23 @@ func runProxyTCP(t *testing.T, env Env) {
 	defer src.Close()
 
 	cfg := tlsconfig.MTLSClientConfig(src, src, tlsconfig.AuthorizeAny())
-	conn, err := tls.Dial("tcp", tcpAddr, cfg)
-	if err != nil {
+	// Retry the mTLS dial+handshake until the gateway's SVID is ready.
+	var conn *tls.Conn
+	if err := retryUntil(ctx, 500*time.Millisecond, func() error {
+		c, err := tls.Dial("tcp", tcpAddr, cfg)
+		if err != nil {
+			return err
+		}
+		if err := c.HandshakeContext(ctx); err != nil {
+			_ = c.Close()
+			return err
+		}
+		conn = c
+		return nil
+	}); err != nil {
 		t.Fatalf("dial fake-gateway-tcp: %v", err)
 	}
 	defer conn.Close()
-
-	if err := conn.HandshakeContext(ctx); err != nil {
-		t.Fatalf("mTLS handshake: %v", err)
-	}
 
 	// Echo: write a payload, expect it back verbatim.
 	want := []byte("hello-from-l0-test-driver\n")
@@ -226,7 +255,7 @@ func runProxyHTTP(t *testing.T, env Env) {
 		t.Skip("env exposes no SPIFFE socket")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	jwtSrc, err := workloadapi.NewJWTSource(ctx,
@@ -264,8 +293,16 @@ func runProxyHTTP(t *testing.T, env Env) {
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.Marshal())
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
+	// Retry until the gateway's SVID is ready (see runProxyTCP).
+	var resp *http.Response
+	if err := retryUntil(ctx, 500*time.Millisecond, func() error {
+		r, err := httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		resp = r
+		return nil
+	}); err != nil {
 		t.Fatalf("http GET: %v", err)
 	}
 	defer resp.Body.Close()
