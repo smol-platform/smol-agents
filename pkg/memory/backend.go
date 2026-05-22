@@ -65,19 +65,29 @@ type Backend interface {
 	// tenant/namespace scope.
 	ListBranches(ctx context.Context, filter Filter) ([]BranchInfo, error)
 
-	// Merge performs a fast-forward publish of srcBranch into dstBranch within
-	// the tenant/namespace scope supplied by filter. All files from srcBranch
-	// are applied onto dstBranch using copy-on-write semantics: files present
-	// in srcBranch replace (or add to) the corresponding paths in dstBranch;
-	// files only in dstBranch and absent from srcBranch are preserved.
+	// Merge performs a 3-way merge of srcBranch into dstBranch within the
+	// tenant/namespace scope supplied by filter. The merge uses the fork-base
+	// content hashes captured at Branch() time to classify each file:
+	//
+	//   - Both sides unchanged → keep dst.
+	//   - Only src changed     → take src (fast-forward).
+	//   - Only dst changed     → keep dst.
+	//   - Both changed, same   → keep dst (no-op).
+	//   - Both changed, differ → conflict (see MergeOptions.OnConflict).
+	//   - Src added, dst absent  → add to dst.
+	//   - Src deleted, dst unchanged since base → delete from dst.
+	//   - Src deleted, dst changed → conflict(edit/delete).
+	//   - Both added with different content → conflict(add/add).
+	//
+	// opts.OnConflict controls conflict resolution; opts.DryRun suppresses
+	// all mutations. The operation is atomic: either all changes are applied
+	// or none (fail policy on conflict commits nothing).
 	//
 	// Filesystem-only — non-FS adapters MUST return
 	//   &ErrNotSupported{Op:"Merge", Backend:"<name>"}.
 	// Tenant and namespace isolation MUST be enforced; cross-tenant merge
 	// attempts MUST return PermissionDenied.
-	//
-	// On success the updated dstBranch BranchInfo is returned.
-	Merge(ctx context.Context, srcBranch, dstBranch string, filter Filter) (BranchInfo, error)
+	Merge(ctx context.Context, srcBranch, dstBranch string, opts MergeOptions, filter Filter) (MergeResult, error)
 }
 
 // ErrNotSupported is returned by Backend methods that the adapter does not

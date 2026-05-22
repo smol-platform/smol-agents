@@ -505,9 +505,19 @@ func TestAgentFS_Write_CancelledContext(t *testing.T) {
 
 // ── Merge ─────────────────────────────────────────────────────────────────────
 
+// ── helpers for 3-way merge tests ────────────────────────────────────────────
+
+func mergeOpts(policy ConflictPolicy) MergeOptions {
+	return MergeOptions{OnConflict: policy}
+}
+
+func mergeDryRun() MergeOptions {
+	return MergeOptions{OnConflict: MergeFail, DryRun: true}
+}
+
 // TestAgentFS_Merge_FastForward verifies the core fast-forward semantics:
 // files from srcBranch are applied onto dstBranch; dst-only files are preserved;
-// the returned BranchInfo has CommittedAt set.
+// the returned MergeResult has CommittedAt set.
 func TestAgentFS_Merge_FastForward(t *testing.T) {
 	b, _ := newTestBackend(t)
 	f := filterFor("tenant-a", "ns")
@@ -524,18 +534,29 @@ func TestAgentFS_Merge_FastForward(t *testing.T) {
 	writeDoc(t, b, "tenant-a", "ns", "run-x", "shared.txt", "run version") // override
 	writeDoc(t, b, "tenant-a", "ns", "run-x", "new.txt", "brand new")      // new file
 
-	// Merge run-x → main.
-	info, err := b.Merge(context.Background(), "run-x", "main", f)
+	// Merge run-x → main (no conflict: only src changed shared.txt).
+	result, err := b.Merge(context.Background(), "run-x", "main", mergeOpts(MergeFail), f)
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 
-	// The returned BranchInfo must be for main and be committed.
-	if info.Name != "main" {
-		t.Errorf("Merge returned info.Name = %q, want main", info.Name)
+	if !result.Committed {
+		t.Error("Merge: Committed should be true")
 	}
-	if info.CommittedAt.IsZero() {
+	if len(result.Conflicts) != 0 {
+		t.Errorf("Merge: expected 0 conflicts, got %d: %v", len(result.Conflicts), result.Conflicts)
+	}
+	if result.Branch.Name != "main" {
+		t.Errorf("Merge returned Branch.Name = %q, want main", result.Branch.Name)
+	}
+	if result.Branch.CommittedAt.IsZero() {
 		t.Error("Merge: CommittedAt should be set on the destination branch")
+	}
+	if result.Merged != 1 {
+		t.Errorf("Merge: want Merged=1, got %d", result.Merged)
+	}
+	if result.Added != 1 {
+		t.Errorf("Merge: want Added=1, got %d", result.Added)
 	}
 
 	// main should now contain the run-x version of shared.txt.
@@ -587,7 +608,7 @@ func TestAgentFS_Merge_CrossTenantIsolation(t *testing.T) {
 	writeDoc(t, b, "tenant-b", "ns", "run-1", "secret.txt", "b secret")
 
 	// Merge tenant-a's run-1 → main: should only see tenant-a files.
-	_, err := b.Merge(context.Background(), "run-1", "main", fa)
+	_, err := b.Merge(context.Background(), "run-1", "main", mergeOpts(MergeFail), fa)
 	if err != nil {
 		t.Fatalf("Merge tenant-a: %v", err)
 	}
@@ -611,7 +632,7 @@ func TestAgentFS_Merge_MissingBranch(t *testing.T) {
 	f := filterFor("tenant-a", "ns")
 
 	// src missing.
-	_, err := b.Merge(context.Background(), "nonexistent", "main", f)
+	_, err := b.Merge(context.Background(), "nonexistent", "main", mergeOpts(MergeFail), f)
 	if KindOf(err) != KindNotFound {
 		t.Errorf("missing src: expected NotFound, got %v", err)
 	}
@@ -619,7 +640,7 @@ func TestAgentFS_Merge_MissingBranch(t *testing.T) {
 	// Seed main, then try missing dst.
 	writeDoc(t, b, "tenant-a", "ns", "main", "x.txt", "x")
 	_, _ = b.Branch(context.Background(), "main", "src-ok", f)
-	_, err = b.Merge(context.Background(), "src-ok", "no-such-dst", f)
+	_, err = b.Merge(context.Background(), "src-ok", "no-such-dst", mergeOpts(MergeFail), f)
 	if KindOf(err) != KindNotFound {
 		t.Errorf("missing dst: expected NotFound, got %v", err)
 	}
@@ -629,7 +650,7 @@ func TestAgentFS_Merge_MissingBranch(t *testing.T) {
 func TestAgentFS_Merge_SameBranch(t *testing.T) {
 	b, _ := newTestBackend(t)
 	f := filterFor("tenant-a", "ns")
-	_, err := b.Merge(context.Background(), "main", "main", f)
+	_, err := b.Merge(context.Background(), "main", "main", mergeOpts(MergeFail), f)
 	if KindOf(err) != KindInvalid {
 		t.Errorf("expected Invalid for src==dst, got %v", err)
 	}
@@ -638,8 +659,294 @@ func TestAgentFS_Merge_SameBranch(t *testing.T) {
 // TestAgentFS_Merge_MissingTenant verifies Invalid guard.
 func TestAgentFS_Merge_MissingTenant(t *testing.T) {
 	b, _ := newTestBackend(t)
-	_, err := b.Merge(context.Background(), "run", "main", Filter{Namespace: "ns"})
+	_, err := b.Merge(context.Background(), "run", "main", mergeOpts(MergeFail), Filter{Namespace: "ns"})
 	if KindOf(err) != KindInvalid {
 		t.Errorf("expected Invalid for missing Tenant, got %v", err)
+	}
+}
+
+// ── 3-way merge table-driven tests ────────────────────────────────────────────
+
+// TestAgentFS_Merge3Way_Table exercises every row of the 3-way classifier.
+func TestAgentFS_Merge3Way_Table(t *testing.T) {
+	// setup helper: creates a fork and optionally modifies both sides.
+	type setup struct {
+		baseContent string
+		dstContent  string // "" means delete from dst after fork
+		srcContent  string // "" means delete from src after fork
+		deleteDst   bool
+		deleteSrc   bool
+	}
+	type want struct {
+		dstContent   string // expected content of the file in main after merge
+		deleted      bool   // expected absent from main after merge
+		conflict     bool   // expected conflict surfaced
+		conflictKind string
+		committed    bool
+		addedCount   int
+		mergedCount  int
+		deletedCount int
+	}
+
+	cases := []struct {
+		name  string
+		setup setup
+		opts  MergeOptions
+		want  want
+	}{
+		{
+			name:  "O==T both unchanged: keep dst",
+			setup: setup{baseContent: "v1", dstContent: "v1", srcContent: "v1"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "v1", committed: true},
+		},
+		{
+			name:  "only T changed: take T (fast-forward)",
+			setup: setup{baseContent: "v1", dstContent: "v1", srcContent: "v2"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "v2", committed: true, mergedCount: 1},
+		},
+		{
+			name:  "only O changed: keep O",
+			setup: setup{baseContent: "v1", dstContent: "v2", srcContent: "v1"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "v2", committed: true},
+		},
+		{
+			name:  "O==T both changed same: keep dst",
+			setup: setup{baseContent: "v1", dstContent: "v2", srcContent: "v2"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "v2", committed: true},
+		},
+		{
+			name:  "O!=T both changed differ: edit/edit conflict fail",
+			setup: setup{baseContent: "v1", dstContent: "v2-dst", srcContent: "v2-src"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "v2-dst", conflict: true, conflictKind: "edit/edit", committed: false},
+		},
+		{
+			name:  "O!=T both changed differ: edit/edit conflict ours",
+			setup: setup{baseContent: "v1", dstContent: "v2-dst", srcContent: "v2-src"},
+			opts:  mergeOpts(MergeOurs),
+			want:  want{dstContent: "v2-dst", conflict: true, conflictKind: "edit/edit", committed: true},
+		},
+		{
+			name:  "O!=T both changed differ: edit/edit conflict theirs",
+			setup: setup{baseContent: "v1", dstContent: "v2-dst", srcContent: "v2-src"},
+			opts:  mergeOpts(MergeTheirs),
+			want:  want{dstContent: "v2-src", conflict: true, conflictKind: "edit/edit", committed: true, mergedCount: 1},
+		},
+		{
+			name:  "T deleted O unchanged: take deletion",
+			setup: setup{baseContent: "v1", dstContent: "v1", deleteSrc: true},
+			opts:  mergeOpts(MergeFail),
+			want:  want{deleted: true, committed: true, deletedCount: 1},
+		},
+		{
+			name:  "T deleted O changed: edit/delete conflict fail",
+			setup: setup{baseContent: "v1", dstContent: "v2-dst", deleteSrc: true},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "v2-dst", conflict: true, conflictKind: "edit/delete", committed: false},
+		},
+		{
+			name:  "T deleted O changed: edit/delete conflict theirs (delete wins)",
+			setup: setup{baseContent: "v1", dstContent: "v2-dst", deleteSrc: true},
+			opts:  mergeOpts(MergeTheirs),
+			want:  want{deleted: true, conflict: true, conflictKind: "edit/delete", committed: true, deletedCount: 1},
+		},
+		{
+			name:  "src adds new file: add to dst",
+			setup: setup{srcContent: "new"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "new", committed: true, addedCount: 1},
+		},
+		{
+			name: "add/add different content: conflict fail",
+			// No base (srcContent set without going through branch), both sides have different
+			// The test setup uses Branch() which copies base files. For an add/add we need
+			// a file that only exists in src and dst independently (not from base).
+			// We simulate this by creating the branch, then writing different content in dst
+			// and different content in src (the base had neither).
+			setup: setup{srcContent: "src-add", dstContent: "dst-add"},
+			opts:  mergeOpts(MergeFail),
+			want:  want{dstContent: "dst-add", conflict: true, conflictKind: "add/add", committed: false},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := newTestBackend(t)
+			f := filterFor("tenant-a", "ns")
+
+			const relPath = "file.txt"
+
+			// Set up base file in main (if any).
+			if tc.setup.baseContent != "" {
+				writeDoc(t, b, "tenant-a", "ns", "main", relPath, tc.setup.baseContent)
+			}
+
+			// Fork src from main.
+			_, err := b.Branch(context.Background(), "main", "src", f)
+			if err != nil {
+				t.Fatalf("Branch: %v", err)
+			}
+
+			// Apply dst mutations (write or delete from dst=main).
+			if tc.setup.dstContent != "" && tc.setup.dstContent != tc.setup.baseContent {
+				writeDoc(t, b, "tenant-a", "ns", "main", relPath, tc.setup.dstContent)
+			}
+			if tc.setup.deleteDst {
+				dstKey := "tenant-a/ns/main/" + relPath
+				_ = b.Delete(context.Background(), dstKey, f)
+			}
+
+			// Apply src mutations.
+			if tc.setup.srcContent != "" && tc.setup.srcContent != tc.setup.baseContent {
+				writeDoc(t, b, "tenant-a", "ns", "src", relPath, tc.setup.srcContent)
+			}
+			if tc.setup.deleteSrc {
+				srcKey := "tenant-a/ns/src/" + relPath
+				_ = b.Delete(context.Background(), srcKey, f)
+			}
+			// For add/add: write into dst independently (no base).
+			if tc.setup.dstContent != "" && tc.setup.baseContent == "" {
+				writeDoc(t, b, "tenant-a", "ns", "main", relPath, tc.setup.dstContent)
+			}
+
+			result, mergeErr := b.Merge(context.Background(), "src", "main", tc.opts, f)
+			if mergeErr != nil {
+				t.Fatalf("Merge error: %v", mergeErr)
+			}
+
+			if result.Committed != tc.want.committed {
+				t.Errorf("Committed=%v, want %v", result.Committed, tc.want.committed)
+			}
+
+			gotConflict := len(result.Conflicts) > 0
+			if gotConflict != tc.want.conflict {
+				t.Errorf("hasConflict=%v, want %v; conflicts=%v", gotConflict, tc.want.conflict, result.Conflicts)
+			}
+			if tc.want.conflict && tc.want.conflictKind != "" {
+				found := false
+				for _, ci := range result.Conflicts {
+					if ci.Kind == tc.want.conflictKind {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("want conflict kind %q, got %v", tc.want.conflictKind, result.Conflicts)
+				}
+			}
+
+			dstKey := "tenant-a/ns/main/" + relPath
+			doc, getErr := b.Get(context.Background(), dstKey, f)
+			if tc.want.deleted {
+				if KindOf(getErr) != KindNotFound {
+					t.Errorf("want file deleted, but Get returned doc=%v err=%v", doc, getErr)
+				}
+			} else if tc.want.dstContent != "" {
+				if getErr != nil {
+					t.Errorf("Get after merge: %v", getErr)
+				} else if string(doc.Content) != tc.want.dstContent {
+					t.Errorf("dst content=%q, want %q", doc.Content, tc.want.dstContent)
+				}
+			}
+
+			if result.Merged != tc.want.mergedCount {
+				t.Errorf("Merged=%d, want %d", result.Merged, tc.want.mergedCount)
+			}
+			if result.Added != tc.want.addedCount {
+				t.Errorf("Added=%d, want %d", result.Added, tc.want.addedCount)
+			}
+			if result.Deleted != tc.want.deletedCount {
+				t.Errorf("Deleted=%d, want %d", result.Deleted, tc.want.deletedCount)
+			}
+		})
+	}
+}
+
+// TestAgentFS_Merge_FailNoMutation verifies that OnConflict=fail leaves dst
+// byte-identical to its pre-merge state.
+func TestAgentFS_Merge_FailNoMutation(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	// Base state.
+	writeDoc(t, b, "tenant-a", "ns", "main", "conflict.txt", "base")
+	writeDoc(t, b, "tenant-a", "ns", "main", "clean.txt", "clean")
+
+	_, err := b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+	// Both sides modify conflict.txt differently.
+	writeDoc(t, b, "tenant-a", "ns", "main", "conflict.txt", "main-edit")
+	writeDoc(t, b, "tenant-a", "ns", "src", "conflict.txt", "src-edit")
+	// src also adds a new file.
+	writeDoc(t, b, "tenant-a", "ns", "src", "new.txt", "new from src")
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeFail), f)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if result.Committed {
+		t.Fatal("Merge with fail policy must not commit when conflicts exist")
+	}
+	if len(result.Conflicts) == 0 {
+		t.Fatal("expected at least one conflict")
+	}
+
+	// dst must be byte-identical: conflict.txt still "main-edit", new.txt absent.
+	conflictKey := "tenant-a/ns/main/conflict.txt"
+	doc, err := b.Get(context.Background(), conflictKey, f)
+	if err != nil {
+		t.Fatalf("Get conflict.txt: %v", err)
+	}
+	if string(doc.Content) != "main-edit" {
+		t.Errorf("conflict.txt mutated on failed merge: got %q, want %q", doc.Content, "main-edit")
+	}
+
+	newKey := "tenant-a/ns/main/new.txt"
+	if _, err := b.Get(context.Background(), newKey, f); KindOf(err) != KindNotFound {
+		t.Error("new.txt must not be present after failed merge")
+	}
+}
+
+// TestAgentFS_Merge_DryRun verifies that DryRun computes counts without committing.
+func TestAgentFS_Merge_DryRun(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	writeDoc(t, b, "tenant-a", "ns", "main", "shared.txt", "base")
+	_, err := b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+	writeDoc(t, b, "tenant-a", "ns", "src", "shared.txt", "changed by src")
+	writeDoc(t, b, "tenant-a", "ns", "src", "added.txt", "new file")
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeDryRun(), f)
+	if err != nil {
+		t.Fatalf("Merge DryRun: %v", err)
+	}
+	if result.Committed {
+		t.Error("DryRun must not commit")
+	}
+	if result.Merged != 1 {
+		t.Errorf("DryRun: Merged=%d, want 1", result.Merged)
+	}
+	if result.Added != 1 {
+		t.Errorf("DryRun: Added=%d, want 1", result.Added)
+	}
+
+	// Verify no mutation occurred.
+	key := "tenant-a/ns/main/shared.txt"
+	doc, _ := b.Get(context.Background(), key, f)
+	if string(doc.Content) != "base" {
+		t.Errorf("DryRun mutated dst: got %q", doc.Content)
+	}
+	newKey := "tenant-a/ns/main/added.txt"
+	if _, err := b.Get(context.Background(), newKey, f); KindOf(err) != KindNotFound {
+		t.Error("DryRun must not add files to dst")
 	}
 }

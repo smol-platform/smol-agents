@@ -439,8 +439,8 @@ func (b *PgvectorBackend) ListBranches(_ context.Context, _ Filter) ([]BranchInf
 	return nil, &ErrNotSupported{Op: "ListBranches", Backend: "pgvector"}
 }
 
-func (b *PgvectorBackend) Merge(_ context.Context, _, _ string, _ Filter) (BranchInfo, error) {
-	return BranchInfo{}, &ErrNotSupported{Op: "Merge", Backend: "pgvector"}
+func (b *PgvectorBackend) Merge(_ context.Context, _, _ string, _ MergeOptions, _ Filter) (MergeResult, error) {
+	return MergeResult{}, &ErrNotSupported{Op: "Merge", Backend: "pgvector"}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

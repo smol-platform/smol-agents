@@ -1473,21 +1473,81 @@ func (x *ListBranchesResponse) GetBranches() []*BranchInfo {
 	return nil
 }
 
-// MergeFSRequest performs a fast-forward publish of src_branch into dst_branch.
+// ConflictInfo describes one conflicting file detected during a 3-way merge.
+type ConflictInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// path is the relative file path inside the branch.
+	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// kind classifies the conflict: "edit/edit", "edit/delete", or "add/add".
+	Kind          string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConflictInfo) Reset() {
+	*x = ConflictInfo{}
+	mi := &file_retrieval_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConflictInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConflictInfo) ProtoMessage() {}
+
+func (x *ConflictInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_retrieval_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConflictInfo.ProtoReflect.Descriptor instead.
+func (*ConflictInfo) Descriptor() ([]byte, []int) {
+	return file_retrieval_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ConflictInfo) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ConflictInfo) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+// MergeFSRequest performs a 3-way merge of src_branch into dst_branch.
 type MergeFSRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Identity *RequestIdentity       `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
 	// src_branch is the branch whose files are applied onto dst_branch.
 	SrcBranch string `protobuf:"bytes,2,opt,name=src_branch,json=srcBranch,proto3" json:"src_branch,omitempty"`
 	// dst_branch is the branch that receives the merged files.
-	DstBranch     string `protobuf:"bytes,3,opt,name=dst_branch,json=dstBranch,proto3" json:"dst_branch,omitempty"`
+	DstBranch string `protobuf:"bytes,3,opt,name=dst_branch,json=dstBranch,proto3" json:"dst_branch,omitempty"`
+	// on_conflict controls conflict resolution policy.
+	// Empty string means "fail" (safe default: commit nothing on conflict).
+	OnConflict string `protobuf:"bytes,4,opt,name=on_conflict,json=onConflict,proto3" json:"on_conflict,omitempty"`
+	// dry_run, when true, computes the merge plan but commits nothing.
+	DryRun        bool `protobuf:"varint,5,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MergeFSRequest) Reset() {
 	*x = MergeFSRequest{}
-	mi := &file_retrieval_proto_msgTypes[25]
+	mi := &file_retrieval_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1499,7 +1559,7 @@ func (x *MergeFSRequest) String() string {
 func (*MergeFSRequest) ProtoMessage() {}
 
 func (x *MergeFSRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_retrieval_proto_msgTypes[25]
+	mi := &file_retrieval_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1512,7 +1572,7 @@ func (x *MergeFSRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeFSRequest.ProtoReflect.Descriptor instead.
 func (*MergeFSRequest) Descriptor() ([]byte, []int) {
-	return file_retrieval_proto_rawDescGZIP(), []int{25}
+	return file_retrieval_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *MergeFSRequest) GetIdentity() *RequestIdentity {
@@ -1536,17 +1596,40 @@ func (x *MergeFSRequest) GetDstBranch() string {
 	return ""
 }
 
-// MergeFSResponse carries the updated destination branch metadata.
+func (x *MergeFSRequest) GetOnConflict() string {
+	if x != nil {
+		return x.OnConflict
+	}
+	return ""
+}
+
+func (x *MergeFSRequest) GetDryRun() bool {
+	if x != nil {
+		return x.DryRun
+	}
+	return false
+}
+
+// MergeFSResponse carries the result of a 3-way merge.
 type MergeFSResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Branch        *BranchInfo            `protobuf:"bytes,1,opt,name=branch,proto3" json:"branch,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// branch is the updated destination BranchInfo. Zero when committed=false.
+	Branch *BranchInfo `protobuf:"bytes,1,opt,name=branch,proto3" json:"branch,omitempty"`
+	// conflicts holds file paths that had unresolvable conflicts.
+	Conflicts []*ConflictInfo `protobuf:"bytes,2,rep,name=conflicts,proto3" json:"conflicts,omitempty"`
+	// committed is true when the merge was fully applied to dst_branch.
+	Committed bool `protobuf:"varint,3,opt,name=committed,proto3" json:"committed,omitempty"`
+	// merged, added, deleted count the affected files.
+	Merged        int32 `protobuf:"varint,4,opt,name=merged,proto3" json:"merged,omitempty"`
+	Added         int32 `protobuf:"varint,5,opt,name=added,proto3" json:"added,omitempty"`
+	Deleted       int32 `protobuf:"varint,6,opt,name=deleted,proto3" json:"deleted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MergeFSResponse) Reset() {
 	*x = MergeFSResponse{}
-	mi := &file_retrieval_proto_msgTypes[26]
+	mi := &file_retrieval_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1558,7 +1641,7 @@ func (x *MergeFSResponse) String() string {
 func (*MergeFSResponse) ProtoMessage() {}
 
 func (x *MergeFSResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_retrieval_proto_msgTypes[26]
+	mi := &file_retrieval_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1571,7 +1654,7 @@ func (x *MergeFSResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeFSResponse.ProtoReflect.Descriptor instead.
 func (*MergeFSResponse) Descriptor() ([]byte, []int) {
-	return file_retrieval_proto_rawDescGZIP(), []int{26}
+	return file_retrieval_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *MergeFSResponse) GetBranch() *BranchInfo {
@@ -1579,6 +1662,41 @@ func (x *MergeFSResponse) GetBranch() *BranchInfo {
 		return x.Branch
 	}
 	return nil
+}
+
+func (x *MergeFSResponse) GetConflicts() []*ConflictInfo {
+	if x != nil {
+		return x.Conflicts
+	}
+	return nil
+}
+
+func (x *MergeFSResponse) GetCommitted() bool {
+	if x != nil {
+		return x.Committed
+	}
+	return false
+}
+
+func (x *MergeFSResponse) GetMerged() int32 {
+	if x != nil {
+		return x.Merged
+	}
+	return 0
+}
+
+func (x *MergeFSResponse) GetAdded() int32 {
+	if x != nil {
+		return x.Added
+	}
+	return 0
+}
+
+func (x *MergeFSResponse) GetDeleted() int32 {
+	if x != nil {
+		return x.Deleted
+	}
+	return 0
 }
 
 var File_retrieval_proto protoreflect.FileDescriptor
@@ -1692,15 +1810,26 @@ const file_retrieval_proto_rawDesc = "" +
 	"\x13ListBranchesRequest\x129\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1d.retrieval.v1.RequestIdentityR\bidentity\"L\n" +
 	"\x14ListBranchesResponse\x124\n" +
-	"\bbranches\x18\x01 \x03(\v2\x18.retrieval.v1.BranchInfoR\bbranches\"\x89\x01\n" +
+	"\bbranches\x18\x01 \x03(\v2\x18.retrieval.v1.BranchInfoR\bbranches\"6\n" +
+	"\fConflictInfo\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\"\xc3\x01\n" +
 	"\x0eMergeFSRequest\x129\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1d.retrieval.v1.RequestIdentityR\bidentity\x12\x1d\n" +
 	"\n" +
 	"src_branch\x18\x02 \x01(\tR\tsrcBranch\x12\x1d\n" +
 	"\n" +
-	"dst_branch\x18\x03 \x01(\tR\tdstBranch\"C\n" +
+	"dst_branch\x18\x03 \x01(\tR\tdstBranch\x12\x1f\n" +
+	"\von_conflict\x18\x04 \x01(\tR\n" +
+	"onConflict\x12\x17\n" +
+	"\adry_run\x18\x05 \x01(\bR\x06dryRun\"\xe3\x01\n" +
 	"\x0fMergeFSResponse\x120\n" +
-	"\x06branch\x18\x01 \x01(\v2\x18.retrieval.v1.BranchInfoR\x06branch2\x86\x06\n" +
+	"\x06branch\x18\x01 \x01(\v2\x18.retrieval.v1.BranchInfoR\x06branch\x128\n" +
+	"\tconflicts\x18\x02 \x03(\v2\x1a.retrieval.v1.ConflictInfoR\tconflicts\x12\x1c\n" +
+	"\tcommitted\x18\x03 \x01(\bR\tcommitted\x12\x16\n" +
+	"\x06merged\x18\x04 \x01(\x05R\x06merged\x12\x14\n" +
+	"\x05added\x18\x05 \x01(\x05R\x05added\x12\x18\n" +
+	"\adeleted\x18\x06 \x01(\x05R\adeleted2\x86\x06\n" +
 	"\x10RetrievalService\x12I\n" +
 	"\bRetrieve\x12\x1d.retrieval.v1.RetrieveRequest\x1a\x1e.retrieval.v1.RetrieveResponse\x12@\n" +
 	"\x05Write\x12\x1a.retrieval.v1.WriteRequest\x1a\x1b.retrieval.v1.WriteResponse\x12:\n" +
@@ -1726,7 +1855,7 @@ func file_retrieval_proto_rawDescGZIP() []byte {
 	return file_retrieval_proto_rawDescData
 }
 
-var file_retrieval_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_retrieval_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_retrieval_proto_goTypes = []any{
 	(*RequestIdentity)(nil),        // 0: retrieval.v1.RequestIdentity
 	(*Document)(nil),               // 1: retrieval.v1.Document
@@ -1753,15 +1882,16 @@ var file_retrieval_proto_goTypes = []any{
 	(*SnapshotFSResponse)(nil),     // 22: retrieval.v1.SnapshotFSResponse
 	(*ListBranchesRequest)(nil),    // 23: retrieval.v1.ListBranchesRequest
 	(*ListBranchesResponse)(nil),   // 24: retrieval.v1.ListBranchesResponse
-	(*MergeFSRequest)(nil),         // 25: retrieval.v1.MergeFSRequest
-	(*MergeFSResponse)(nil),        // 26: retrieval.v1.MergeFSResponse
-	nil,                            // 27: retrieval.v1.Document.MetadataEntry
-	nil,                            // 28: retrieval.v1.Filter.MetadataEntry
+	(*ConflictInfo)(nil),           // 25: retrieval.v1.ConflictInfo
+	(*MergeFSRequest)(nil),         // 26: retrieval.v1.MergeFSRequest
+	(*MergeFSResponse)(nil),        // 27: retrieval.v1.MergeFSResponse
+	nil,                            // 28: retrieval.v1.Document.MetadataEntry
+	nil,                            // 29: retrieval.v1.Filter.MetadataEntry
 }
 var file_retrieval_proto_depIdxs = []int32{
-	27, // 0: retrieval.v1.Document.metadata:type_name -> retrieval.v1.Document.MetadataEntry
+	28, // 0: retrieval.v1.Document.metadata:type_name -> retrieval.v1.Document.MetadataEntry
 	2,  // 1: retrieval.v1.ScoredChunk.chunk:type_name -> retrieval.v1.Chunk
-	28, // 2: retrieval.v1.Filter.metadata:type_name -> retrieval.v1.Filter.MetadataEntry
+	29, // 2: retrieval.v1.Filter.metadata:type_name -> retrieval.v1.Filter.MetadataEntry
 	0,  // 3: retrieval.v1.RetrieveRequest.identity:type_name -> retrieval.v1.RequestIdentity
 	4,  // 4: retrieval.v1.RetrieveRequest.filters:type_name -> retrieval.v1.Filter
 	3,  // 5: retrieval.v1.RetrieveResponse.chunks:type_name -> retrieval.v1.ScoredChunk
@@ -1780,31 +1910,32 @@ var file_retrieval_proto_depIdxs = []int32{
 	5,  // 18: retrieval.v1.ListBranchesResponse.branches:type_name -> retrieval.v1.BranchInfo
 	0,  // 19: retrieval.v1.MergeFSRequest.identity:type_name -> retrieval.v1.RequestIdentity
 	5,  // 20: retrieval.v1.MergeFSResponse.branch:type_name -> retrieval.v1.BranchInfo
-	7,  // 21: retrieval.v1.RetrievalService.Retrieve:input_type -> retrieval.v1.RetrieveRequest
-	9,  // 22: retrieval.v1.RetrievalService.Write:input_type -> retrieval.v1.WriteRequest
-	11, // 23: retrieval.v1.RetrievalService.Get:input_type -> retrieval.v1.GetRequest
-	13, // 24: retrieval.v1.RetrievalService.Delete:input_type -> retrieval.v1.DeleteRequest
-	15, // 25: retrieval.v1.RetrievalService.ListNamespaces:input_type -> retrieval.v1.ListNamespacesRequest
-	17, // 26: retrieval.v1.RetrievalService.Summarize:input_type -> retrieval.v1.SummarizeRequest
-	19, // 27: retrieval.v1.RetrievalService.BranchFS:input_type -> retrieval.v1.BranchFSRequest
-	21, // 28: retrieval.v1.RetrievalService.SnapshotFS:input_type -> retrieval.v1.SnapshotFSRequest
-	23, // 29: retrieval.v1.RetrievalService.ListBranches:input_type -> retrieval.v1.ListBranchesRequest
-	25, // 30: retrieval.v1.RetrievalService.MergeFS:input_type -> retrieval.v1.MergeFSRequest
-	8,  // 31: retrieval.v1.RetrievalService.Retrieve:output_type -> retrieval.v1.RetrieveResponse
-	10, // 32: retrieval.v1.RetrievalService.Write:output_type -> retrieval.v1.WriteResponse
-	12, // 33: retrieval.v1.RetrievalService.Get:output_type -> retrieval.v1.GetResponse
-	14, // 34: retrieval.v1.RetrievalService.Delete:output_type -> retrieval.v1.DeleteResponse
-	16, // 35: retrieval.v1.RetrievalService.ListNamespaces:output_type -> retrieval.v1.ListNamespacesResponse
-	18, // 36: retrieval.v1.RetrievalService.Summarize:output_type -> retrieval.v1.SummarizeResponse
-	20, // 37: retrieval.v1.RetrievalService.BranchFS:output_type -> retrieval.v1.BranchFSResponse
-	22, // 38: retrieval.v1.RetrievalService.SnapshotFS:output_type -> retrieval.v1.SnapshotFSResponse
-	24, // 39: retrieval.v1.RetrievalService.ListBranches:output_type -> retrieval.v1.ListBranchesResponse
-	26, // 40: retrieval.v1.RetrievalService.MergeFS:output_type -> retrieval.v1.MergeFSResponse
-	31, // [31:41] is the sub-list for method output_type
-	21, // [21:31] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	25, // 21: retrieval.v1.MergeFSResponse.conflicts:type_name -> retrieval.v1.ConflictInfo
+	7,  // 22: retrieval.v1.RetrievalService.Retrieve:input_type -> retrieval.v1.RetrieveRequest
+	9,  // 23: retrieval.v1.RetrievalService.Write:input_type -> retrieval.v1.WriteRequest
+	11, // 24: retrieval.v1.RetrievalService.Get:input_type -> retrieval.v1.GetRequest
+	13, // 25: retrieval.v1.RetrievalService.Delete:input_type -> retrieval.v1.DeleteRequest
+	15, // 26: retrieval.v1.RetrievalService.ListNamespaces:input_type -> retrieval.v1.ListNamespacesRequest
+	17, // 27: retrieval.v1.RetrievalService.Summarize:input_type -> retrieval.v1.SummarizeRequest
+	19, // 28: retrieval.v1.RetrievalService.BranchFS:input_type -> retrieval.v1.BranchFSRequest
+	21, // 29: retrieval.v1.RetrievalService.SnapshotFS:input_type -> retrieval.v1.SnapshotFSRequest
+	23, // 30: retrieval.v1.RetrievalService.ListBranches:input_type -> retrieval.v1.ListBranchesRequest
+	26, // 31: retrieval.v1.RetrievalService.MergeFS:input_type -> retrieval.v1.MergeFSRequest
+	8,  // 32: retrieval.v1.RetrievalService.Retrieve:output_type -> retrieval.v1.RetrieveResponse
+	10, // 33: retrieval.v1.RetrievalService.Write:output_type -> retrieval.v1.WriteResponse
+	12, // 34: retrieval.v1.RetrievalService.Get:output_type -> retrieval.v1.GetResponse
+	14, // 35: retrieval.v1.RetrievalService.Delete:output_type -> retrieval.v1.DeleteResponse
+	16, // 36: retrieval.v1.RetrievalService.ListNamespaces:output_type -> retrieval.v1.ListNamespacesResponse
+	18, // 37: retrieval.v1.RetrievalService.Summarize:output_type -> retrieval.v1.SummarizeResponse
+	20, // 38: retrieval.v1.RetrievalService.BranchFS:output_type -> retrieval.v1.BranchFSResponse
+	22, // 39: retrieval.v1.RetrievalService.SnapshotFS:output_type -> retrieval.v1.SnapshotFSResponse
+	24, // 40: retrieval.v1.RetrievalService.ListBranches:output_type -> retrieval.v1.ListBranchesResponse
+	27, // 41: retrieval.v1.RetrievalService.MergeFS:output_type -> retrieval.v1.MergeFSResponse
+	32, // [32:42] is the sub-list for method output_type
+	22, // [22:32] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_retrieval_proto_init() }
@@ -1818,7 +1949,7 @@ func file_retrieval_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_retrieval_proto_rawDesc), len(file_retrieval_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

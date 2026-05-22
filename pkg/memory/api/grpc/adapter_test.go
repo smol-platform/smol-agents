@@ -69,8 +69,16 @@ func (f *fakeSvc) SnapshotFS(_ context.Context, _ *apipkg.SnapshotFSRequest) (*a
 func (f *fakeSvc) ListBranches(_ context.Context, _ *apipkg.ListBranchesRequest) (*apipkg.ListBranchesResponse, error) {
 	return &apipkg.ListBranchesResponse{}, nil
 }
-func (f *fakeSvc) MergeFS(_ context.Context, _ *apipkg.MergeFSRequest) (*apipkg.MergeFSResponse, error) {
-	return &apipkg.MergeFSResponse{}, nil
+func (f *fakeSvc) MergeFS(_ context.Context, req *apipkg.MergeFSRequest) (*apipkg.MergeFSResponse, error) {
+	// Echo back DryRun as Committed=!DryRun and set counts so round-trip tests
+	// can verify the new proto fields survive the gRPC hop.
+	return &apipkg.MergeFSResponse{
+		Committed: !req.DryRun,
+		Merged:    3,
+		Added:     1,
+		Deleted:   0,
+		Conflicts: []memory.ConflictInfo{{Path: "a.txt", Kind: "edit/edit"}},
+	}, nil
 }
 
 // ── test helpers ──────────────────────────────────────────────────────────────
@@ -250,5 +258,45 @@ func TestGRPCTransport_RetrieveScore(t *testing.T) {
 	}
 	if resp.Result.Chunks[0].Score != 0.9 {
 		t.Errorf("score = %f, want 0.9", resp.Result.Chunks[0].Score)
+	}
+}
+
+// TestGRPCTransport_MergeFS_NewFields verifies OnConflict/DryRun/Committed/
+// Conflicts/Merged/Added/Deleted survive the gRPC proto hop.
+func TestGRPCTransport_MergeFS_NewFields(t *testing.T) {
+	c := newGRPCPair(t, &fakeSvc{})
+
+	// DryRun=true → Committed=false (fakeSvc echoes !DryRun).
+	resp, err := c.MergeFS(context.Background(), &apipkg.MergeFSRequest{
+		SrcBranch:  "run-001",
+		DstBranch:  "main",
+		OnConflict: "ours",
+		DryRun:     true,
+	})
+	if err != nil {
+		t.Fatalf("MergeFS DryRun: %v", err)
+	}
+	if resp.Committed {
+		t.Error("Committed should be false when DryRun=true")
+	}
+	if resp.Merged != 3 {
+		t.Errorf("Merged=%d, want 3", resp.Merged)
+	}
+	if len(resp.Conflicts) != 1 || resp.Conflicts[0].Path != "a.txt" || resp.Conflicts[0].Kind != "edit/edit" {
+		t.Errorf("Conflicts=%v, want [{a.txt edit/edit}]", resp.Conflicts)
+	}
+
+	// DryRun=false → Committed=true.
+	resp2, err := c.MergeFS(context.Background(), &apipkg.MergeFSRequest{
+		SrcBranch:  "run-001",
+		DstBranch:  "main",
+		OnConflict: "fail",
+		DryRun:     false,
+	})
+	if err != nil {
+		t.Fatalf("MergeFS committed: %v", err)
+	}
+	if !resp2.Committed {
+		t.Error("Committed should be true when DryRun=false")
 	}
 }

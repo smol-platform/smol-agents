@@ -248,7 +248,7 @@ type ListBranchesResponse struct {
 // ── MergeFS ────────────────────────────────────────────────────────────────
 
 // MergeFSRequest is sent by the gateway for a merge_memory_fs MCP call.
-// It performs a fast-forward publish of SrcBranch into DstBranch.
+// It performs a 3-way merge of SrcBranch into DstBranch.
 type MergeFSRequest struct {
 	Identity RequestIdentity
 
@@ -257,9 +257,25 @@ type MergeFSRequest struct {
 
 	// DstBranch is the branch that receives the merged files.
 	DstBranch string
+
+	// OnConflict controls conflict resolution. Empty → memory.MergeFail.
+	OnConflict string
+
+	// DryRun, when true, computes the merge plan but commits nothing.
+	DryRun bool
 }
 
-// MergeFSResponse carries metadata about the updated destination branch.
+// MergeFSResponse carries the result of a merge operation.
 type MergeFSResponse struct {
+	// Branch is the updated destination BranchInfo. Zero when Committed=false.
 	Branch memory.BranchInfo
+
+	// Conflicts holds paths that had unresolvable conflicts.
+	Conflicts []memory.ConflictInfo
+
+	// Committed is true when the merge was fully applied.
+	Committed bool
+
+	// Merged, Added, Deleted count the affected files.
+	Merged, Added, Deleted int
 }

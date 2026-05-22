@@ -278,6 +278,33 @@ func snapshotInfoFromProto(p *SnapshotInfo) memory.SnapshotInfo {
 	}
 }
 
+func conflictInfoToProto(ci memory.ConflictInfo) *ConflictInfo {
+	return &ConflictInfo{Path: ci.Path, Kind: ci.Kind}
+}
+
+func conflictInfoFromProto(p *ConflictInfo) memory.ConflictInfo {
+	if p == nil {
+		return memory.ConflictInfo{}
+	}
+	return memory.ConflictInfo{Path: p.Path, Kind: p.Kind}
+}
+
+func conflictInfosToProto(cis []memory.ConflictInfo) []*ConflictInfo {
+	out := make([]*ConflictInfo, 0, len(cis))
+	for _, ci := range cis {
+		out = append(out, conflictInfoToProto(ci))
+	}
+	return out
+}
+
+func conflictInfosFromProto(ps []*ConflictInfo) []memory.ConflictInfo {
+	out := make([]memory.ConflictInfo, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, conflictInfoFromProto(p))
+	}
+	return out
+}
+
 func snapshotInfoToProto(s memory.SnapshotInfo) *SnapshotInfo {
 	return &SnapshotInfo{
 		Id:            s.ID,
@@ -418,14 +445,23 @@ func (s *grpcServer) ListBranches(ctx context.Context, req *ListBranchesRequest)
 
 func (s *grpcServer) MergeFS(ctx context.Context, req *MergeFSRequest) (*MergeFSResponse, error) {
 	resp, err := s.svc.MergeFS(ctx, &apipkg.MergeFSRequest{
-		Identity:  identityFromProto(req.Identity),
-		SrcBranch: req.SrcBranch,
-		DstBranch: req.DstBranch,
+		Identity:   identityFromProto(req.Identity),
+		SrcBranch:  req.SrcBranch,
+		DstBranch:  req.DstBranch,
+		OnConflict: req.OnConflict,
+		DryRun:     req.DryRun,
 	})
 	if err != nil {
 		return nil, toGRPCErr(err)
 	}
-	return &MergeFSResponse{Branch: branchInfoToProto(resp.Branch)}, nil
+	return &MergeFSResponse{
+		Branch:    branchInfoToProto(resp.Branch),
+		Conflicts: conflictInfosToProto(resp.Conflicts),
+		Committed: resp.Committed,
+		Merged:    int32(resp.Merged),
+		Added:     int32(resp.Added),
+		Deleted:   int32(resp.Deleted),
+	}, nil
 }
 
 // compile-time check: grpcServer satisfies the generated server interface.
@@ -559,14 +595,23 @@ func (c *grpcClient) ListBranches(ctx context.Context, req *apipkg.ListBranchesR
 
 func (c *grpcClient) MergeFS(ctx context.Context, req *apipkg.MergeFSRequest) (*apipkg.MergeFSResponse, error) {
 	resp, err := c.pb.MergeFS(ctx, &MergeFSRequest{
-		Identity:  identityToProto(req.Identity),
-		SrcBranch: req.SrcBranch,
-		DstBranch: req.DstBranch,
+		Identity:   identityToProto(req.Identity),
+		SrcBranch:  req.SrcBranch,
+		DstBranch:  req.DstBranch,
+		OnConflict: req.OnConflict,
+		DryRun:     req.DryRun,
 	})
 	if err != nil {
 		return nil, fromGRPCErr(err)
 	}
-	return &apipkg.MergeFSResponse{Branch: branchInfoFromProto(resp.Branch)}, nil
+	return &apipkg.MergeFSResponse{
+		Branch:    branchInfoFromProto(resp.Branch),
+		Conflicts: conflictInfosFromProto(resp.Conflicts),
+		Committed: resp.Committed,
+		Merged:    int(resp.Merged),
+		Added:     int(resp.Added),
+		Deleted:   int(resp.Deleted),
+	}, nil
 }
 
 // compile-time check: grpcClient satisfies the api.RetrievalService interface.
