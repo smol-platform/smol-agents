@@ -17,6 +17,7 @@ import (
 	v1 "github.com/stigen/smol-agents/operator/api/v1"
 	"github.com/stigen/smol-agents/operator/internal/controllers"
 	"github.com/stigen/smol-agents/operator/internal/controllers/agentmodel"
+	memoryctrl "github.com/stigen/smol-agents/operator/internal/controllers/memory"
 	"github.com/stigen/smol-agents/operator/internal/webhooks"
 )
 
@@ -96,6 +97,14 @@ func main() {
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentNetwork controller")
+		os.Exit(1)
+	}
+
+	// runtime.agents.stigen.ai/v1 — memory CRDs.
+	if err := (&memoryctrl.MemoryRetrieverReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register MemoryRetriever controller")
 		os.Exit(1)
 	}
 
