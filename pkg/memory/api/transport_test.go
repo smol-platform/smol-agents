@@ -45,8 +45,15 @@ func (f *fakeSvc) SnapshotFS(context.Context, *SnapshotFSRequest) (*SnapshotFSRe
 func (f *fakeSvc) ListBranches(context.Context, *ListBranchesRequest) (*ListBranchesResponse, error) {
 	return &ListBranchesResponse{}, nil
 }
-func (f *fakeSvc) MergeFS(context.Context, *MergeFSRequest) (*MergeFSResponse, error) {
-	return &MergeFSResponse{}, nil
+func (f *fakeSvc) MergeFS(_ context.Context, req *MergeFSRequest) (*MergeFSResponse, error) {
+	// Echo OnConflict/DryRun back so round-trip tests can verify transport.
+	return &MergeFSResponse{
+		Committed: !req.DryRun,
+		Conflicts: nil,
+		Merged:    2,
+		Added:     1,
+		Deleted:   0,
+	}, nil
 }
 
 func newPair(t *testing.T, svc RetrievalService) RetrievalService {
@@ -157,5 +164,45 @@ func TestTransport_MergeFS_NotSupported(t *testing.T) {
 	}
 	if got := memory.KindOf(err); got != memory.KindNotSupported {
 		t.Errorf("kind = %q, want not_supported", got)
+	}
+}
+
+// TestTransport_MergeFS_NewFields verifies OnConflict/DryRun/Committed/Merged
+// counts survive the HTTP JSON round-trip.
+func TestTransport_MergeFS_NewFields(t *testing.T) {
+	c := newPair(t, &fakeSvc{})
+
+	// DryRun=true → Committed=false (fakeSvc echoes !req.DryRun).
+	resp, err := c.MergeFS(context.Background(), &MergeFSRequest{
+		SrcBranch:  "run-001",
+		DstBranch:  "main",
+		OnConflict: "ours",
+		DryRun:     true,
+	})
+	if err != nil {
+		t.Fatalf("MergeFS DryRun: %v", err)
+	}
+	if resp.Committed {
+		t.Error("Committed should be false when DryRun=true")
+	}
+	if resp.Merged != 2 {
+		t.Errorf("Merged=%d, want 2", resp.Merged)
+	}
+	if resp.Added != 1 {
+		t.Errorf("Added=%d, want 1", resp.Added)
+	}
+
+	// DryRun=false → Committed=true.
+	resp2, err := c.MergeFS(context.Background(), &MergeFSRequest{
+		SrcBranch:  "run-001",
+		DstBranch:  "main",
+		OnConflict: "fail",
+		DryRun:     false,
+	})
+	if err != nil {
+		t.Fatalf("MergeFS committed: %v", err)
+	}
+	if !resp2.Committed {
+		t.Error("Committed should be true when DryRun=false")
 	}
 }

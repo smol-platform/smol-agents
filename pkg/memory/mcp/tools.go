@@ -87,7 +87,7 @@ var memoryTools = []Tool{
 	},
 	{
 		Name:        "merge_memory_fs",
-		Description: "Fast-forward publish srcBranch into dstBranch in a filesystem-backed memory store. All files from srcBranch are applied onto dstBranch (CoW semantics). Requires write permission on dstBranch's namespace. Only supported for kind=filesystem backends.",
+		Description: "3-way merge srcBranch into dstBranch in a filesystem-backed memory store. Uses fork-base content hashes to classify each file as keep/take/delete/conflict. Requires write permission on dstBranch's namespace. Only supported for kind=filesystem backends.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -95,6 +95,8 @@ var memoryTools = []Tool{
 				"dstBranch":    map[string]any{"type": "string", "description": "Branch that receives the merged files"},
 				"retrieverRef": map[string]any{"type": "string", "description": "Namespace-qualified MemoryRetriever name (ns/name)"},
 				"namespace":    map[string]any{"type": "string", "description": "Memory namespace containing both branches"},
+				"onConflict":   map[string]any{"type": "string", "enum": []string{"fail", "ours", "theirs", "markers", "union"}, "description": "Conflict resolution policy. Default: fail (commit nothing on conflict)."},
+				"dryRun":       map[string]any{"type": "boolean", "description": "When true, compute the merge plan but commit nothing."},
 			},
 			"required": []string{"srcBranch", "dstBranch", "retrieverRef"},
 		},

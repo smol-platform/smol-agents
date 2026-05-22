@@ -290,6 +290,18 @@ type MemoryRetrieverSpec struct {
 	// write_memory and delete_memory calls. Implements R-MEM-AUTH-3.
 	// +optional
 	MutationsTraT bool `json:"mutationsTraT,omitempty"`
+
+	// DefaultMergePolicy is the conflict policy applied when merge_memory_fs
+	// omits the onConflict field. When empty the gateway uses "fail".
+	// +kubebuilder:validation:Enum=fail;ours;theirs;markers;union
+	// +optional
+	DefaultMergePolicy string `json:"defaultMergePolicy,omitempty"`
+
+	// AllowedMergePolicies restricts which onConflict values callers may request.
+	// Empty means all policies are allowed. The gateway rejects requests whose
+	// onConflict is not in this list.
+	// +optional
+	AllowedMergePolicies []string `json:"allowedMergePolicies,omitempty"`
 }
 
 // MemoryRetrieverStatus is reported by the controller.

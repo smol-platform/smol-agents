@@ -468,10 +468,40 @@ func (g *Gateway) doMergeFS(
 			CodeInvalidParams, "dstBranch is required", memory.KindInvalid)
 	}
 
+	onConflict := jsonStr(args["onConflict"])
+	// Per-retriever policy restriction (Phase 2 per-retriever enforcement is
+	// wired here in advance; empty AllowedMergePolicies = allow all).
+	if len(info.Spec.AllowedMergePolicies) > 0 && onConflict != "" {
+		allowed := false
+		for _, p := range info.Spec.AllowedMergePolicies {
+			if p == onConflict {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return g.deny(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace, start,
+				CodePermissionDenied,
+				fmt.Sprintf("onConflict=%q not in retriever AllowedMergePolicies", onConflict),
+				memory.KindPermissionDenied)
+		}
+	}
+	// Apply DefaultMergePolicy when request omits onConflict.
+	if onConflict == "" && info.Spec.DefaultMergePolicy != "" {
+		onConflict = info.Spec.DefaultMergePolicy
+	}
+
+	var dryRun bool
+	if raw, ok := args["dryRun"]; ok {
+		_ = json.Unmarshal(raw, &dryRun)
+	}
+
 	req := &api.MergeFSRequest{
-		Identity:  identity,
-		SrcBranch: srcBranch,
-		DstBranch: dstBranch,
+		Identity:   identity,
+		SrcBranch:  srcBranch,
+		DstBranch:  dstBranch,
+		OnConflict: onConflict,
+		DryRun:     dryRun,
 	}
 	resp, err := worker.MergeFS(r.Context(), req)
 	if err != nil {
@@ -480,7 +510,14 @@ func (g *Gateway) doMergeFS(
 
 	g.logAllow(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace,
 		"src="+srcBranch+",dst="+dstBranch, 1, start)
-	out, _ := json.Marshal(resp.Branch)
+	out, _ := json.Marshal(map[string]any{
+		"branch":    resp.Branch,
+		"committed": resp.Committed,
+		"conflicts": resp.Conflicts,
+		"merged":    resp.Merged,
+		"added":     resp.Added,
+		"deleted":   resp.Deleted,
+	})
 	return okResult(string(out))
 }
 

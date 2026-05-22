@@ -323,8 +323,8 @@ func (b *VectorBackend) ListBranches(_ context.Context, _ Filter) ([]BranchInfo,
 	return nil, &ErrNotSupported{Op: "ListBranches", Backend: "vector-inmem"}
 }
 
-func (b *VectorBackend) Merge(_ context.Context, _, _ string, _ Filter) (BranchInfo, error) {
-	return BranchInfo{}, &ErrNotSupported{Op: "Merge", Backend: "vector-inmem"}
+func (b *VectorBackend) Merge(_ context.Context, _, _ string, _ MergeOptions, _ Filter) (MergeResult, error) {
+	return MergeResult{}, &ErrNotSupported{Op: "Merge", Backend: "vector-inmem"}
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

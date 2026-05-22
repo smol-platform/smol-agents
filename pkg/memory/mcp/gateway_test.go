@@ -1070,6 +1070,111 @@ func TestGateway_MergeFSTool_Allowed(t *testing.T) {
 	}
 }
 
+// TestGateway_MergeFSTool_OnConflictRestriction verifies that the gateway
+// rejects an onConflict value not in AllowedMergePolicies.
+func TestGateway_MergeFSTool_OnConflictRestriction(t *testing.T) {
+	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spec := v1.MemoryRetrieverSpec{
+		TopK: 10,
+		Policy: []v1.MemoryGrant{{
+			Identity:   spiffeID,
+			Operations: []v1.MemoryOperation{v1.MemoryOpWrite},
+			Namespaces: []string{"*"},
+		}},
+		AllowedMergePolicies: []string{"fail", "ours"},
+	}
+	gw, _ := testGateway(t, spec, &fakeWorker{})
+	disp := mcp.NewDispatcher(gw)
+	srv := httptest.NewServer(disp)
+	defer srv.Close()
+
+	// "theirs" is not in AllowedMergePolicies → PermissionDenied.
+	resp := callTool(t, srv, spiffeID, "merge_memory_fs", map[string]any{
+		"srcBranch":    "run-001",
+		"dstBranch":    "main",
+		"retrieverRef": "ns/test-retriever",
+		"namespace":    "docs",
+		"onConflict":   "theirs",
+	})
+
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected permission denied, got result: %v", resp["result"])
+	}
+	if int(rpcErr["code"].(float64)) != mcp.CodePermissionDenied {
+		t.Fatalf("want CodePermissionDenied, got %v", rpcErr["code"])
+	}
+}
+
+// TestGateway_MergeFSTool_DefaultMergePolicy verifies that the DefaultMergePolicy
+// is applied when the request omits onConflict.
+func TestGateway_MergeFSTool_DefaultMergePolicy(t *testing.T) {
+	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+
+	var capturedReq *api.MergeFSRequest
+	worker := &fakeWorkerCapture{
+		mergeFn: func(req *api.MergeFSRequest) (*api.MergeFSResponse, error) {
+			capturedReq = req
+			return &api.MergeFSResponse{Committed: true}, nil
+		},
+	}
+
+	spec := v1.MemoryRetrieverSpec{
+		TopK: 10,
+		Policy: []v1.MemoryGrant{{
+			Identity:   spiffeID,
+			Operations: []v1.MemoryOperation{v1.MemoryOpWrite},
+			Namespaces: []string{"*"},
+		}},
+		DefaultMergePolicy: "ours",
+	}
+
+	rs := store.NewFakeStore()
+	rs.Add("ns/test-retriever", store.RetrieverInfo{Spec: spec, WorkerURL: "http://fake"})
+	gw := &mcp.Gateway{
+		Auth:       mcp.AuthConfig{},
+		Retrievers: rs,
+		Quota:      quota.NewEnforcer(),
+		WorkerFactory: func(_ string) api.RetrievalService {
+			return worker
+		},
+	}
+	disp := mcp.NewDispatcher(gw)
+	srv := httptest.NewServer(disp)
+	defer srv.Close()
+
+	// Request without onConflict — should default to "ours".
+	resp := callTool(t, srv, spiffeID, "merge_memory_fs", map[string]any{
+		"srcBranch":    "run-001",
+		"dstBranch":    "main",
+		"retrieverRef": "ns/test-retriever",
+		"namespace":    "docs",
+	})
+
+	if resp["error"] != nil {
+		t.Fatalf("unexpected error: %v", resp["error"])
+	}
+	if capturedReq == nil {
+		t.Fatal("worker MergeFS was not called")
+	}
+	if capturedReq.OnConflict != "ours" {
+		t.Errorf("OnConflict=%q, want ours (from DefaultMergePolicy)", capturedReq.OnConflict)
+	}
+}
+
+// fakeWorkerCapture is a fakeWorker that captures MergeFS calls via a function.
+type fakeWorkerCapture struct {
+	fakeWorker
+	mergeFn func(*api.MergeFSRequest) (*api.MergeFSResponse, error)
+}
+
+func (f *fakeWorkerCapture) MergeFS(_ context.Context, req *api.MergeFSRequest) (*api.MergeFSResponse, error) {
+	if f.mergeFn != nil {
+		return f.mergeFn(req)
+	}
+	return &api.MergeFSResponse{}, nil
+}
+
 // TestGateway_FakeStoreNotFound tests the retriever-not-found path.
 func TestGateway_FakeStoreNotFound(t *testing.T) {
 	// Store is empty — any retrieverRef will return NotFound.

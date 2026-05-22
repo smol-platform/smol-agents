@@ -192,9 +192,20 @@ message ListBranchesResponse {
   repeated BranchInfo branches = 1;
 }
 
+// ── ConflictInfo ──────────────────────────────────────────────────────────────
+
+// ConflictInfo describes one conflicting file detected during a 3-way merge.
+message ConflictInfo {
+  // path is the relative file path inside the branch.
+  string path = 1;
+
+  // kind classifies the conflict: "edit/edit", "edit/delete", or "add/add".
+  string kind = 2;
+}
+
 // ── MergeFS ───────────────────────────────────────────────────────────────────
 
-// MergeFSRequest performs a fast-forward publish of src_branch into dst_branch.
+// MergeFSRequest performs a 3-way merge of src_branch into dst_branch.
 message MergeFSRequest {
   RequestIdentity identity = 1;
 
@@ -203,11 +214,30 @@ message MergeFSRequest {
 
   // dst_branch is the branch that receives the merged files.
   string dst_branch = 3;
+
+  // on_conflict controls conflict resolution policy.
+  // Empty string means "fail" (safe default: commit nothing on conflict).
+  string on_conflict = 4;
+
+  // dry_run, when true, computes the merge plan but commits nothing.
+  bool dry_run = 5;
 }
 
-// MergeFSResponse carries the updated destination branch metadata.
+// MergeFSResponse carries the result of a 3-way merge.
 message MergeFSResponse {
+  // branch is the updated destination BranchInfo. Zero when committed=false.
   BranchInfo branch = 1;
+
+  // conflicts holds file paths that had unresolvable conflicts.
+  repeated ConflictInfo conflicts = 2;
+
+  // committed is true when the merge was fully applied to dst_branch.
+  bool committed = 3;
+
+  // merged, added, deleted count the affected files.
+  int32 merged = 4;
+  int32 added = 5;
+  int32 deleted = 6;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────

@@ -398,11 +398,22 @@ func (w *Worker) MergeFS(ctx context.Context, req *api.MergeFSRequest) (*api.Mer
 		return nil, err
 	}
 	filter := filterFrom(req.Identity, memory.Filter{})
-	info, err := backend.Merge(ctx, req.SrcBranch, req.DstBranch, filter)
+	opts := memory.MergeOptions{
+		OnConflict: memory.ConflictPolicy(req.OnConflict),
+		DryRun:     req.DryRun,
+	}
+	result, err := backend.Merge(ctx, req.SrcBranch, req.DstBranch, opts, filter)
 	if err != nil {
 		return nil, wrapBackend(err)
 	}
-	return &api.MergeFSResponse{Branch: info}, nil
+	return &api.MergeFSResponse{
+		Branch:    result.Branch,
+		Conflicts: result.Conflicts,
+		Committed: result.Committed,
+		Merged:    result.Merged,
+		Added:     result.Added,
+		Deleted:   result.Deleted,
+	}, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

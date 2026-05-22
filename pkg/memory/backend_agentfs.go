@@ -25,6 +25,8 @@ package memory
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"strings"
@@ -67,6 +69,15 @@ type agentFSBackend struct {
 type fsBranch struct {
 	info    BranchInfo
 	storage *agentfs.FakeStorage // production would use a real Storage impl
+
+	// ForkedFrom is the name of the branch this was forked from.
+	// Empty for root branches (e.g. "main").
+	ForkedFrom string
+
+	// ForkBase maps relative file path → sha256 hex hash of Content at fork
+	// time. This is the merge base B used by the 3-way classifier. For root
+	// branches this is nil (all files are considered "added with no base").
+	ForkBase map[string]string
 }
 
 // branchKey uniquely identifies a branch within this backend process.
@@ -404,9 +415,9 @@ func (b *agentFSBackend) Branch(ctx context.Context, baseBranch, newBranch strin
 	b.ensureBranch(filter.Tenant, filter.Namespace, baseBranch)
 
 	// Clone all files from base → new branch.
+	// At the same time, build the ForkBase manifest: relPath → sha256(content).
 	basePrefix := fileKey(filter.Tenant, filter.Namespace, baseBranch, "")
-	newBranchPrefix := fileKey(filter.Tenant, filter.Namespace, newBranch, "")
-	_ = newBranchPrefix // used in key construction below
+	forkBase := make(map[string]string)
 
 	for key, doc := range b.files {
 		if strings.HasPrefix(key, basePrefix) {
@@ -424,6 +435,7 @@ func (b *agentFSBackend) Branch(ctx context.Context, baseBranch, newBranch strin
 				UpdatedAt: doc.UpdatedAt,
 			}
 			b.files[newFileKey] = cloned
+			forkBase[relPath] = contentHash(doc.Content)
 		}
 	}
 
@@ -434,10 +446,20 @@ func (b *agentFSBackend) Branch(ctx context.Context, baseBranch, newBranch strin
 		CreatedAt: now,
 	}
 	b.branches[newKey] = &fsBranch{
-		info:    info,
-		storage: &agentfs.FakeStorage{},
+		info:       info,
+		storage:    &agentfs.FakeStorage{},
+		ForkedFrom: baseBranch,
+		ForkBase:   forkBase,
 	}
 	return info, nil
+}
+
+// contentHash returns the SHA-256 hex digest of b. Used as the merge-base
+// fingerprint stored in ForkBase so the 3-way classifier can detect whether
+// either side modified a file relative to the fork point.
+func contentHash(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // cloneMetadata returns a shallow copy of a metadata map.
@@ -535,96 +557,305 @@ func (b *agentFSBackend) branchSpec(tenant, namespace, branch string) v1.AgentFS
 
 // ── Backend.Merge ────────────────────────────────────────────────────────────
 
-// Merge performs a fast-forward publish of srcBranch into dstBranch within the
-// tenant/namespace scope identified by filter.
+// Merge performs a 3-way merge of srcBranch into dstBranch.
 //
-// Semantics (CoW fast-forward):
-//   - All files present in srcBranch are applied onto dstBranch. A srcBranch
-//     file at path P replaces the corresponding dstBranch file at P (upsert).
-//   - Files that exist only in dstBranch (not present in srcBranch) are
-//     preserved unchanged.
-//   - The operation is purely in-memory (no S3 upload); callers should call
-//     Snapshot after a merge if they want durability.
+// The merge-base B is the ForkBase snapshot captured by Branch() when the
+// source branch was created. For each path seen across any of the three
+// versions (base B, destination O, source T), the classifier picks the
+// outcome per the decision table in Backend.Merge's doc comment.
 //
-// Isolation: both branches must belong to the same tenant+namespace (enforced
-// via filter). The method refuses to merge across tenant/namespace boundaries.
+// The operation is atomic: all changes are staged in temporary maps and only
+// swapped into b.files when the policy allows a commit (fail policy with
+// conflicts → nothing written; DryRun → nothing written).
 //
-// The updated dstBranch's BranchInfo is returned with CommittedAt set to now.
-func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string, filter Filter) (BranchInfo, error) {
+// Thread safety: the entire operation runs under b.mu.
+func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string, opts MergeOptions, filter Filter) (MergeResult, error) {
 	if err := ctx.Err(); err != nil {
-		return BranchInfo{}, BackendUnavailable("context: " + err.Error())
+		return MergeResult{}, BackendUnavailable("context: " + err.Error())
 	}
 	if filter.Tenant == "" {
-		return BranchInfo{}, Invalid("filter.Tenant is required")
+		return MergeResult{}, Invalid("filter.Tenant is required")
 	}
 	if filter.Namespace == "" {
-		return BranchInfo{}, Invalid("filter.Namespace is required")
+		return MergeResult{}, Invalid("filter.Namespace is required")
 	}
 	if srcBranch == "" {
-		return BranchInfo{}, Invalid("srcBranch is required")
+		return MergeResult{}, Invalid("srcBranch is required")
 	}
 	if dstBranch == "" {
-		return BranchInfo{}, Invalid("dstBranch is required")
+		return MergeResult{}, Invalid("dstBranch is required")
 	}
 	if srcBranch == dstBranch {
-		return BranchInfo{}, Invalid("srcBranch and dstBranch must differ")
+		return MergeResult{}, Invalid("srcBranch and dstBranch must differ")
+	}
+
+	// Normalise policy: empty string = MergeFail (safe default).
+	policy := opts.OnConflict
+	if policy == "" {
+		policy = MergeFail
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Ensure both branches exist within the exact tenant+namespace scope.
+	// Both branches must exist within the exact tenant+namespace scope.
 	srcKey := branchKey(filter.Tenant, filter.Namespace, srcBranch)
-	if _, ok := b.branches[srcKey]; !ok {
-		return BranchInfo{}, NotFound(fmt.Sprintf("branch %q not found", srcBranch))
+	srcBr, ok := b.branches[srcKey]
+	if !ok {
+		return MergeResult{}, NotFound(fmt.Sprintf("branch %q not found", srcBranch))
 	}
 	dstKey := branchKey(filter.Tenant, filter.Namespace, dstBranch)
-	if _, ok := b.branches[dstKey]; !ok {
-		return BranchInfo{}, NotFound(fmt.Sprintf("branch %q not found", dstBranch))
+	dstBr, ok := b.branches[dstKey]
+	if !ok {
+		return MergeResult{}, NotFound(fmt.Sprintf("branch %q not found", dstBranch))
 	}
 
-	// Build the key prefix for source files; enumerate and apply onto dst.
-	srcPrefix := fileKey(filter.Tenant, filter.Namespace, srcBranch, "")
-	now := b.now()
+	// The merge base B is the ForkBase of the *source* branch — the snapshot
+	// of dstBranch (or whatever was branched) at the time src was created.
+	// If ForkBase is nil (root branch or legacy branch), treat every file as
+	// having no base entry (B = absent).
+	base := srcBr.ForkBase // map relPath → sha256; may be nil
 
-	for key, srcDoc := range b.files {
+	srcPrefix := fileKey(filter.Tenant, filter.Namespace, srcBranch, "")
+	dstPrefix := fileKey(filter.Tenant, filter.Namespace, dstBranch, "")
+
+	// Collect src and dst file maps indexed by relPath → Document.
+	srcFiles := make(map[string]Document)
+	for key, doc := range b.files {
 		if !strings.HasPrefix(key, srcPrefix) {
 			continue
 		}
-		// Defence-in-depth: reject cross-tenant file entries that somehow
-		// ended up under the prefix (should be impossible, but belt+braces).
-		if srcDoc.Tenant != filter.Tenant || srcDoc.Namespace != filter.Namespace {
-			return BranchInfo{}, PermissionDenied("cross-tenant file in srcBranch; merge aborted")
+		if doc.Tenant != filter.Tenant || doc.Namespace != filter.Namespace {
+			return MergeResult{}, PermissionDenied("cross-tenant file in srcBranch; merge aborted")
 		}
+		rel := strings.TrimPrefix(key, srcPrefix)
+		srcFiles[rel] = doc
+	}
 
-		relPath := strings.TrimPrefix(key, srcPrefix)
-		dstFileKey := fileKey(filter.Tenant, filter.Namespace, dstBranch, relPath)
-
-		// Preserve original CreatedAt if a dst file already exists at this path.
-		createdAt := srcDoc.CreatedAt
-		if existing, exists := b.files[dstFileKey]; exists {
-			createdAt = existing.CreatedAt
+	dstFiles := make(map[string]Document)
+	for key, doc := range b.files {
+		if !strings.HasPrefix(key, dstPrefix) {
+			continue
 		}
+		if doc.Tenant != filter.Tenant || doc.Namespace != filter.Namespace {
+			return MergeResult{}, PermissionDenied("cross-tenant file in dstBranch; merge aborted")
+		}
+		rel := strings.TrimPrefix(key, dstPrefix)
+		dstFiles[rel] = doc
+	}
 
-		b.files[dstFileKey] = Document{
-			ID:        dstFileKey,
-			Namespace: filter.Namespace,
-			Tenant:    filter.Tenant,
-			Content:   append([]byte(nil), srcDoc.Content...),
-			Path:      srcDoc.Path,
-			Metadata:  cloneMetadata(srcDoc.Metadata),
-			Version:   fmt.Sprintf("%d", now.UnixNano()),
-			CreatedAt: createdAt,
-			UpdatedAt: now,
+	// Union of all paths across base/src/dst.
+	allPaths := make(map[string]struct{})
+	for rel := range srcFiles {
+		allPaths[rel] = struct{}{}
+	}
+	for rel := range dstFiles {
+		allPaths[rel] = struct{}{}
+	}
+	if base != nil {
+		for rel := range base {
+			allPaths[rel] = struct{}{}
 		}
 	}
 
-	// Mark the destination branch as committed (fast-forward published).
-	dstBr := b.branches[dstKey]
+	// ── Stage 1: classify every path ─────────────────────────────────────────
+
+	// mergePlan records what should happen for each path.
+	type action int
+	const (
+		actionKeep   action = iota // keep dstFiles[rel] unchanged
+		actionTakeT                // write srcFiles[rel] into dst
+		actionDelete               // delete from dst
+		// actionConflict is handled inline via conflicts slice
+	)
+
+	type planned struct {
+		act  action
+		doc  Document // non-zero for actionTakeT
+		path string   // relPath for actionDelete
+	}
+
+	var conflicts []ConflictInfo
+	plan := make(map[string]planned, len(allPaths))
+
+	for rel := range allPaths {
+		srcDoc, inSrc := srcFiles[rel]
+		dstDoc, inDst := dstFiles[rel]
+		baseHash, inBase := "", false
+		if base != nil {
+			baseHash, inBase = base[rel]
+		}
+
+		oHash := ""
+		if inDst {
+			oHash = contentHash(dstDoc.Content)
+		}
+		tHash := ""
+		if inSrc {
+			tHash = contentHash(srcDoc.Content)
+		}
+
+		switch {
+		// Both absent in src and dst — path is only in base (deleted on both sides).
+		case !inSrc && !inDst:
+			plan[rel] = planned{act: actionKeep}
+
+		// Present only in dst (T deleted/absent) — check if T deleted.
+		case !inSrc && inDst:
+			if inBase {
+				// T deleted this file relative to base.
+				if oHash == baseHash {
+					// O unchanged since base; take T's deletion.
+					plan[rel] = planned{act: actionDelete, path: rel}
+				} else {
+					// O modified since base but T deleted it → edit/delete conflict.
+					conflicts = append(conflicts, ConflictInfo{Path: rel, Kind: "edit/delete"})
+					plan[rel] = planned{act: actionKeep} // resolved below by policy
+				}
+			} else {
+				// Not in base: dst added it independently, src never had it. Keep dst.
+				plan[rel] = planned{act: actionKeep}
+			}
+
+		// Present only in src (O deleted/absent).
+		case inSrc && !inDst:
+			if inBase {
+				// O deleted this file. T still has it.
+				if tHash == baseHash {
+					// T unchanged; O deleted it → keep deleted (nothing to add).
+					plan[rel] = planned{act: actionKeep}
+				} else {
+					// T modified but O deleted → edit/delete conflict.
+					conflicts = append(conflicts, ConflictInfo{Path: rel, Kind: "edit/delete"})
+					plan[rel] = planned{act: actionKeep} // resolved below by policy
+				}
+			} else {
+				// Not in base: src added a new file that dst doesn't have. Add it.
+				plan[rel] = planned{act: actionTakeT, doc: srcDoc}
+			}
+
+		// Present in both src and dst.
+		default: // inSrc && inDst
+			if oHash == tHash {
+				// Both are identical (regardless of base): keep dst (no change needed).
+				plan[rel] = planned{act: actionKeep}
+			} else if !inBase {
+				// No base: both added the same path with different content → add/add conflict.
+				conflicts = append(conflicts, ConflictInfo{Path: rel, Kind: "add/add"})
+				plan[rel] = planned{act: actionKeep} // resolved below by policy
+			} else if oHash == baseHash && tHash != baseHash {
+				// Only T changed: fast-forward take T.
+				plan[rel] = planned{act: actionTakeT, doc: srcDoc}
+			} else if oHash != baseHash && tHash == baseHash {
+				// Only O changed: keep O.
+				plan[rel] = planned{act: actionKeep}
+			} else {
+				// Both O and T differ from base and differ from each other: edit/edit conflict.
+				conflicts = append(conflicts, ConflictInfo{Path: rel, Kind: "edit/edit"})
+				plan[rel] = planned{act: actionKeep} // resolved below by policy
+			}
+		}
+	}
+
+	// ── Stage 2: apply conflict policy ───────────────────────────────────────
+
+	// For each conflicting path, override the plan based on OnConflict policy.
+	// "fail" path: just return conflicts without committing.
+	if policy == MergeFail && len(conflicts) > 0 {
+		return MergeResult{
+			Conflicts: conflicts,
+			Committed: false,
+		}, nil
+	}
+
+	// For ours/theirs, override conflicting paths' plan entries.
+	if len(conflicts) > 0 {
+		for _, ci := range conflicts {
+			rel := ci.Path
+			switch policy {
+			case MergeOurs:
+				plan[rel] = planned{act: actionKeep}
+			case MergeTheirs:
+				// Take the src version; if src doesn't have it (edit/delete where
+				// src deleted), delete from dst.
+				if srcDoc, ok := srcFiles[rel]; ok {
+					plan[rel] = planned{act: actionTakeT, doc: srcDoc}
+				} else {
+					plan[rel] = planned{act: actionDelete, path: rel}
+				}
+			}
+		}
+	}
+
+	// ── Stage 3: count and (if not DryRun) apply ─────────────────────────────
+
+	var mergedCount, addedCount, deletedCount int
+	for rel, p := range plan {
+		switch p.act {
+		case actionTakeT:
+			_, existsInDst := dstFiles[rel]
+			if existsInDst {
+				mergedCount++
+			} else {
+				addedCount++
+			}
+		case actionDelete:
+			deletedCount++
+		}
+	}
+
+	if opts.DryRun {
+		return MergeResult{
+			Conflicts: conflicts,
+			Committed: false,
+			Merged:    mergedCount,
+			Added:     addedCount,
+			Deleted:   deletedCount,
+		}, nil
+	}
+
+	// Commit: apply the plan atomically.
+	now := b.now()
+	for rel, p := range plan {
+		dstFileKey := fileKey(filter.Tenant, filter.Namespace, dstBranch, rel)
+		switch p.act {
+		case actionTakeT:
+			srcDoc := p.doc
+			// Preserve original CreatedAt if a dst file already exists at this path.
+			createdAt := srcDoc.CreatedAt
+			if existing, exists := b.files[dstFileKey]; exists {
+				createdAt = existing.CreatedAt
+			}
+			b.files[dstFileKey] = Document{
+				ID:        dstFileKey,
+				Namespace: filter.Namespace,
+				Tenant:    filter.Tenant,
+				Content:   append([]byte(nil), srcDoc.Content...),
+				Path:      srcDoc.Path,
+				Metadata:  cloneMetadata(srcDoc.Metadata),
+				Version:   fmt.Sprintf("%d", now.UnixNano()),
+				CreatedAt: createdAt,
+				UpdatedAt: now,
+			}
+		case actionDelete:
+			delete(b.files, dstFileKey)
+		case actionKeep:
+			// Nothing to do.
+		}
+	}
+
+	// Mark the destination branch as committed.
 	dstBr.info.CommittedAt = now
 	b.branches[dstKey] = dstBr
 
-	return dstBr.info, nil
+	return MergeResult{
+		Branch:    dstBr.info,
+		Conflicts: conflicts, // informational for ours/theirs/markers/union
+		Committed: true,
+		Merged:    mergedCount,
+		Added:     addedCount,
+		Deleted:   deletedCount,
+	}, nil
 }
 
 // ── Backend.ListBranches ─────────────────────────────────────────────────────
