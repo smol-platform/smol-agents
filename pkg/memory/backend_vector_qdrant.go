@@ -371,6 +371,10 @@ func (b *QdrantBackend) ListBranches(_ context.Context, _ Filter) ([]BranchInfo,
 	return nil, &ErrNotSupported{Op: "ListBranches", Backend: "qdrant"}
 }
 
+func (b *QdrantBackend) Merge(_ context.Context, _, _ string, _ Filter) (BranchInfo, error) {
+	return BranchInfo{}, &ErrNotSupported{Op: "Merge", Backend: "qdrant"}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (b *QdrantBackend) tenantFilter(f Filter) *pb.Filter {

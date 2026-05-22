@@ -45,6 +45,9 @@ func (f *fakeSvc) SnapshotFS(context.Context, *SnapshotFSRequest) (*SnapshotFSRe
 func (f *fakeSvc) ListBranches(context.Context, *ListBranchesRequest) (*ListBranchesResponse, error) {
 	return &ListBranchesResponse{}, nil
 }
+func (f *fakeSvc) MergeFS(context.Context, *MergeFSRequest) (*MergeFSResponse, error) {
+	return &MergeFSResponse{}, nil
+}
 
 func newPair(t *testing.T, svc RetrievalService) RetrievalService {
 	t.Helper()
@@ -112,5 +115,47 @@ func TestTransport_NotFound(t *testing.T) {
 	_, err := c.Get(context.Background(), &GetRequest{ID: "missing"})
 	if memory.KindOf(err) != memory.KindNotFound {
 		t.Errorf("kind = %q, want not_found", memory.KindOf(err))
+	}
+}
+
+// MergeFS round-trips successfully over HTTP.
+func TestTransport_MergeFS_RoundTrip(t *testing.T) {
+	c := newPair(t, &fakeSvc{})
+	resp, err := c.MergeFS(context.Background(), &MergeFSRequest{
+		Identity: RequestIdentity{
+			Tenant:         "tenant-a",
+			Namespace:      "ns",
+			CallerSPIFFEID: "spiffe://td/x",
+			RetrieverRef:   "team/r",
+		},
+		SrcBranch: "run-001",
+		DstBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("MergeFS: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+}
+
+// mergeFSNotSupportedSvc is a fakeSvc that returns ErrNotSupported from MergeFS.
+type mergeFSNotSupportedSvc struct {
+	fakeSvc
+}
+
+func (m *mergeFSNotSupportedSvc) MergeFS(_ context.Context, _ *MergeFSRequest) (*MergeFSResponse, error) {
+	return nil, &memory.ErrNotSupported{Op: "Merge", Backend: "vector-inmem"}
+}
+
+// MergeFS KindNotSupported survives the HTTP hop.
+func TestTransport_MergeFS_NotSupported(t *testing.T) {
+	c := newPair(t, &mergeFSNotSupportedSvc{})
+	_, err := c.MergeFS(context.Background(), &MergeFSRequest{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := memory.KindOf(err); got != memory.KindNotSupported {
+		t.Errorf("kind = %q, want not_supported", got)
 	}
 }

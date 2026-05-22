@@ -64,6 +64,20 @@ type Backend interface {
 	// ListBranches returns the branches visible to the caller in the given
 	// tenant/namespace scope.
 	ListBranches(ctx context.Context, filter Filter) ([]BranchInfo, error)
+
+	// Merge performs a fast-forward publish of srcBranch into dstBranch within
+	// the tenant/namespace scope supplied by filter. All files from srcBranch
+	// are applied onto dstBranch using copy-on-write semantics: files present
+	// in srcBranch replace (or add to) the corresponding paths in dstBranch;
+	// files only in dstBranch and absent from srcBranch are preserved.
+	//
+	// Filesystem-only — non-FS adapters MUST return
+	//   &ErrNotSupported{Op:"Merge", Backend:"<name>"}.
+	// Tenant and namespace isolation MUST be enforced; cross-tenant merge
+	// attempts MUST return PermissionDenied.
+	//
+	// On success the updated dstBranch BranchInfo is returned.
+	Merge(ctx context.Context, srcBranch, dstBranch string, filter Filter) (BranchInfo, error)
 }
 
 // ErrNotSupported is returned by Backend methods that the adapter does not

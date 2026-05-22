@@ -85,6 +85,20 @@ var memoryTools = []Tool{
 			"required": []string{"query", "retrieverRef"},
 		},
 	},
+	{
+		Name:        "merge_memory_fs",
+		Description: "Fast-forward publish srcBranch into dstBranch in a filesystem-backed memory store. All files from srcBranch are applied onto dstBranch (CoW semantics). Requires write permission on dstBranch's namespace. Only supported for kind=filesystem backends.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"srcBranch":    map[string]any{"type": "string", "description": "Branch whose files are applied onto dstBranch"},
+				"dstBranch":    map[string]any{"type": "string", "description": "Branch that receives the merged files"},
+				"retrieverRef": map[string]any{"type": "string", "description": "Namespace-qualified MemoryRetriever name (ns/name)"},
+				"namespace":    map[string]any{"type": "string", "description": "Memory namespace containing both branches"},
+			},
+			"required": []string{"srcBranch", "dstBranch", "retrieverRef"},
+		},
+	},
 }
 
 // memoryResources is the static list advertised by resources/list.

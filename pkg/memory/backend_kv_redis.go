@@ -380,5 +380,9 @@ func (b *RedisBackend) ListBranches(_ context.Context, _ Filter) ([]BranchInfo, 
 	return nil, &ErrNotSupported{Op: "ListBranches", Backend: "redis"}
 }
 
+func (b *RedisBackend) Merge(_ context.Context, _, _ string, _ Filter) (BranchInfo, error) {
+	return BranchInfo{}, &ErrNotSupported{Op: "Merge", Backend: "redis"}
+}
+
 // compile-time assertion: RedisBackend satisfies the Backend interface.
 var _ Backend = (*RedisBackend)(nil)

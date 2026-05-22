@@ -69,6 +69,9 @@ func (f *fakeSvc) SnapshotFS(_ context.Context, _ *apipkg.SnapshotFSRequest) (*a
 func (f *fakeSvc) ListBranches(_ context.Context, _ *apipkg.ListBranchesRequest) (*apipkg.ListBranchesResponse, error) {
 	return &apipkg.ListBranchesResponse{}, nil
 }
+func (f *fakeSvc) MergeFS(_ context.Context, _ *apipkg.MergeFSRequest) (*apipkg.MergeFSResponse, error) {
+	return &apipkg.MergeFSResponse{}, nil
+}
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 

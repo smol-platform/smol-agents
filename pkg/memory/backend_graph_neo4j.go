@@ -368,6 +368,10 @@ func (b *Neo4jBackend) ListBranches(_ context.Context, _ Filter) ([]BranchInfo, 
 	return nil, &ErrNotSupported{Op: "ListBranches", Backend: "neo4j"}
 }
 
+func (b *Neo4jBackend) Merge(_ context.Context, _, _ string, _ Filter) (BranchInfo, error) {
+	return BranchInfo{}, &ErrNotSupported{Op: "Merge", Backend: "neo4j"}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func neo4jNodeToDoc(node neo4j.Node) Document {

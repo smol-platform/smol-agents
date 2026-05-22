@@ -389,6 +389,22 @@ func (w *Worker) ListBranches(ctx context.Context, req *api.ListBranchesRequest)
 	return &api.ListBranchesResponse{Branches: branches}, nil
 }
 
+func (w *Worker) MergeFS(ctx context.Context, req *api.MergeFSRequest) (*api.MergeFSResponse, error) {
+	if err := w.validateIdentity(req.Identity); err != nil {
+		return nil, err
+	}
+	backend, err := w.selector(req.Identity.RetrieverRef)
+	if err != nil {
+		return nil, err
+	}
+	filter := filterFrom(req.Identity, memory.Filter{})
+	info, err := backend.Merge(ctx, req.SrcBranch, req.DstBranch, filter)
+	if err != nil {
+		return nil, wrapBackend(err)
+	}
+	return &api.MergeFSResponse{Branch: info}, nil
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 // wrapBackend ensures backend errors that are not already typed memory.Error

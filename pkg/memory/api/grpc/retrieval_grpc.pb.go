@@ -39,6 +39,7 @@ const (
 	RetrievalService_BranchFS_FullMethodName       = "/retrieval.v1.RetrievalService/BranchFS"
 	RetrievalService_SnapshotFS_FullMethodName     = "/retrieval.v1.RetrievalService/SnapshotFS"
 	RetrievalService_ListBranches_FullMethodName   = "/retrieval.v1.RetrievalService/ListBranches"
+	RetrievalService_MergeFS_FullMethodName        = "/retrieval.v1.RetrievalService/MergeFS"
 )
 
 // RetrievalServiceClient is the client API for RetrievalService service.
@@ -59,6 +60,7 @@ type RetrievalServiceClient interface {
 	BranchFS(ctx context.Context, in *BranchFSRequest, opts ...grpc.CallOption) (*BranchFSResponse, error)
 	SnapshotFS(ctx context.Context, in *SnapshotFSRequest, opts ...grpc.CallOption) (*SnapshotFSResponse, error)
 	ListBranches(ctx context.Context, in *ListBranchesRequest, opts ...grpc.CallOption) (*ListBranchesResponse, error)
+	MergeFS(ctx context.Context, in *MergeFSRequest, opts ...grpc.CallOption) (*MergeFSResponse, error)
 }
 
 type retrievalServiceClient struct {
@@ -159,6 +161,16 @@ func (c *retrievalServiceClient) ListBranches(ctx context.Context, in *ListBranc
 	return out, nil
 }
 
+func (c *retrievalServiceClient) MergeFS(ctx context.Context, in *MergeFSRequest, opts ...grpc.CallOption) (*MergeFSResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MergeFSResponse)
+	err := c.cc.Invoke(ctx, RetrievalService_MergeFS_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RetrievalServiceServer is the server API for RetrievalService service.
 // All implementations should embed UnimplementedRetrievalServiceServer
 // for forward compatibility.
@@ -177,6 +189,7 @@ type RetrievalServiceServer interface {
 	BranchFS(context.Context, *BranchFSRequest) (*BranchFSResponse, error)
 	SnapshotFS(context.Context, *SnapshotFSRequest) (*SnapshotFSResponse, error)
 	ListBranches(context.Context, *ListBranchesRequest) (*ListBranchesResponse, error)
+	MergeFS(context.Context, *MergeFSRequest) (*MergeFSResponse, error)
 }
 
 // UnimplementedRetrievalServiceServer should be embedded to have
@@ -212,6 +225,9 @@ func (UnimplementedRetrievalServiceServer) SnapshotFS(context.Context, *Snapshot
 }
 func (UnimplementedRetrievalServiceServer) ListBranches(context.Context, *ListBranchesRequest) (*ListBranchesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListBranches not implemented")
+}
+func (UnimplementedRetrievalServiceServer) MergeFS(context.Context, *MergeFSRequest) (*MergeFSResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MergeFS not implemented")
 }
 func (UnimplementedRetrievalServiceServer) testEmbeddedByValue() {}
 
@@ -395,6 +411,24 @@ func _RetrievalService_ListBranches_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RetrievalService_MergeFS_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MergeFSRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RetrievalServiceServer).MergeFS(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RetrievalService_MergeFS_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RetrievalServiceServer).MergeFS(ctx, req.(*MergeFSRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RetrievalService_ServiceDesc is the grpc.ServiceDesc for RetrievalService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -437,6 +471,10 @@ var RetrievalService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListBranches",
 			Handler:    _RetrievalService_ListBranches_Handler,
+		},
+		{
+			MethodName: "MergeFS",
+			Handler:    _RetrievalService_MergeFS_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

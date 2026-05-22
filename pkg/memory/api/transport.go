@@ -28,6 +28,7 @@ const (
 	pathBranchFS       = "/v1/branch-fs"
 	pathSnapshotFS     = "/v1/snapshot-fs"
 	pathListBranches   = "/v1/list-branches"
+	pathMergeFS        = "/v1/merge-fs"
 )
 
 // errorEnvelope is the JSON body of a non-2xx response.
@@ -93,6 +94,7 @@ func NewHTTPServer(svc RetrievalService) http.Handler {
 	route(mux, pathBranchFS, svc.BranchFS)
 	route(mux, pathSnapshotFS, svc.SnapshotFS)
 	route(mux, pathListBranches, svc.ListBranches)
+	route(mux, pathMergeFS, svc.MergeFS)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
 }
@@ -164,6 +166,9 @@ func (c *httpClient) SnapshotFS(ctx context.Context, req *SnapshotFSRequest) (*S
 }
 func (c *httpClient) ListBranches(ctx context.Context, req *ListBranchesRequest) (*ListBranchesResponse, error) {
 	return call[ListBranchesRequest, ListBranchesResponse](ctx, c, pathListBranches, req)
+}
+func (c *httpClient) MergeFS(ctx context.Context, req *MergeFSRequest) (*MergeFSResponse, error) {
+	return call[MergeFSRequest, MergeFSResponse](ctx, c, pathMergeFS, req)
 }
 
 func call[Req, Resp any](ctx context.Context, c *httpClient, path string, req *Req) (*Resp, error) {

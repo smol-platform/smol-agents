@@ -533,6 +533,100 @@ func (b *agentFSBackend) branchSpec(tenant, namespace, branch string) v1.AgentFS
 	return spec
 }
 
+// ── Backend.Merge ────────────────────────────────────────────────────────────
+
+// Merge performs a fast-forward publish of srcBranch into dstBranch within the
+// tenant/namespace scope identified by filter.
+//
+// Semantics (CoW fast-forward):
+//   - All files present in srcBranch are applied onto dstBranch. A srcBranch
+//     file at path P replaces the corresponding dstBranch file at P (upsert).
+//   - Files that exist only in dstBranch (not present in srcBranch) are
+//     preserved unchanged.
+//   - The operation is purely in-memory (no S3 upload); callers should call
+//     Snapshot after a merge if they want durability.
+//
+// Isolation: both branches must belong to the same tenant+namespace (enforced
+// via filter). The method refuses to merge across tenant/namespace boundaries.
+//
+// The updated dstBranch's BranchInfo is returned with CommittedAt set to now.
+func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string, filter Filter) (BranchInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return BranchInfo{}, BackendUnavailable("context: " + err.Error())
+	}
+	if filter.Tenant == "" {
+		return BranchInfo{}, Invalid("filter.Tenant is required")
+	}
+	if filter.Namespace == "" {
+		return BranchInfo{}, Invalid("filter.Namespace is required")
+	}
+	if srcBranch == "" {
+		return BranchInfo{}, Invalid("srcBranch is required")
+	}
+	if dstBranch == "" {
+		return BranchInfo{}, Invalid("dstBranch is required")
+	}
+	if srcBranch == dstBranch {
+		return BranchInfo{}, Invalid("srcBranch and dstBranch must differ")
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Ensure both branches exist within the exact tenant+namespace scope.
+	srcKey := branchKey(filter.Tenant, filter.Namespace, srcBranch)
+	if _, ok := b.branches[srcKey]; !ok {
+		return BranchInfo{}, NotFound(fmt.Sprintf("branch %q not found", srcBranch))
+	}
+	dstKey := branchKey(filter.Tenant, filter.Namespace, dstBranch)
+	if _, ok := b.branches[dstKey]; !ok {
+		return BranchInfo{}, NotFound(fmt.Sprintf("branch %q not found", dstBranch))
+	}
+
+	// Build the key prefix for source files; enumerate and apply onto dst.
+	srcPrefix := fileKey(filter.Tenant, filter.Namespace, srcBranch, "")
+	now := b.now()
+
+	for key, srcDoc := range b.files {
+		if !strings.HasPrefix(key, srcPrefix) {
+			continue
+		}
+		// Defence-in-depth: reject cross-tenant file entries that somehow
+		// ended up under the prefix (should be impossible, but belt+braces).
+		if srcDoc.Tenant != filter.Tenant || srcDoc.Namespace != filter.Namespace {
+			return BranchInfo{}, PermissionDenied("cross-tenant file in srcBranch; merge aborted")
+		}
+
+		relPath := strings.TrimPrefix(key, srcPrefix)
+		dstFileKey := fileKey(filter.Tenant, filter.Namespace, dstBranch, relPath)
+
+		// Preserve original CreatedAt if a dst file already exists at this path.
+		createdAt := srcDoc.CreatedAt
+		if existing, exists := b.files[dstFileKey]; exists {
+			createdAt = existing.CreatedAt
+		}
+
+		b.files[dstFileKey] = Document{
+			ID:        dstFileKey,
+			Namespace: filter.Namespace,
+			Tenant:    filter.Tenant,
+			Content:   append([]byte(nil), srcDoc.Content...),
+			Path:      srcDoc.Path,
+			Metadata:  cloneMetadata(srcDoc.Metadata),
+			Version:   fmt.Sprintf("%d", now.UnixNano()),
+			CreatedAt: createdAt,
+			UpdatedAt: now,
+		}
+	}
+
+	// Mark the destination branch as committed (fast-forward published).
+	dstBr := b.branches[dstKey]
+	dstBr.info.CommittedAt = now
+	b.branches[dstKey] = dstBr
+
+	return dstBr.info, nil
+}
+
 // ── Backend.ListBranches ─────────────────────────────────────────────────────
 
 func (b *agentFSBackend) ListBranches(ctx context.Context, filter Filter) ([]BranchInfo, error) {
