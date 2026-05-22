@@ -11,7 +11,7 @@ components and explains the chosen design.
 ## Steering Document Alignment
 
 ### Technical Standards (`steering/tech.md`)
-- Go 1.24, cilium/ebpf, go-spiffe/v2, OTel, gRPC.
+- Go 1.26, cilium/ebpf, go-spiffe/v2, OTel, gRPC.
 - Kata + Firecracker RuntimeClass (`kata-fc`) is the default; gVisor is
   the supported fallback for managed K8s without KVM. Anything outside
   the hardened set requires an explicit `allowHostRuntime=true` override.

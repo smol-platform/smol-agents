@@ -57,7 +57,7 @@ bpftool feature probe kernel | grep -E "ring_buf|BTF|raw_tracepoint"
 
 | Tool        | Min version | Purpose                                              |
 |-------------|-------------|------------------------------------------------------|
-| Go          | 1.24        | Compiles all binaries                                |
+| Go          | 1.26        | Compiles all binaries (matches `go.mod`)             |
 | clang       | 14          | Compiles BPF C → BPF bytecode                        |
 | llvm        | 14          | Required by clang's `-target bpf`                    |
 | `bpftool`   | recent      | Generates `vmlinux.h` from kernel BTF                |
@@ -209,7 +209,7 @@ If you don't want devenv, install prerequisites manually:
 ### 3.1 macOS (Homebrew)
 
 ```bash
-brew install go@1.24 clang-format llvm bpftool kubernetes-cli helm kustomize kind node
+brew install go clang-format llvm bpftool kubernetes-cli helm kustomize kind node
 npm install -g @informalsystems/quint
 ```
 
@@ -217,7 +217,10 @@ npm install -g @informalsystems/quint
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y golang-1.24-go clang llvm linux-tools-common linux-tools-generic bpftool make git
+sudo apt-get install -y clang llvm linux-tools-common linux-tools-generic bpftool make git
+# Go from go.dev — Ubuntu's archive Go lags the version pinned in go.mod (1.26):
+curl -fsSL https://go.dev/dl/go1.26.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xz
+export PATH="$PATH:/usr/local/go/bin"
 curl -L https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.0/kustomize_v5.4.0_linux_amd64.tar.gz | tar xz -C /usr/local/bin/
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64 && chmod +x /usr/local/bin/kind

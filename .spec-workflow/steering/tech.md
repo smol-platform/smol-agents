@@ -8,7 +8,7 @@ and StatefulSet.
 ## Core Technologies
 
 ### Primary Language(s)
-- **Go 1.24** — primary application language. CGO enabled only where the
+- **Go 1.26** — primary application language. CGO enabled only where the
   `cilium/ebpf` loader requires it on certain kernels.
 - **C (BPF subset)** — eBPF programs in `bpf/programs/`, compiled with
   clang/llvm to BPF bytecode and embedded via `go:generate`.

@@ -13,7 +13,7 @@ it produces the manifests that wire those libraries into Pods.
 ## Steering Document Alignment
 
 ### Technical Standards (`steering/tech.md`)
-- Go 1.24, controller-runtime, Kubebuilder ≥ 4.5.
+- Go 1.26, controller-runtime, Kubebuilder ≥ 4.5.
 - All transports already described in `tech.md` are reused via the
   agent runtime image.
 

@@ -9,7 +9,7 @@ runtime is *how an agent runs*. Both are versioned and verifiable.
 ## Steering Document Alignment
 
 ### Technical Standards (`steering/tech.md`)
-- Go 1.24, controller-runtime, Kubebuilder.
+- Go 1.26, controller-runtime, Kubebuilder.
 - OTel GenAI semantic conventions for telemetry.
 - MCP for tool transport.
 - SPIFFE for identity, kloak-style broker for secrets.

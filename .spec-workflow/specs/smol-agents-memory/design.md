@@ -24,7 +24,7 @@ the existing AgentFS volume mechanism), so a coding agent does normal file I/O
 ## Steering Document Alignment
 
 ### Technical Standards (`.spec-workflow/steering/tech.md`)
-- **Go 1.24**, hexagonal: `pkg/memory` exports interfaces (`Backend`,
+- **Go 1.26**, hexagonal: `pkg/memory` exports interfaces (`Backend`,
   `Retriever`, internal API) with default impls wired in the binaries.
 - **gRPC + mTLS** (go.opentelemetry.io/otel traced) for the internal
   gateway↔worker API — the steering-blessed in-mesh transport.

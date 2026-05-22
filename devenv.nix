@@ -3,7 +3,7 @@
 {
   packages = with pkgs; [
     # Go toolchain
-    go_1_24
+    go_1_26
     gopls
     delve
     golangci-lint
@@ -44,7 +44,7 @@
   ];
 
   languages.go.enable = true;
-  languages.go.package = pkgs.go_1_24;
+  languages.go.package = pkgs.go_1_26;
 
   languages.javascript.enable = true;
   languages.javascript.npm.install.enable = true;

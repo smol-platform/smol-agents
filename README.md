@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/smol-platform/smol-agents/actions/workflows/ci.yaml/badge.svg)](https://github.com/smol-platform/smol-agents/actions/workflows/ci.yaml)
 [![e2e](https://github.com/smol-platform/smol-agents/actions/workflows/e2e.yml/badge.svg)](https://github.com/smol-platform/smol-agents/actions/workflows/e2e.yml)
-![Go](https://img.shields.io/badge/go-1.24%2B-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white)
 ![Formal](https://img.shields.io/badge/formal-Quint%20·%2010%20specs-6E40C9)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)

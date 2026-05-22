@@ -57,14 +57,20 @@ func TestMintThenResourceAccepts(t *testing.T) {
 	// Agent (via sidecar) reaches the resource WITH the injected minted token.
 	req2, _ := http.NewRequest(http.MethodGet, ts.URL+"/repos/stigen/app", nil)
 	req2.Header.Set("Authorization", "Bearer "+minted.Token)
-	resp2, _ := http.DefaultClient.Do(req2)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("resource with minted token = %d, want 200", resp2.StatusCode)
 	}
 
 	// /_observed confirms the upstream saw a minted token.
-	obs, _ := http.Get(ts.URL + "/_observed")
+	obs, err := http.Get(ts.URL + "/_observed")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var o struct {
 		SawMintedToken bool `json:"sawMintedToken"`
 		Count          int  `json:"count"`
@@ -102,7 +108,10 @@ func TestResourceRejectsUnmintedAndMissing(t *testing.T) {
 	}
 
 	// Nothing was accepted, so the upstream observed no minted token.
-	obs, _ := http.Get(ts.URL + "/_observed")
+	obs, err := http.Get(ts.URL + "/_observed")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var o struct {
 		SawMintedToken bool `json:"sawMintedToken"`
 	}

@@ -17,7 +17,7 @@ needs declare two CRs (or, in v2, a single CR with both blocks).
 ## Steering Document Alignment
 
 ### Technical Standards (`steering/tech.md`)
-- Go 1.24 + cilium/ebpf for the host programs.
+- Go 1.26 + cilium/ebpf for the host programs.
 - `golang.zx2c4.com/wireguard` + `tun/netstack` for userspace WG.
 - go-spiffe v2 for both transports' identity.
 - OTel for audit; Prometheus for counters.
