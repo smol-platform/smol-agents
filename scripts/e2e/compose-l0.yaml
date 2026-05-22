@@ -97,6 +97,10 @@ services:
 
   fake-gateway:
     image: smol-agents/fake-gateway:dev
+    # Run as root (uid 0) to match the spire-init registration entry
+    # (unix:uid:0). The image defaults to nonroot (uid 65532), which attests
+    # as the wrong uid, gets no SVID, and resets every mTLS handshake.
+    user: "0:0"
     depends_on:
       spire-agent: { condition: service_started }
       spire-init:  { condition: service_completed_successfully }
