@@ -123,24 +123,21 @@ after Provision succeeds.
 
 ## CI integration
 
-The L2 ring is intentionally **not** wired into the per-PR check
-suite — the cost adds up across active PRs. Recommended cadence:
+**L2 is not wired into CI yet.** `.github/workflows/e2e.yml` runs only
+`l0`, `l1`, and `coverage-gate`; the `l2` / `l2-smoke` jobs were removed
+until the org's AWS infrastructure + Actions secrets are in place (see
+below). Run L2 manually until then:
 
-- `make e2e-l2-smoke` on every PR that touches
-  `scripts/aws-l2/cloud-init.*` or `test/e2e/fullstack/l2/**`
-- `make e2e-l2` on `main` once per day (cron-driven workflow)
-- `make e2e-l2` manually before tagging a release
+- `make e2e-l2-smoke` — cheap cloud-init drift check (~$0.10)
+- `make e2e-l2` — full ring; on demand, or before tagging a release
 
-The GitHub workflow lives in `.github/workflows/e2e.yml` (the `l2` and
-`l2-smoke` jobs).
+### Re-enabling L2 in CI
 
-### Required GitHub Actions configuration
-
-The `l2` / `l2-smoke` jobs assume the AWS workload-identity + bundle
-infrastructure exists **and** that the repository (or its org) exposes the
-following under **Settings → Secrets and variables → Actions**. These do
-**not** transfer when a repo is migrated or forked — a freshly moved repo
-must set them again:
+To put `l2` / `l2-smoke` back in the workflow, restore those jobs (git
+history has them) and provide the AWS workload-identity + bundle config.
+The jobs assume it exists **and** that the repository (or its org) exposes
+the following under **Settings → Secrets and variables → Actions** — these
+do **not** transfer when a repo is migrated or forked:
 
 | Kind | Name | Value | Source |
 |---|---|---|---|

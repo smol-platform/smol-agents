@@ -1,16 +1,12 @@
-# Fullstack e2e workflows.
+# Fullstack e2e workflows (CI).
 #
-# - e2e-l0:       docker-compose ring (~1 min). Runs on every PR.
-# - e2e-l1:       kind-on-Linux ring (~5 min including bring-up).
-#                 Runs on every PR.
-# - e2e-l2-smoke: AWS Spot bare-metal Provision+Teardown without
-#                 scenarios (~6 min, ~$0.10). Gated by an
-#                 `l2-smoke` PR label so it only fires when the
-#                 contributor expects to spend money.
-# - e2e-l2:       AWS Spot bare-metal + k0s + Kata-FC, full
-#                 scenario set (~12 min, ~$0.22). Gated:
-#                 `/test-l2` PR comment, push to main, or nightly
-#                 cron at 02:00 UTC.
+# - e2e-l0: docker-compose ring (~1 min). Runs on every push/PR.
+# - e2e-l1: kind-on-Linux ring (~5 min including bring-up). Runs on every push/PR.
+#
+# L2 (AWS Spot bare-metal + Kata-FC) is NOT wired into CI yet — it needs the
+# org's AWS OIDC role + secrets/vars (SMOL_AGENTS_AWS_ACCOUNT_ID, L2_ARTIFACT_BUCKET,
+# L2_ECR_REGISTRY; see docs/runbooks/e2e-l2.md). Until those exist, run L2
+# manually: `make e2e-l2-smoke` / `make e2e-l2`.
 #
 # Implements R-E2E-VRF-2 + R-E2E-VRF-4.
 
@@ -21,15 +17,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    # Nightly L2 at 02:00 UTC.
-    - cron: "0 2 * * *"
-  issue_comment:
-    types: [created]
 
 jobs:
   l0:
-    if: github.event_name != 'issue_comment' && github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -46,7 +36,6 @@ jobs:
         run: make e2e-l0
 
   l1:
-    if: github.event_name != 'issue_comment' && github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -60,81 +49,6 @@ jobs:
           install_only: true
       - name: make e2e-l1
         run: make e2e-l1
-
-  l2-smoke:
-    # Cheap (~$0.10) Provision+sentinel+Teardown — gates PRs that
-    # touch cloud-init or the L2 driver without paying the full
-    # scenario-suite tax. Only fires on PRs whose diff touches the
-    # L2 surface; otherwise relies on `l2` (push/cron) for
-    # coverage.
-    if: |
-      github.event_name == 'pull_request' &&
-      contains(github.event.pull_request.labels.*.name, 'l2-smoke')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SMOL_AGENTS_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
-          aws-region: us-east-2
-      - name: build + push bundles
-        env:
-          AWS_PROFILE: smol-agents
-          AWS_REGION: us-east-2
-          L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
-          L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
-        run: make l2-bundle
-      - name: make e2e-l2-smoke
-        env:
-          AWS_PROFILE: smol-agents
-          AWS_REGION: us-east-2
-          L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
-          L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
-        run: make e2e-l2-smoke
-
-  l2:
-    if: |
-      github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/test-l2'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      id-token: write   # OIDC for AWS assume-role
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SMOL_AGENTS_AWS_ACCOUNT_ID }}:role/smol-agents-e2e-runner
-          aws-region: us-east-2
-      - name: build + push bundles
-        env:
-          AWS_PROFILE: smol-agents
-          AWS_REGION: us-east-2
-          L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
-          L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
-        run: make l2-bundle
-      - name: make e2e-l2
-        env:
-          AWS_PROFILE: smol-agents
-          AWS_REGION: us-east-2
-          L2_ARTIFACT_BUCKET: ${{ vars.L2_ARTIFACT_BUCKET }}
-          L2_ECR_REGISTRY: ${{ vars.L2_ECR_REGISTRY }}
-        run: make e2e-l2
 
   coverage-gate:
     runs-on: ubuntu-24.04
