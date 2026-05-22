@@ -912,6 +912,312 @@ func TestAgentFS_Merge_FailNoMutation(t *testing.T) {
 	}
 }
 
+// ── Phase 2: markers + union + binary ─────────────────────────────────────────
+
+// TestAgentFS_Merge_Markers_NonOverlapping verifies that non-overlapping edits
+// on different lines auto-merge cleanly (no conflict markers) under MergeMarkers.
+func TestAgentFS_Merge_Markers_NonOverlapping(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	// Base: 4 lines.
+	writeDoc(t, b, "tenant-a", "ns", "main", "file.txt", "line1\nline2\nline3\nline4\n")
+	_, err := b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+
+	// ours (main) changes line1 only.
+	writeDoc(t, b, "tenant-a", "ns", "main", "file.txt", "LINE1\nline2\nline3\nline4\n")
+	// theirs (src) changes line4 only.
+	writeDoc(t, b, "tenant-a", "ns", "src", "file.txt", "line1\nline2\nline3\nLINE4\n")
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeMarkers), f)
+	if err != nil {
+		t.Fatalf("Merge markers: %v", err)
+	}
+	// Non-overlapping → auto-merged, no conflict markers in file.
+	if !result.Committed {
+		t.Error("markers merge: expected Committed=true for non-overlapping edits")
+	}
+	if len(result.Conflicts) != 0 {
+		t.Errorf("non-overlapping should have 0 conflicts, got %d: %v", len(result.Conflicts), result.Conflicts)
+	}
+
+	dstKey := "tenant-a/ns/main/file.txt"
+	doc, err := b.Get(context.Background(), dstKey, f)
+	if err != nil {
+		t.Fatalf("Get after markers merge: %v", err)
+	}
+	got := string(doc.Content)
+	if !strings.Contains(got, "LINE1") {
+		t.Errorf("ours change missing: %q", got)
+	}
+	if !strings.Contains(got, "LINE4") {
+		t.Errorf("theirs change missing: %q", got)
+	}
+	if strings.Contains(got, "<<<<<<<") {
+		t.Errorf("unexpected conflict markers in auto-merged file: %q", got)
+	}
+}
+
+// TestAgentFS_Merge_Markers_Overlapping verifies that overlapping edit/edit text
+// conflicts produce git-style conflict markers AND the merge is Committed=true.
+func TestAgentFS_Merge_Markers_Overlapping(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	writeDoc(t, b, "tenant-a", "ns", "main", "conflict.txt", "line1\nshared\nline3\n")
+	_, err := b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+
+	// Both sides modify the same line.
+	writeDoc(t, b, "tenant-a", "ns", "main", "conflict.txt", "line1\nOURS\nline3\n")
+	writeDoc(t, b, "tenant-a", "ns", "src", "conflict.txt", "line1\nTHEIRS\nline3\n")
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeMarkers), f)
+	if err != nil {
+		t.Fatalf("Merge markers: %v", err)
+	}
+	// Committed must be true even though conflicts exist.
+	if !result.Committed {
+		t.Error("markers merge: Committed must be true even for overlapping conflicts")
+	}
+	if len(result.Conflicts) == 0 {
+		t.Error("markers merge: expected at least 1 conflict reported")
+	}
+
+	// File must contain conflict markers.
+	dstKey := "tenant-a/ns/main/conflict.txt"
+	doc, err := b.Get(context.Background(), dstKey, f)
+	if err != nil {
+		t.Fatalf("Get after markers merge: %v", err)
+	}
+	got := string(doc.Content)
+	if !strings.Contains(got, "<<<<<<< ours") {
+		t.Errorf("missing ours marker: %q", got)
+	}
+	if !strings.Contains(got, "=======") {
+		t.Errorf("missing separator: %q", got)
+	}
+	if !strings.Contains(got, ">>>>>>> theirs") {
+		t.Errorf("missing theirs marker: %q", got)
+	}
+	if !strings.Contains(got, "OURS") {
+		t.Errorf("missing ours content: %q", got)
+	}
+	if !strings.Contains(got, "THEIRS") {
+		t.Errorf("missing theirs content: %q", got)
+	}
+	// Non-conflicting lines must also be present.
+	if !strings.Contains(got, "line1") {
+		t.Errorf("non-conflicting line1 missing: %q", got)
+	}
+	if !strings.Contains(got, "line3") {
+		t.Errorf("non-conflicting line3 missing: %q", got)
+	}
+}
+
+// TestAgentFS_Merge_Union_Text verifies that MergeUnion keeps both sides of a
+// text conflict (ours then theirs) and does NOT emit conflict markers.
+func TestAgentFS_Merge_Union_Text(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	writeDoc(t, b, "tenant-a", "ns", "main", "file.txt", "base\n")
+	_, err := b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+
+	writeDoc(t, b, "tenant-a", "ns", "main", "file.txt", "ours-content\n")
+	writeDoc(t, b, "tenant-a", "ns", "src", "file.txt", "theirs-content\n")
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeUnion), f)
+	if err != nil {
+		t.Fatalf("Merge union: %v", err)
+	}
+	if !result.Committed {
+		t.Error("union merge: Committed must be true")
+	}
+	// Conflicts are still reported informationally.
+	if len(result.Conflicts) == 0 {
+		t.Error("union merge: expected conflict reported informationally")
+	}
+
+	dstKey := "tenant-a/ns/main/file.txt"
+	doc, err := b.Get(context.Background(), dstKey, f)
+	if err != nil {
+		t.Fatalf("Get after union merge: %v", err)
+	}
+	got := string(doc.Content)
+	if strings.Contains(got, "<<<<<<<") {
+		t.Errorf("union should not emit conflict markers: %q", got)
+	}
+	if !strings.Contains(got, "ours-content") {
+		t.Errorf("ours content missing from union: %q", got)
+	}
+	if !strings.Contains(got, "theirs-content") {
+		t.Errorf("theirs content missing from union: %q", got)
+	}
+	// Ours must appear before theirs.
+	if strings.Index(got, "ours-content") >= strings.Index(got, "theirs-content") {
+		t.Errorf("ours should precede theirs in union output: %q", got)
+	}
+}
+
+// TestAgentFS_Merge_Markers_Binary verifies that binary file conflicts under
+// MergeMarkers produce a marker placeholder (not a crash) and Committed=true.
+func TestAgentFS_Merge_Markers_Binary(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	// Write a binary file (contains a NUL byte).
+	binaryContent := []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a} // PNG-like
+	doc := Document{
+		Tenant:    "tenant-a",
+		Namespace: "ns",
+		Content:   binaryContent,
+		Path:      "image.bin",
+		Metadata:  map[string]string{"branch": "main"},
+	}
+	_, err := b.Write(context.Background(), doc)
+	if err != nil {
+		t.Fatalf("Write binary: %v", err)
+	}
+
+	_, err = b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+
+	// Both sides modify the binary file differently.
+	doc2 := Document{
+		Tenant: "tenant-a", Namespace: "ns",
+		Content:  []byte{0xff, 0xfe, 0x00, 0x01}, // different binary
+		Path:     "image.bin",
+		Metadata: map[string]string{"branch": "main"},
+	}
+	_, _ = b.Write(context.Background(), doc2)
+
+	doc3 := Document{
+		Tenant: "tenant-a", Namespace: "ns",
+		Content:  []byte{0xaa, 0xbb, 0x00, 0xcc}, // yet another binary
+		Path:     "image.bin",
+		Metadata: map[string]string{"branch": "src"},
+	}
+	_, _ = b.Write(context.Background(), doc3)
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeMarkers), f)
+	if err != nil {
+		t.Fatalf("Merge markers binary: %v", err)
+	}
+	if !result.Committed {
+		t.Error("binary markers: Committed must be true")
+	}
+	if len(result.Conflicts) == 0 {
+		t.Error("binary markers: expected conflict reported")
+	}
+
+	dstKey := "tenant-a/ns/main/image.bin"
+	doc4, err := b.Get(context.Background(), dstKey, f)
+	if err != nil {
+		t.Fatalf("Get binary after merge: %v", err)
+	}
+	// Content should be a binary-conflict placeholder (text marker).
+	got := string(doc4.Content)
+	if !strings.Contains(got, "binary conflict") {
+		t.Errorf("binary conflict placeholder missing: %q", got)
+	}
+}
+
+// TestAgentFS_Merge_Union_Binary verifies that MergeUnion on binary files
+// keeps ours (dst) and still reports the conflict informationally.
+func TestAgentFS_Merge_Union_Binary(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	oursContent := []byte{0x01, 0x00, 0x02} // binary (NUL)
+	doc := Document{
+		Tenant:    "tenant-a",
+		Namespace: "ns",
+		Content:   oursContent,
+		Path:      "data.bin",
+		Metadata:  map[string]string{"branch": "main"},
+	}
+	_, err := b.Write(context.Background(), doc)
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	_, err = b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+
+	doc2 := Document{
+		Tenant:    "tenant-a",
+		Namespace: "ns",
+		Content:   []byte{0x03, 0x00, 0x04},
+		Path:      "data.bin",
+		Metadata:  map[string]string{"branch": "src"},
+	}
+	_, _ = b.Write(context.Background(), doc2)
+	writeDoc(t, b, "tenant-a", "ns", "main", "data.bin", string([]byte{0x05, 0x00, 0x06}))
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeUnion), f)
+	if err != nil {
+		t.Fatalf("Merge union binary: %v", err)
+	}
+	if !result.Committed {
+		t.Error("union binary: Committed must be true")
+	}
+	if len(result.Conflicts) == 0 {
+		t.Error("union binary: expected conflict reported informationally")
+	}
+}
+
+// TestAgentFS_Merge_Markers_EditDelete verifies that an edit/delete conflict
+// under MergeMarkers keeps ours (the edited file) and is committed.
+func TestAgentFS_Merge_Markers_EditDelete(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	writeDoc(t, b, "tenant-a", "ns", "main", "gone.txt", "original\n")
+	_, err := b.Branch(context.Background(), "main", "src", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+
+	// ours (main) edits the file.
+	writeDoc(t, b, "tenant-a", "ns", "main", "gone.txt", "edited\n")
+	// theirs (src) deletes the file.
+	srcKey := "tenant-a/ns/src/gone.txt"
+	_ = b.Delete(context.Background(), srcKey, f)
+
+	result, err := b.Merge(context.Background(), "src", "main", mergeOpts(MergeMarkers), f)
+	if err != nil {
+		t.Fatalf("Merge markers edit/delete: %v", err)
+	}
+	if !result.Committed {
+		t.Error("markers edit/delete: Committed must be true")
+	}
+	if len(result.Conflicts) == 0 {
+		t.Error("markers edit/delete: expected conflict reported")
+	}
+	// File must still exist (we keep ours).
+	dstKey := "tenant-a/ns/main/gone.txt"
+	doc, err := b.Get(context.Background(), dstKey, f)
+	if err != nil {
+		t.Fatalf("Get after markers edit/delete: %v", err)
+	}
+	if string(doc.Content) != "edited\n" {
+		t.Errorf("expected ours content 'edited', got %q", doc.Content)
+	}
+}
+
 // TestAgentFS_Merge_DryRun verifies that DryRun computes counts without committing.
 func TestAgentFS_Merge_DryRun(t *testing.T) {
 	b, _ := newTestBackend(t)

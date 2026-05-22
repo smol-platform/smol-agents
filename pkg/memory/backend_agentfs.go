@@ -78,6 +78,12 @@ type fsBranch struct {
 	// time. This is the merge base B used by the 3-way classifier. For root
 	// branches this is nil (all files are considered "added with no base").
 	ForkBase map[string]string
+
+	// ForkBaseContent maps relative file path → exact Content bytes at fork
+	// time. Populated in parallel with ForkBase by Branch(). Used by the
+	// hunk-level diff3 engine (Phase 2) which needs actual content to compute
+	// the LCS, not just the hash.
+	ForkBaseContent map[string][]byte
 }
 
 // branchKey uniquely identifies a branch within this backend process.
@@ -415,9 +421,12 @@ func (b *agentFSBackend) Branch(ctx context.Context, baseBranch, newBranch strin
 	b.ensureBranch(filter.Tenant, filter.Namespace, baseBranch)
 
 	// Clone all files from base → new branch.
-	// At the same time, build the ForkBase manifest: relPath → sha256(content).
+	// Build ForkBase (hash manifest) and ForkBaseContent (actual bytes) in
+	// parallel: ForkBase drives Phase-1 classification; ForkBaseContent feeds
+	// the Phase-2 diff3 engine.
 	basePrefix := fileKey(filter.Tenant, filter.Namespace, baseBranch, "")
 	forkBase := make(map[string]string)
+	forkBaseContent := make(map[string][]byte)
 
 	for key, doc := range b.files {
 		if strings.HasPrefix(key, basePrefix) {
@@ -436,6 +445,7 @@ func (b *agentFSBackend) Branch(ctx context.Context, baseBranch, newBranch strin
 			}
 			b.files[newFileKey] = cloned
 			forkBase[relPath] = contentHash(doc.Content)
+			forkBaseContent[relPath] = append([]byte(nil), doc.Content...)
 		}
 	}
 
@@ -446,10 +456,11 @@ func (b *agentFSBackend) Branch(ctx context.Context, baseBranch, newBranch strin
 		CreatedAt: now,
 	}
 	b.branches[newKey] = &fsBranch{
-		info:       info,
-		storage:    &agentfs.FakeStorage{},
-		ForkedFrom: baseBranch,
-		ForkBase:   forkBase,
+		info:            info,
+		storage:         &agentfs.FakeStorage{},
+		ForkedFrom:      baseBranch,
+		ForkBase:        forkBase,
+		ForkBaseContent: forkBaseContent,
 	}
 	return info, nil
 }
@@ -615,6 +626,9 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 	// If ForkBase is nil (root branch or legacy branch), treat every file as
 	// having no base entry (B = absent).
 	base := srcBr.ForkBase // map relPath → sha256; may be nil
+	// baseContent is the actual file bytes at fork time, used by the Phase-2
+	// diff3 engine. May be nil for root/legacy branches.
+	baseContent := srcBr.ForkBaseContent // map relPath → []byte; may be nil
 
 	srcPrefix := fileKey(filter.Tenant, filter.Namespace, srcBranch, "")
 	dstPrefix := fileKey(filter.Tenant, filter.Namespace, dstBranch, "")
@@ -663,16 +677,19 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 	// mergePlan records what should happen for each path.
 	type action int
 	const (
-		actionKeep   action = iota // keep dstFiles[rel] unchanged
-		actionTakeT                // write srcFiles[rel] into dst
-		actionDelete               // delete from dst
+		actionKeep         action = iota // keep dstFiles[rel] unchanged
+		actionTakeT                      // write srcFiles[rel] into dst
+		actionDelete                     // delete from dst
+		actionWriteContent               // write arbitrary content (markers / union)
 		// actionConflict is handled inline via conflicts slice
 	)
 
 	type planned struct {
-		act  action
-		doc  Document // non-zero for actionTakeT
-		path string   // relPath for actionDelete
+		act     action
+		doc     Document // non-zero for actionTakeT
+		path    string   // relPath for actionDelete
+		content []byte   // non-nil for actionWriteContent (markers/union)
+		srcPath string   // file path for actionWriteContent
 	}
 
 	var conflicts []ConflictInfo
@@ -768,7 +785,7 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 		}, nil
 	}
 
-	// For ours/theirs, override conflicting paths' plan entries.
+	// For ours/theirs/markers/union, override conflicting paths' plan entries.
 	if len(conflicts) > 0 {
 		for _, ci := range conflicts {
 			rel := ci.Path
@@ -783,6 +800,99 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 				} else {
 					plan[rel] = planned{act: actionDelete, path: rel}
 				}
+
+			case MergeMarkers, MergeUnion:
+				// edit/delete and add/add: use whole-file fallback semantics
+				// (these are not text edit/edit conflicts where diff3 applies).
+				//
+				//   edit/delete: keep ours (dst) regardless of policy variant.
+				//                The conflict is reported so the agent knows.
+				//   add/add:     both sides have the file; apply diff3 on content.
+				//   edit/edit:   apply line-level diff3 (markers or union).
+				if ci.Kind == "edit/delete" {
+					// Whole-file conflict: keep dst (ours). The conflict is
+					// informational — caller must resolve manually.
+					plan[rel] = planned{act: actionKeep}
+					continue
+				}
+
+				// For edit/edit and add/add: get base, ours, theirs content.
+				dstDoc, hasDst := dstFiles[rel]
+				srcDoc, hasSrc := srcFiles[rel]
+				if !hasDst || !hasSrc {
+					// Shouldn't happen for edit/edit, but be safe.
+					plan[rel] = planned{act: actionKeep}
+					continue
+				}
+
+				// Retrieve base content for diff3 (may be absent for add/add).
+				// ForkBaseContent stores the actual bytes at fork time; this is
+				// the canonical merge base for the diff3 engine.
+				var fileBaseContent []byte
+				if baseContent != nil {
+					fileBaseContent = baseContent[rel] // nil if rel not in base (add/add)
+				}
+
+				// Determine if content is text.
+				oursBytes := dstDoc.Content
+				theirsBytes := srcDoc.Content
+				filePath := dstDoc.Path
+				if filePath == "" {
+					filePath = srcDoc.Path
+				}
+
+				if !isText(oursBytes) || !isText(theirsBytes) {
+					// Binary fallback: for markers, write a placeholder marker block
+					// into the dst file noting the conflict. For union, keep ours
+					// and write a ".theirs" sidecar (we keep ours as the primary).
+					// Either way the conflict is reported and committed.
+					if policy == MergeMarkers {
+						marker := []byte(
+							"<<<<<<< ours (binary conflict — resolve manually)\n=======\n>>>>>>> theirs\n",
+						)
+						plan[rel] = planned{
+							act:     actionWriteContent,
+							content: marker,
+							srcPath: filePath,
+						}
+					} else { // MergeUnion
+						// Keep ours as primary; no sidecar (sidecar file paths
+						// are not tracked in the branch model). Document choice:
+						// union on binary = keep ours, conflict is reported.
+						plan[rel] = planned{act: actionKeep}
+					}
+					continue
+				}
+
+				// Text files: run diff3.
+				baseLines := splitLines(fileBaseContent)
+				oursLines := splitLines(oursBytes)
+				theirsLines := splitLines(theirsBytes)
+
+				emitMarkers := policy == MergeMarkers
+				unionMode := policy == MergeUnion
+
+				r := mergeLines(baseLines, oursLines, theirsLines, emitMarkers, unionMode)
+				merged := joinLines(r.Lines)
+
+				if len(r.Conflicts) == 0 {
+					// diff3 resolved everything — no real conflict in the text.
+					// Remove this path from the reported conflicts list and take merged.
+					plan[rel] = planned{
+						act:     actionWriteContent,
+						content: merged,
+						srcPath: filePath,
+					}
+					// Remove from conflicts slice so the result is accurate.
+					removeConflict(&conflicts, rel)
+				} else {
+					// Real text conflicts remain.
+					plan[rel] = planned{
+						act:     actionWriteContent,
+						content: merged,
+						srcPath: filePath,
+					}
+				}
 			}
 		}
 	}
@@ -792,7 +902,7 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 	var mergedCount, addedCount, deletedCount int
 	for rel, p := range plan {
 		switch p.act {
-		case actionTakeT:
+		case actionTakeT, actionWriteContent:
 			_, existsInDst := dstFiles[rel]
 			if existsInDst {
 				mergedCount++
@@ -837,6 +947,22 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 				CreatedAt: createdAt,
 				UpdatedAt: now,
 			}
+		case actionWriteContent:
+			// markers or union: write the computed merged content.
+			createdAt := now
+			if existing, exists := b.files[dstFileKey]; exists {
+				createdAt = existing.CreatedAt
+			}
+			b.files[dstFileKey] = Document{
+				ID:        dstFileKey,
+				Namespace: filter.Namespace,
+				Tenant:    filter.Tenant,
+				Content:   append([]byte(nil), p.content...),
+				Path:      p.srcPath,
+				Version:   fmt.Sprintf("%d", now.UnixNano()),
+				CreatedAt: createdAt,
+				UpdatedAt: now,
+			}
 		case actionDelete:
 			delete(b.files, dstFileKey)
 		case actionKeep:
@@ -856,6 +982,19 @@ func (b *agentFSBackend) Merge(ctx context.Context, srcBranch, dstBranch string,
 		Added:     addedCount,
 		Deleted:   deletedCount,
 	}, nil
+}
+
+// removeConflict removes the ConflictInfo for the given path from the slice
+// in-place. Used when diff3 resolved all hunks in a file (no real conflict
+// remained after line-level merge).
+func removeConflict(cs *[]ConflictInfo, path string) {
+	out := (*cs)[:0]
+	for _, c := range *cs {
+		if c.Path != path {
+			out = append(out, c)
+		}
+	}
+	*cs = out
 }
 
 // ── Backend.ListBranches ─────────────────────────────────────────────────────
