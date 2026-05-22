@@ -149,6 +149,8 @@ func (g *Gateway) HandleToolCall(r *http.Request, toolName string, rawArgs json.
 		return g.doDelete(r, caller, info, worker, identity, args, start)
 	case "summarize_memory":
 		return g.doSummarize(r, caller, info, worker, identity, args, start)
+	case "merge_memory_fs":
+		return g.doMergeFS(r, caller, info, worker, identity, args, start)
 	default:
 		return errResult(CodeMethodNotFound, "unknown tool: "+toolName)
 	}
@@ -437,6 +439,48 @@ func (g *Gateway) doSummarize(
 
 	g.logAllow(r, caller, "summarize_memory", identity.RetrieverRef, identity.Namespace, "", 1, start)
 	out, _ := json.Marshal(map[string]string{"summary": resp.Summary})
+	return okResult(string(out))
+}
+
+func (g *Gateway) doMergeFS(
+	r *http.Request,
+	caller CallerIdentity,
+	info store.RetrieverInfo,
+	worker api.RetrievalService,
+	identity api.RequestIdentity,
+	args map[string]json.RawMessage,
+	start time.Time,
+) (ToolCallResult, *RPCError) {
+	// Merge is a write-level operation on dstBranch's namespace.
+	if err := g.Policy.Allow(caller.SPIFFEID, v1.MemoryOpWrite, identity.Namespace, info.Spec.Policy); err != nil {
+		return g.deny(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace, start,
+			CodePermissionDenied, err.Error(), memory.KindPermissionDenied)
+	}
+
+	srcBranch := jsonStr(args["srcBranch"])
+	if srcBranch == "" {
+		return g.deny(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace, start,
+			CodeInvalidParams, "srcBranch is required", memory.KindInvalid)
+	}
+	dstBranch := jsonStr(args["dstBranch"])
+	if dstBranch == "" {
+		return g.deny(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace, start,
+			CodeInvalidParams, "dstBranch is required", memory.KindInvalid)
+	}
+
+	req := &api.MergeFSRequest{
+		Identity:  identity,
+		SrcBranch: srcBranch,
+		DstBranch: dstBranch,
+	}
+	resp, err := worker.MergeFS(r.Context(), req)
+	if err != nil {
+		return g.denyWorkerError(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace, start, err)
+	}
+
+	g.logAllow(r, caller, "merge_memory_fs", identity.RetrieverRef, identity.Namespace,
+		"src="+srcBranch+",dst="+dstBranch, 1, start)
+	out, _ := json.Marshal(resp.Branch)
 	return okResult(string(out))
 }
 

@@ -63,6 +63,10 @@ type RetrievalService interface {
 
 	// ListBranches returns the filesystem branches visible to the caller.
 	ListBranches(ctx context.Context, req *ListBranchesRequest) (*ListBranchesResponse, error)
+
+	// MergeFS fast-forward publishes srcBranch into dstBranch (kind=filesystem
+	// stores only). Non-filesystem backends return ErrNotSupported.
+	MergeFS(ctx context.Context, req *MergeFSRequest) (*MergeFSResponse, error)
 }
 
 // ── Identity header (embedded in every request) ────────────────────────────
@@ -239,4 +243,23 @@ type ListBranchesRequest struct {
 // ListBranchesResponse carries the visible branches.
 type ListBranchesResponse struct {
 	Branches []memory.BranchInfo
+}
+
+// ── MergeFS ────────────────────────────────────────────────────────────────
+
+// MergeFSRequest is sent by the gateway for a merge_memory_fs MCP call.
+// It performs a fast-forward publish of SrcBranch into DstBranch.
+type MergeFSRequest struct {
+	Identity RequestIdentity
+
+	// SrcBranch is the branch whose files are applied onto DstBranch.
+	SrcBranch string
+
+	// DstBranch is the branch that receives the merged files.
+	DstBranch string
+}
+
+// MergeFSResponse carries metadata about the updated destination branch.
+type MergeFSResponse struct {
+	Branch memory.BranchInfo
 }

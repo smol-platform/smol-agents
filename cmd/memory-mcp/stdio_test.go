@@ -270,6 +270,9 @@ func (f *fakeStdioWorker) SnapshotFS(_ context.Context, _ *api.SnapshotFSRequest
 func (f *fakeStdioWorker) ListBranches(_ context.Context, _ *api.ListBranchesRequest) (*api.ListBranchesResponse, error) {
 	return nil, &memory.Error{Kind: memory.KindNotSupported}
 }
+func (f *fakeStdioWorker) MergeFS(_ context.Context, _ *api.MergeFSRequest) (*api.MergeFSResponse, error) {
+	return nil, &memory.Error{Kind: memory.KindNotSupported}
+}
 
 var _ api.RetrievalService = (*fakeStdioWorker)(nil)
 

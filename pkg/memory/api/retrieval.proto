@@ -192,6 +192,24 @@ message ListBranchesResponse {
   repeated BranchInfo branches = 1;
 }
 
+// ── MergeFS ───────────────────────────────────────────────────────────────────
+
+// MergeFSRequest performs a fast-forward publish of src_branch into dst_branch.
+message MergeFSRequest {
+  RequestIdentity identity = 1;
+
+  // src_branch is the branch whose files are applied onto dst_branch.
+  string src_branch = 2;
+
+  // dst_branch is the branch that receives the merged files.
+  string dst_branch = 3;
+}
+
+// MergeFSResponse carries the updated destination branch metadata.
+message MergeFSResponse {
+  BranchInfo branch = 1;
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 // RetrievalService is the internal gRPC service implemented by retrieval workers
@@ -208,4 +226,5 @@ service RetrievalService {
   rpc BranchFS(BranchFSRequest) returns (BranchFSResponse);
   rpc SnapshotFS(SnapshotFSRequest) returns (SnapshotFSResponse);
   rpc ListBranches(ListBranchesRequest) returns (ListBranchesResponse);
+  rpc MergeFS(MergeFSRequest) returns (MergeFSResponse);
 }

@@ -502,3 +502,144 @@ func TestAgentFS_Write_CancelledContext(t *testing.T) {
 		t.Errorf("expected BackendUnavailable for cancelled ctx, got %v", err)
 	}
 }
+
+// ── Merge ─────────────────────────────────────────────────────────────────────
+
+// TestAgentFS_Merge_FastForward verifies the core fast-forward semantics:
+// files from srcBranch are applied onto dstBranch; dst-only files are preserved;
+// the returned BranchInfo has CommittedAt set.
+func TestAgentFS_Merge_FastForward(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	// Populate main (dst) with two files.
+	writeDoc(t, b, "tenant-a", "ns", "main", "keep.txt", "keep me")
+	writeDoc(t, b, "tenant-a", "ns", "main", "shared.txt", "main version")
+
+	// Fork a run branch (src) and mutate one file, add another.
+	_, err := b.Branch(context.Background(), "main", "run-x", f)
+	if err != nil {
+		t.Fatalf("Branch: %v", err)
+	}
+	writeDoc(t, b, "tenant-a", "ns", "run-x", "shared.txt", "run version") // override
+	writeDoc(t, b, "tenant-a", "ns", "run-x", "new.txt", "brand new")      // new file
+
+	// Merge run-x → main.
+	info, err := b.Merge(context.Background(), "run-x", "main", f)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	// The returned BranchInfo must be for main and be committed.
+	if info.Name != "main" {
+		t.Errorf("Merge returned info.Name = %q, want main", info.Name)
+	}
+	if info.CommittedAt.IsZero() {
+		t.Error("Merge: CommittedAt should be set on the destination branch")
+	}
+
+	// main should now contain the run-x version of shared.txt.
+	res, err := b.Retrieve(context.Background(), "run version", 10, f)
+	if err != nil {
+		t.Fatalf("Retrieve after merge: %v", err)
+	}
+	if len(res.Chunks) == 0 {
+		t.Error("Merge: shared.txt should contain run version after merge")
+	}
+
+	// keep.txt (dst-only) must still be present.
+	res2, err := b.Retrieve(context.Background(), "keep me", 10, f)
+	if err != nil {
+		t.Fatalf("Retrieve keep.txt: %v", err)
+	}
+	if len(res2.Chunks) == 0 {
+		t.Error("Merge: dst-only file keep.txt should be preserved after merge")
+	}
+
+	// new.txt from src must be visible in main.
+	res3, err := b.Retrieve(context.Background(), "brand new", 10, f)
+	if err != nil {
+		t.Fatalf("Retrieve new.txt: %v", err)
+	}
+	if len(res3.Chunks) == 0 {
+		t.Error("Merge: new.txt from srcBranch should appear in dstBranch after merge")
+	}
+}
+
+// TestAgentFS_Merge_CrossTenantIsolation verifies that a merge cannot bridge
+// tenant boundaries. The filter.Tenant is the isolation key.
+func TestAgentFS_Merge_CrossTenantIsolation(t *testing.T) {
+	b, _ := newTestBackend(t)
+
+	// Create branches in two separate tenants with the same names.
+	fa := filterFor("tenant-a", "ns")
+	fb := filterFor("tenant-b", "ns")
+
+	// Ensure both have branches named "run-1" and "main".
+	writeDoc(t, b, "tenant-a", "ns", "main", "a.txt", "alpha")
+	writeDoc(t, b, "tenant-b", "ns", "main", "b.txt", "beta")
+	_, _ = b.Branch(context.Background(), "main", "run-1", fa)
+	_, _ = b.Branch(context.Background(), "main", "run-1", fb)
+
+	// Merging "run-1" (which exists for tenant-b) into "main" with tenant-a
+	// filter must fail because run-1 is not visible under tenant-a's scope.
+	// (tenant-a has run-1 too, so this succeeds — but the file content is isolated.)
+	writeDoc(t, b, "tenant-b", "ns", "run-1", "secret.txt", "b secret")
+
+	// Merge tenant-a's run-1 → main: should only see tenant-a files.
+	_, err := b.Merge(context.Background(), "run-1", "main", fa)
+	if err != nil {
+		t.Fatalf("Merge tenant-a: %v", err)
+	}
+
+	// tenant-b's secret.txt must NOT appear in tenant-a's main.
+	res, err := b.Retrieve(context.Background(), "b secret", 10, fa)
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	for _, sc := range res.Chunks {
+		if strings.Contains(sc.Chunk.Text, "b secret") {
+			t.Error("cross-tenant content leaked into tenant-a after merge")
+		}
+	}
+	_ = fb
+}
+
+// TestAgentFS_Merge_MissingBranch verifies NotFound when either branch is absent.
+func TestAgentFS_Merge_MissingBranch(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+
+	// src missing.
+	_, err := b.Merge(context.Background(), "nonexistent", "main", f)
+	if KindOf(err) != KindNotFound {
+		t.Errorf("missing src: expected NotFound, got %v", err)
+	}
+
+	// Seed main, then try missing dst.
+	writeDoc(t, b, "tenant-a", "ns", "main", "x.txt", "x")
+	_, _ = b.Branch(context.Background(), "main", "src-ok", f)
+	_, err = b.Merge(context.Background(), "src-ok", "no-such-dst", f)
+	if KindOf(err) != KindNotFound {
+		t.Errorf("missing dst: expected NotFound, got %v", err)
+	}
+}
+
+// TestAgentFS_Merge_SameBranch verifies Invalid when src == dst.
+func TestAgentFS_Merge_SameBranch(t *testing.T) {
+	b, _ := newTestBackend(t)
+	f := filterFor("tenant-a", "ns")
+	_, err := b.Merge(context.Background(), "main", "main", f)
+	if KindOf(err) != KindInvalid {
+		t.Errorf("expected Invalid for src==dst, got %v", err)
+	}
+}
+
+// TestAgentFS_Merge_MissingTenant verifies Invalid guard.
+func TestAgentFS_Merge_MissingTenant(t *testing.T) {
+	b, _ := newTestBackend(t)
+	_, err := b.Merge(context.Background(), "run", "main", Filter{Namespace: "ns"})
+	if KindOf(err) != KindInvalid {
+		t.Errorf("expected Invalid for missing Tenant, got %v", err)
+	}
+}

@@ -108,6 +108,10 @@ func (f *fakeWorker) ListBranches(_ context.Context, _ *api.ListBranchesRequest)
 	return nil, &memory.Error{Kind: memory.KindNotSupported, Msg: "not a filesystem backend"}
 }
 
+func (f *fakeWorker) MergeFS(_ context.Context, _ *api.MergeFSRequest) (*api.MergeFSResponse, error) {
+	return nil, &memory.Error{Kind: memory.KindNotSupported, Msg: "not a filesystem backend"}
+}
+
 var _ api.RetrievalService = (*fakeWorker)(nil)
 
 // ── Test harness ──────────────────────────────────────────────────────────
@@ -951,6 +955,118 @@ func TestGateway_AllowedCallAudited(t *testing.T) {
 	}
 	if rec.Timestamp.IsZero() {
 		t.Error("audit Timestamp is zero")
+	}
+}
+
+// TestGateway_MergeFSTool_Denied_NoWriteGrant verifies that merge_memory_fs
+// requires a write grant on the target namespace — a read-only caller is denied.
+func TestGateway_MergeFSTool_Denied_NoWriteGrant(t *testing.T) {
+	worker := &fakeWorker{}
+	spec := v1.MemoryRetrieverSpec{
+		TopK: 10,
+		Policy: []v1.MemoryGrant{{
+			Identity:   "spiffe://stigen.ai/ns/team/sa/reader",
+			Operations: []v1.MemoryOperation{v1.MemoryOpRead},
+			Namespaces: []string{"*"},
+		}},
+	}
+	gw, _ := testGateway(t, spec, worker)
+	disp := mcp.NewDispatcher(gw)
+	srv := httptest.NewServer(disp)
+	defer srv.Close()
+
+	resp := callTool(t, srv, "spiffe://stigen.ai/ns/team/sa/reader",
+		"merge_memory_fs", map[string]any{
+			"srcBranch":    "run-001",
+			"dstBranch":    "main",
+			"retrieverRef": "ns/test-retriever",
+			"namespace":    "docs",
+		})
+
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected permission denied, got result: %v", resp["result"])
+	}
+	if int(rpcErr["code"].(float64)) != mcp.CodePermissionDenied {
+		t.Fatalf("want CodePermissionDenied, got %v", rpcErr["code"])
+	}
+}
+
+// TestGateway_MergeFSTool_MissingArgs verifies that omitting srcBranch/dstBranch
+// returns an invalid-params error, not a crash.
+func TestGateway_MergeFSTool_MissingArgs(t *testing.T) {
+	worker := &fakeWorker{}
+	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spec := v1.MemoryRetrieverSpec{
+		TopK: 10,
+		Policy: []v1.MemoryGrant{{
+			Identity:   spiffeID,
+			Operations: []v1.MemoryOperation{v1.MemoryOpWrite},
+			Namespaces: []string{"*"},
+		}},
+	}
+	gw, _ := testGateway(t, spec, worker)
+	disp := mcp.NewDispatcher(gw)
+	srv := httptest.NewServer(disp)
+	defer srv.Close()
+
+	// srcBranch present but dstBranch absent.
+	resp := callTool(t, srv, spiffeID,
+		"merge_memory_fs", map[string]any{
+			"srcBranch":    "run-001",
+			"retrieverRef": "ns/test-retriever",
+		})
+
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected invalid-params error, got result: %v", resp["result"])
+	}
+	if int(rpcErr["code"].(float64)) != mcp.CodeInvalidParams {
+		t.Fatalf("want CodeInvalidParams, got %v", rpcErr["code"])
+	}
+}
+
+// TestGateway_MergeFSTool_Allowed verifies that a writer can invoke merge_memory_fs
+// and that the worker's MergeFS method is called. The fakeWorker returns
+// KindNotSupported (non-FS backend), which maps to CodeNotSupported.
+func TestGateway_MergeFSTool_Allowed(t *testing.T) {
+	worker := &fakeWorker{}
+	spiffeID := "spiffe://stigen.ai/ns/team/sa/writer"
+	spec := v1.MemoryRetrieverSpec{
+		TopK: 10,
+		Policy: []v1.MemoryGrant{{
+			Identity:   spiffeID,
+			Operations: []v1.MemoryOperation{v1.MemoryOpWrite},
+			Namespaces: []string{"*"},
+		}},
+	}
+	gw, _ := testGateway(t, spec, worker)
+	disp := mcp.NewDispatcher(gw)
+	srv := httptest.NewServer(disp)
+	defer srv.Close()
+
+	resp := callTool(t, srv, spiffeID,
+		"merge_memory_fs", map[string]any{
+			"srcBranch":    "run-001",
+			"dstBranch":    "main",
+			"retrieverRef": "ns/test-retriever",
+			"namespace":    "docs",
+		})
+
+	// fakeWorker.MergeFS returns KindNotSupported — confirm it reaches the wire
+	// as CodeNotSupported (not CodePermissionDenied, which would mean authz failed).
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		// If it succeeded, that's also fine (some fakes return success).
+		return
+	}
+	code := int(rpcErr["code"].(float64))
+	if code == mcp.CodePermissionDenied {
+		t.Fatalf("authz should have passed for writer; got CodePermissionDenied")
+	}
+	// KindNotSupported → CodeNotSupported is the expected fakeWorker behaviour.
+	if code != mcp.CodeNotSupported {
+		t.Fatalf("want CodeNotSupported from fakeWorker, got %d", code)
 	}
 }
 

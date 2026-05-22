@@ -416,6 +416,18 @@ func (s *grpcServer) ListBranches(ctx context.Context, req *ListBranchesRequest)
 	}()}, nil
 }
 
+func (s *grpcServer) MergeFS(ctx context.Context, req *MergeFSRequest) (*MergeFSResponse, error) {
+	resp, err := s.svc.MergeFS(ctx, &apipkg.MergeFSRequest{
+		Identity:  identityFromProto(req.Identity),
+		SrcBranch: req.SrcBranch,
+		DstBranch: req.DstBranch,
+	})
+	if err != nil {
+		return nil, toGRPCErr(err)
+	}
+	return &MergeFSResponse{Branch: branchInfoToProto(resp.Branch)}, nil
+}
+
 // compile-time check: grpcServer satisfies the generated server interface.
 var _ RetrievalServiceServer = (*grpcServer)(nil)
 
@@ -543,6 +555,18 @@ func (c *grpcClient) ListBranches(ctx context.Context, req *apipkg.ListBranchesR
 	return &apipkg.ListBranchesResponse{
 		Branches: branchesFromProto(resp.Branches),
 	}, nil
+}
+
+func (c *grpcClient) MergeFS(ctx context.Context, req *apipkg.MergeFSRequest) (*apipkg.MergeFSResponse, error) {
+	resp, err := c.pb.MergeFS(ctx, &MergeFSRequest{
+		Identity:  identityToProto(req.Identity),
+		SrcBranch: req.SrcBranch,
+		DstBranch: req.DstBranch,
+	})
+	if err != nil {
+		return nil, fromGRPCErr(err)
+	}
+	return &apipkg.MergeFSResponse{Branch: branchInfoFromProto(resp.Branch)}, nil
 }
 
 // compile-time check: grpcClient satisfies the api.RetrievalService interface.
