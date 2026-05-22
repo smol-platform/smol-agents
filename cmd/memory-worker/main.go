@@ -41,6 +41,8 @@ import (
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"github.com/stigen/smol-agents/pkg/agentfs"
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 	"github.com/stigen/smol-agents/pkg/identity"
 	"github.com/stigen/smol-agents/pkg/memory"
 	"github.com/stigen/smol-agents/pkg/memory/api"
@@ -49,7 +51,8 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":8444", "listener address")
-	backendKind := flag.String("backend", "vector-inmem", "backend kind: vector-inmem")
+	backendKind := flag.String("backend", "vector-inmem", "backend kind: vector-inmem|agentfs")
+	agentfsMount := flag.String("agentfs-mount", "/var/memory-agentfs", "mount path for the agentfs backend")
 	spireSocket := flag.String("spire-socket", "unix:///run/spire/agent-sockets/api.sock", "SPIRE workload-API socket")
 	identityMode := flag.String("identity-mode", "permissive", "insecure|permissive|strict")
 	allowedTenants := flag.String("allowed-tenants", "", "comma-separated tenants (empty = all)")
@@ -75,6 +78,16 @@ func main() {
 	case "vector-inmem":
 		backend = memory.NewVectorBackend()
 		logger.Info("backend", "kind", "vector-inmem")
+	case "agentfs":
+		// P1: file ops (write/get/retrieve/branch) run in-process and need no
+		// S3; snapshots use an in-memory S3 until a production aws-sdk-go-v2
+		// agentfs.S3 adapter lands (tracked — see smol-agents-memory P2).
+		backend = memory.NewAgentFSBackend(memory.AgentFSBackendConfig{
+			Spec: v1.AgentFSSpec{MountPath: *agentfsMount, SizeGiB: 1},
+			S3:   agentfs.NewFakeS3(),
+		})
+		logger.Warn("agentfs snapshots are ephemeral (in-memory S3); wire a real S3 adapter for durable snapshots")
+		logger.Info("backend", "kind", "agentfs", "mount", *agentfsMount)
 	default:
 		logger.Error("unknown backend kind", "kind", *backendKind)
 		os.Exit(2)
