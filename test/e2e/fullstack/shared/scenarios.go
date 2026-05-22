@@ -46,6 +46,7 @@ func All() []Scenario {
 		kataIsolation,
 		smolAgentPhase,
 		secretlessEgress,
+		memoryAccess,
 	}
 }
 
@@ -817,6 +818,33 @@ func runSecretlessEgress(t *testing.T, env Env) {
 		t.Fatalf("RunSpiffeProbe: %v", err)
 	}
 	assertProbeOK(t, lines, "secretless")
+}
+
+var memoryAccess = Scenario{
+	ID:       "R-E2E-SCN-MEMORY",
+	Name:     "memory-mcp-tenant-isolation",
+	Requires: CapSPIRE | CapInClusterProbe,
+	Run:      runMemoryAccess,
+}
+
+// runMemoryAccess drives the memory-mcp gateway from inside the cluster via the
+// spiffe-probe: the probe authenticates with its JWT-SVID, writes + retrieves a
+// document through the MCP gateway (proving the gateway injects the caller's
+// tenant and the worker returns it), and confirms a retriever scoped to another
+// tenant is denied. Real SPIRE end-to-end. R-E2E-SCN-MEMORY.
+func runMemoryAccess(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	lines, err := env.RunSpiffeProbe(ctx,
+		[]string{"memory"},
+		"--memory-mcp-url=http://memory-mcp.tenant-a.svc.cluster.local:8443",
+		"--retriever-ref=tenant-a/kb",
+		"--foreign-retriever-ref=tenant-b/kb")
+	if err != nil {
+		t.Fatalf("RunSpiffeProbe: %v", err)
+	}
+	assertProbeOK(t, lines, "memory")
 }
 
 // todo returns a Run that fails-loudly with a useful message until

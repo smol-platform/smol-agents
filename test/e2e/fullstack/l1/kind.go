@@ -164,6 +164,8 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 		{"smol-agents/fake-gateway:dev", "deploy/docker/fake-gateway.Dockerfile", root},
 		{"smol-agents/fake-github:dev", "deploy/docker/fake-github.Dockerfile", root},
 		{"smol-agents/fake-tts:dev", "deploy/docker/fake-tts.Dockerfile", root},
+		{"smol-agents/memory-worker:dev", "deploy/docker/memory-worker.Dockerfile", root},
+		{"smol-agents/memory-mcp:dev", "deploy/docker/memory-mcp.Dockerfile", root},
 		{"smol-agents/spiffe-probe:dev", "deploy/docker/spiffe-probe.Dockerfile", root},
 		{"smol-agents/spire-shell:dev", "scripts/e2e/spire/Dockerfile.spire-shell", filepath.Join(root, "scripts/e2e/spire")},
 	} {
@@ -233,6 +235,7 @@ func (e *kindEnv) deployFakes(ctx context.Context) error {
 		"-n", "tenant-a", "wait", "--for=condition=available",
 		"deployment/fake-llm", "deployment/fake-gateway",
 		"deployment/fake-github", "deployment/fake-tts",
+		"deployment/memory-worker", "deployment/memory-mcp",
 		"--timeout=120s"); err != nil {
 		return fmt.Errorf("wait fakes ready: %w", err)
 	}

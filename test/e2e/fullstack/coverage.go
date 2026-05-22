@@ -24,6 +24,7 @@ var Coverage = map[string]string{
 	"R-E2E-SCN-KATA":       "shared.kataIsolation",
 	"R-E2E-SCN-KA-PHASE":   "shared.smolAgentPhase",
 	"R-E2E-SCN-SECRETLESS": "shared.secretlessEgress",
+	"R-E2E-SCN-MEMORY":     "shared.memoryAccess",
 
 	// Driver / ring orchestration: validated by the existence + green
 	// pass of each ring's TestLn root test. Each entry below names

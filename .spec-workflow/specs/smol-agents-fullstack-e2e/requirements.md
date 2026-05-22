@@ -112,6 +112,8 @@ every ring that has the required capability.
 
 **R-E2E-SCN-SECRETLESS** (L1+) — When the agent egresses to `fake-github` through the sidecar's credential resource, the upstream **shall** observe an `Authorization` carrying a token the broker minted (not the agent's JWT-SVID), and a call presenting a non-minted token **shall** be rejected `401`. Exercised in-cluster by `spiffe-probe --scenarios=secretless`, which runs a real broker (SO_PEERCRED attestation, `GitHubAppBackend`→`fake-github`, JWKS verifier→`fake-tts`) + a real agentnet proxy that mints a TraT, mints a GitHub token via the broker, and injects it. Cross-references `smol-agents-secretless-egress`. Requires `CapInClusterProbe` (the sidecar listener binds loopback).
 
+**R-E2E-SCN-MEMORY** (L1+) — When an agent calls the `memory-mcp` gateway with its JWT-SVID, it **shall** write and retrieve a document through MCP (the gateway injecting the caller's tenant), and a retriever scoped to another tenant **shall** be denied. Exercised in-cluster by `spiffe-probe --scenarios=memory` against the deployed memory-worker + memory-mcp. Cross-references `smol-agents-memory`. Requires `CapInClusterProbe`.
+
 ## Verification (R-E2E-VRF-*)
 
 **R-E2E-VRF-1** — Every requirement in this document **shall** map to at least one Go test in `test/e2e/fullstack/`. CI **shall** fail if any R-E2E-* ID is unreferenced by tests (a `coverage.go` file maintains the mapping and the CI check parses it).

@@ -1,0 +1,108 @@
+# Memory stack for the R-E2E-SCN-MEMORY scenario: a retrieval worker
+# (vector-inmem + fake embedder) + the memory-mcp gateway, both in insecure
+# transport mode (real SPIFFE identities still drive tenant/policy via the
+# JWT-SVID the probe presents). The retrievers ConfigMap defines a tenant-a
+# retriever the probe is granted, plus a tenant-b retriever it must be denied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memory-retrievers
+  namespace: tenant-a
+data:
+  retrievers.json: |
+    {
+      "tenant-a/kb": {
+        "tenant": "tenant-a",
+        "namespaces": ["kb"],
+        "topK": 5,
+        "quota": { "maxTopK": 50, "requestsPerMinute": 600, "maxWriteBytes": 1048576 },
+        "policy": [
+          { "identity": "spiffe://stigen.ai/ns/tenant-a/", "operations": ["read", "write"], "namespaces": ["kb"] }
+        ]
+      },
+      "tenant-b/kb": {
+        "tenant": "tenant-b",
+        "namespaces": ["kb"],
+        "topK": 5,
+        "policy": [
+          { "identity": "spiffe://stigen.ai/ns/tenant-b/", "operations": ["read", "write"], "namespaces": ["kb"] }
+        ]
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: memory-worker, namespace: tenant-a }
+spec:
+  selector: { app.kubernetes.io/name: memory-worker }
+  ports: [{ name: http, port: 8444, targetPort: 8444 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-worker
+  namespace: tenant-a
+  labels: { app.kubernetes.io/name: memory-worker }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: memory-worker } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: memory-worker }
+    spec:
+      containers:
+        - name: memory-worker
+          image: smol-agents/memory-worker:dev
+          imagePullPolicy: Never
+          args:
+            - "-addr=:8444"
+            - "-backend=vector-inmem"
+            - "-embed-fake-dims=64"
+            - "-identity-mode=insecure"
+          ports: [{ name: http, containerPort: 8444 }]
+          resources:
+            requests: { cpu: "10m", memory: "48Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: memory-mcp, namespace: tenant-a }
+spec:
+  selector: { app.kubernetes.io/name: memory-mcp }
+  ports: [{ name: http, port: 8443, targetPort: 8443 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-mcp
+  namespace: tenant-a
+  labels: { app.kubernetes.io/name: memory-mcp }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: memory-mcp } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: memory-mcp }
+    spec:
+      containers:
+        - name: memory-mcp
+          image: smol-agents/memory-mcp:dev
+          imagePullPolicy: Never
+          args:
+            - "-listen=:8443"
+            - "-worker-url=http://memory-worker.tenant-a.svc.cluster.local:8444"
+            - "-retrievers-config=/etc/memory/retrievers.json"
+            - "-insecure"
+          ports: [{ name: http, containerPort: 8443 }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8443 }
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          volumeMounts:
+            - { name: retrievers, mountPath: /etc/memory, readOnly: true }
+          resources:
+            requests: { cpu: "10m", memory: "48Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+      volumes:
+        - name: retrievers
+          configMap: { name: memory-retrievers }

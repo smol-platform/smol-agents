@@ -50,6 +50,10 @@ func main() {
 	githubURL := flag.String("github-url", "", "fake-github base URL for secretless")
 	ttsURL := flag.String("tts-url", "", "fake-tts base URL for secretless")
 	ttsAud := flag.String("tts-audience", "spiffe://stigen.ai/ns/security/sa/tts", "audience the JWT-SVID subject_token is minted for")
+	memoryMCPURL := flag.String("memory-mcp-url", "", "memory-mcp gateway base URL for the memory scenario")
+	retrieverRef := flag.String("retriever-ref", "", "retrieverRef (ns/name) for the memory scenario")
+	foreignRetrieverRef := flag.String("foreign-retriever-ref", "", "a retriever scoped to ANOTHER tenant; the memory scenario asserts it is denied")
+	mcpAudience := flag.String("mcp-audience", "spiffe://stigen.ai/memory", "JWT-SVID audience for the memory-mcp gateway")
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -82,6 +86,8 @@ func main() {
 			ok = runProxyHTTP(ctx, x509src, jwtSrc, *httpURL, *httpAud)
 		case "secretless":
 			ok = runSecretless(ctx, *socket, *githubURL, *ttsURL, *ttsAud)
+		case "memory":
+			ok = runMemory(ctx, *socket, *memoryMCPURL, *retrieverRef, *foreignRetrieverRef, *mcpAudience)
 		default:
 			fail(s, "unknown scenario")
 			ok = false

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
 	"github.com/stigen/smol-agents/pkg/memory/audit"
 	"github.com/stigen/smol-agents/pkg/memory/mcp"
 	"github.com/stigen/smol-agents/pkg/memory/quota"
@@ -37,6 +39,7 @@ func main() {
 	audience := flag.String("audience", "", "expected JWT-SVID audience (empty=any)")
 	trustDomain := flag.String("trust-domain", "", "expected SPIFFE trust domain (empty=any)")
 	insecure := flag.Bool("insecure", false, "skip JWT signature verification (dev/test only)")
+	retrieversConfig := flag.String("retrievers-config", "", "path to a JSON file mapping retrieverRef -> MemoryRetrieverSpec (dev/e2e until the k8s store lands)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -50,6 +53,22 @@ func main() {
 	// for now we use an env-var-driven fake that can be overridden at test time.
 	// A real k8s implementation is wired here once the operator controller lands.
 	rs := store.NewFakeStore()
+	if *retrieversConfig != "" {
+		raw, err := os.ReadFile(*retrieversConfig)
+		if err != nil {
+			log.Error("read retrievers-config", "err", err)
+			os.Exit(1)
+		}
+		var specs map[string]v1.MemoryRetrieverSpec
+		if err := json.Unmarshal(raw, &specs); err != nil {
+			log.Error("parse retrievers-config", "err", err)
+			os.Exit(1)
+		}
+		for ref, spec := range specs {
+			rs.Add(ref, store.RetrieverInfo{Spec: spec, WorkerURL: *workerURL})
+		}
+		log.Info("loaded retrievers from config", "count", len(specs), "path", *retrieversConfig)
+	}
 
 	// Auth config: production uses JWT bundle validation; --insecure skips sigs.
 	authCfg := mcp.AuthConfig{

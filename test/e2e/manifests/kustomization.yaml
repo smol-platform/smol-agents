@@ -6,4 +6,5 @@ resources:
   - fake-gateway.yaml
   - fake-github.yaml
   - fake-tts.yaml
+  - memory.yaml
   - wg-hub.yaml
