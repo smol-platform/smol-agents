@@ -30,7 +30,6 @@ networks:
 
 volumes:
   spire-data:
-  spire-sockets:
   server-sockets:
 
 services:
@@ -103,7 +102,14 @@ services:
       spire-init:  { condition: service_completed_successfully }
     networks: [e2e_l0]
     volumes:
-      - spire-sockets:/run/spire/agent-sockets:ro
+      # Share the SAME host-bind the spire-agent writes its api.sock into, so
+      # the gateway can fetch its own SVID over the workload API. The agent uses
+      # the host bind (not a named volume); mounting a different volume here
+      # leaves the gateway with no socket -> no SVID -> it resets every mTLS
+      # handshake (EOF). This only surfaces in CI: locally the macOS/OrbStack
+      # host can't dial the socket, so L0 gates CapSPIRE off and the proxy
+      # scenarios skip.
+      - /tmp/smol-agents-e2e-l0-spire-sockets:/run/spire/agent-sockets:ro
     command:
       - "-tcp-addr=:8443"
       - "-http-addr=:8080"
