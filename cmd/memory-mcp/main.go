@@ -26,7 +26,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+
 	v1 "github.com/stigen/smol-agents/pkg/agentmodel/v1"
+	"github.com/stigen/smol-agents/pkg/identity"
+	"github.com/stigen/smol-agents/pkg/memory/api"
 	"github.com/stigen/smol-agents/pkg/memory/audit"
 	"github.com/stigen/smol-agents/pkg/memory/mcp"
 	"github.com/stigen/smol-agents/pkg/memory/quota"
@@ -38,7 +42,8 @@ func main() {
 	workerURL := flag.String("worker-url", "", "base URL of the retrieval worker (required)")
 	audience := flag.String("audience", "", "expected JWT-SVID audience (empty=any)")
 	trustDomain := flag.String("trust-domain", "", "expected SPIFFE trust domain (empty=any)")
-	insecure := flag.Bool("insecure", false, "skip JWT signature verification (dev/test only)")
+	insecure := flag.Bool("insecure", false, "skip JWT signature verification + call worker over plain HTTP (dev/test only)")
+	spireSocket := flag.String("spire-socket", "unix:///run/spire/agent-sockets/api.sock", "SPIRE workload-API socket (used unless --insecure)")
 	retrieversConfig := flag.String("retrievers-config", "", "path to a JSON file mapping retrieverRef -> MemoryRetrieverSpec (dev/e2e until the k8s store lands)")
 	flag.Parse()
 
@@ -70,25 +75,43 @@ func main() {
 		log.Info("loaded retrievers from config", "count", len(specs), "path", *retrieversConfig)
 	}
 
-	// Auth config: production uses JWT bundle validation; --insecure skips sigs.
 	authCfg := mcp.AuthConfig{
 		Audience:    *audience,
 		TrustDomain: *trustDomain,
 	}
-	if *insecure {
-		log.Warn("memory-mcp: running in INSECURE mode — JWT signatures not verified")
-		// BundleSource left nil → ParseInsecure path in auth.go.
-	}
-	// In strict mode the BundleSource would be populated from the SPIRE
-	// workload API (workloadapi.NewJWTSource). That wiring is added when
-	// the operator integration lands (M9).
-
 	gw := &mcp.Gateway{
-		Auth:       authCfg,
 		Retrievers: rs,
 		Quota:      quota.NewEnforcer(),
 		AuditLog:   &audit.SlogLogger{Logger: log},
 	}
+
+	if *insecure {
+		log.Warn("memory-mcp: INSECURE mode — JWT signatures not verified, worker called over plain HTTP")
+		// BundleSource nil → ParseInsecure; default WorkerFactory → plain HTTP.
+	} else {
+		// Secure transport: validate inbound JWT-SVIDs against the SPIRE JWT
+		// bundle (R-MEM-AUTH-1) and call the worker over mTLS with our X509-SVID.
+		src, err := identity.Open(context.Background(), identity.SourceConfig{
+			WorkloadAPIAddr: *spireSocket,
+			BootTimeout:     30 * time.Second,
+			Mode:            identity.ModeStrict,
+		})
+		if err != nil {
+			log.Error("identity source (pass --insecure for dev without SPIRE)", "err", err)
+			os.Exit(1)
+		}
+		defer src.Close()
+		authCfg.BundleSource = src.JWTSource()
+		mtls := &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: tlsconfig.MTLSClientConfig(src.X509Source(), src.X509Source(), tlsconfig.AuthorizeAny()),
+			},
+		}
+		gw.WorkerFactory = func(url string) api.RetrievalService { return api.NewHTTPClient(url, mtls) }
+		log.Info("memory-mcp: secure transport (JWT-SVID validation + mTLS to worker)")
+	}
+	gw.Auth = authCfg
 
 	dispatcher := mcp.NewDispatcher(gw)
 
