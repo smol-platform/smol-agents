@@ -548,8 +548,8 @@ func (g *Gateway) readNamespace(r *http.Request, caller CallerIdentity, ns strin
 	}}}, nil
 }
 
-func (g *Gateway) readRetriever(_ *http.Request, caller CallerIdentity, ref string, start time.Time) (ResourceReadResult, *RPCError) {
-	info, err := g.Retrievers.Get(nil, ref) //nolint:staticcheck // nil ctx is fine for fake
+func (g *Gateway) readRetriever(r *http.Request, caller CallerIdentity, ref string, start time.Time) (ResourceReadResult, *RPCError) {
+	info, err := g.Retrievers.Get(r.Context(), ref)
 	if err != nil {
 		return ResourceReadResult{}, &RPCError{Code: CodeNotFound, Message: "retriever not found: " + ref}
 	}
