@@ -1,0 +1,16 @@
+# Vector memory store backed by pgvector (PostgreSQL with pgvector extension).
+# Backend credentials are broker-resolved — never a literal secret.
+apiVersion: runtime.agents.stigen.ai/v1
+kind: MemoryStore
+metadata:
+  name: prod-vectors
+  namespace: tenant-alpha
+spec:
+  kind: vector
+  driver: pgvector
+  endpoint: pgvector.infra.svc:5432
+  auth:
+    secretName: pgvector-dsn          # broker resolves this at runtime
+  tenancy:
+    model: shared
+    tenantLabelKey: tenant            # column/metadata key for row-level isolation

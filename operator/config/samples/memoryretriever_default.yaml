@@ -1,0 +1,34 @@
+# Default retrieval pipeline: binds to the prod-vectors store, uses OpenAI
+# text-embedding-3 for embedding, deny-by-default access control.
+apiVersion: runtime.agents.stigen.ai/v1
+kind: MemoryRetriever
+metadata:
+  name: prod-knowledge-default
+  namespace: tenant-alpha
+spec:
+  stores:
+    - prod-vectors
+  modelProviderRef: openai-text-embedding-3    # existing ModelProvider CR
+  topK: 10
+  namespaces:
+    - default
+    - docs
+    - code
+  tenant: team-alpha
+  chunking:
+    size: 512
+    overlap: 64
+    strategy: fixed
+  quota:
+    maxTopK: 100
+    requestsPerMinute: 120
+    maxWriteBytes: 1048576    # 1 MiB
+  mutationsTraT: false
+  # Deny-by-default: only listed (identity, op, namespace) tuples are allowed.
+  policy:
+    - identity: spiffe://stigen.ai/ns/agents/sa/coder
+      operations: [read, write]
+      namespaces: [default, code]
+    - identity: spiffe://stigen.ai/ns/agents/sa/researcher
+      operations: [read]
+      namespaces: [default, docs]

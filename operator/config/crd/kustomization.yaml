@@ -11,3 +11,5 @@ resources:
   - runtime.agents.stigen.ai_agentsessions.yaml
   - runtime.agents.stigen.ai_agentpolicies.yaml
   - runtime.agents.stigen.ai_agentnetworks.yaml
+  - runtime.agents.stigen.ai_memorystores.yaml
+  - runtime.agents.stigen.ai_memoryretrievers.yaml

@@ -1,0 +1,272 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: memoryretrievers.runtime.agents.stigen.ai
+spec:
+  group: runtime.agents.stigen.ai
+  names:
+    kind: MemoryRetriever
+    listKind: MemoryRetrieverList
+    plural: memoryretrievers
+    shortNames:
+    - mret
+    singular: memoryretriever
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.stores
+      name: Stores
+      type: string
+    - jsonPath: .spec.modelProviderRef
+      name: Model
+      type: string
+    - jsonPath: .spec.topK
+      name: TopK
+      type: integer
+    - jsonPath: .status.boundWorkers
+      name: Workers
+      type: integer
+    - jsonPath: .status.phase
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          MemoryRetriever declares a named retrieval pipeline that binds one or more
+          MemoryStores, an embedding ModelProvider, access-control policy, and quota.
+          The MCP server resolves a retrieverRef to this CR on each call.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              MemoryRetrieverSpec is the canonical CRD shape for a named retrieval pipeline.
+              Implements R-MEM-API-2.
+            properties:
+              chunking:
+                description: Chunking configures how documents are split before indexing.
+                properties:
+                  overlap:
+                    default: 64
+                    description: Overlap is the number of tokens/characters shared
+                      between adjacent chunks.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  size:
+                    default: 512
+                    description: Size is the maximum chunk size in tokens or characters
+                      (driver-dependent).
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  strategy:
+                    default: fixed
+                    description: 'Strategy selects the chunking algorithm: "fixed"
+                      (default) | "sentence" | "paragraph".'
+                    enum:
+                    - fixed
+                    - sentence
+                    - paragraph
+                    type: string
+                type: object
+              modelProviderRef:
+                description: |-
+                  ModelProviderRef is the name of an existing ModelProvider used for
+                  embedding vectors. Required for vector stores.
+                type: string
+              mount:
+                description: Mount configures filesystem mounting (only meaningful
+                  for kind=filesystem stores).
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled controls whether the AgentFS volume is mounted into agent pods.
+                      When false the filesystem is reachable only over MCP.
+                    type: boolean
+                  mountPath:
+                    default: /var/agentfs
+                    description: MountPath overrides the default /var/agentfs mount
+                      point.
+                    type: string
+                type: object
+              mutationsTraT:
+                description: |-
+                  MutationsTraT, when true, requires a valid Transaction Token (TraT) for
+                  write_memory and delete_memory calls. Implements R-MEM-AUTH-3.
+                type: boolean
+              namespaces:
+                description: |-
+                  Namespaces is the allow-list of memory namespaces this retriever exposes.
+                  If empty, only the default namespace is accessible.
+                items:
+                  type: string
+                type: array
+              policy:
+                description: |-
+                  Policy is the deny-by-default access control list. Only (identity, op, namespace)
+                  tuples explicitly listed here are permitted. Implements R-MEM-AUTH-2.
+                items:
+                  description: |-
+                    MemoryGrant grants a SPIFFE identity the right to perform specific operations
+                    on specific namespaces within a retriever. The policy is deny-by-default:
+                    a call is allowed only when it matches at least one grant.
+                    Implements R-MEM-AUTH-2.
+                  properties:
+                    identity:
+                      description: |-
+                        Identity is the full SPIFFE ID (e.g. spiffe://trust-domain/ns/ns/sa/sa)
+                        or a prefix ending in "/" to match a sub-tree.
+                      type: string
+                    namespaces:
+                      description: |-
+                        Namespaces is the allow-list of memory namespaces this grant applies to.
+                        Use ["*"] to grant access to all namespaces the retriever exposes.
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                    operations:
+                      description: Operations lists the permitted operations for this
+                        identity.
+                      items:
+                        description: MemoryOperation enumerates the operations grantable
+                          in a MemoryGrant.
+                        type: string
+                      minItems: 1
+                      type: array
+                  required:
+                  - identity
+                  - namespaces
+                  - operations
+                  type: object
+                type: array
+              quota:
+                description: Quota declares per-retriever resource limits. Implements
+                  R-MEM-QUOTA-1.
+                properties:
+                  maxTopK:
+                    default: 100
+                    description: MaxTopK is the ceiling for per-call topK; requests
+                      above this are clamped.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxWriteBytes:
+                    description: |-
+                      MaxWriteBytes is the maximum payload size for a single write_memory call.
+                      0 means unlimited. Expressed in bytes.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  requestsPerMinute:
+                    description: |-
+                      RequestsPerMinute caps how many calls a single identity may make.
+                      0 means unlimited.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              stores:
+                description: |-
+                  Stores is the list of MemoryStore names (namespace-local) this retriever
+                  binds to. At least one is required.
+                items:
+                  type: string
+                minItems: 1
+                type: array
+              tenant:
+                description: |-
+                  Tenant scopes this retriever to a single tenant. Derived from SPIFFE
+                  identity at runtime; must match the caller's attested tenant.
+                type: string
+              topK:
+                default: 10
+                description: TopK is the default number of results returned per retrieval.
+                format: int32
+                minimum: 1
+                type: integer
+            required:
+            - stores
+            type: object
+          status:
+            description: MemoryRetrieverStatus is reported by the controller.
+            properties:
+              boundWorkers:
+                description: BoundWorkers is the count of retrieval workers serving
+                  this retriever.
+                format: int32
+                type: integer
+              conditions:
+                description: Conditions follows the standard Kubernetes condition
+                  pattern.
+                items:
+                  description: MemoryCondition is a standard Kubernetes condition
+                    for memory resources.
+                  properties:
+                    lastTransitionTime:
+                      description: LastTransitionTime is when this condition last
+                        changed.
+                      type: string
+                    message:
+                      description: Message is a human-readable elaboration.
+                      type: string
+                    reason:
+                      description: Reason is a CamelCase machine-readable reason string.
+                      type: string
+                    status:
+                      description: Status is "True", "False", or "Unknown".
+                      type: string
+                    type:
+                      description: Type is the condition type (e.g. "Ready", "BackendReachable").
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              message:
+                description: Message is a human-readable elaboration of Reason.
+                type: string
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation the controller
+                  last acted on.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is one of Pending, Ready, Degraded.
+                type: string
+              reason:
+                description: Reason is a machine-readable summary of the current phase.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

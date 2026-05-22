@@ -1,0 +1,30 @@
+# Filesystem retrieval pipeline: backs a coding agent's branchable workspace.
+# The AgentFS volume is mounted into agent pods at /var/agentfs.
+# write_memory / delete_memory require a valid TraT (R-MEM-AUTH-3).
+apiVersion: runtime.agents.stigen.ai/v1
+kind: MemoryRetriever
+metadata:
+  name: coder-workspace
+  namespace: tenant-alpha
+spec:
+  stores:
+    - prod-agentfs
+  topK: 50                              # not used for FS listing, but respected for search
+  namespaces:
+    - workspace
+  tenant: team-alpha
+  mount:
+    enabled: true
+    mountPath: /var/agentfs
+  quota:
+    maxTopK: 200
+    requestsPerMinute: 300
+    maxWriteBytes: 10485760             # 10 MiB per write_memory call
+  mutationsTraT: true                   # writes/deletes require a TraT
+  policy:
+    - identity: spiffe://stigen.ai/ns/agents/sa/coder
+      operations: [read, write, delete]
+      namespaces: [workspace]
+    - identity: spiffe://stigen.ai/ns/agents/sa/reviewer
+      operations: [read]
+      namespaces: [workspace]

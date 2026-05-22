@@ -1,0 +1,33 @@
+# Filesystem memory store backed by Turso AgentFS (SQLite-canonical, branchable).
+# Reuses AgentFSSpec verbatim (sizeGiB, mountPath, backup, restore).
+# S3 backup credentials are broker-resolved via backup.s3.credentialsRef.
+apiVersion: runtime.agents.stigen.ai/v1
+kind: MemoryStore
+metadata:
+  name: prod-agentfs
+  namespace: tenant-alpha
+spec:
+  kind: filesystem
+  driver: agentfs
+  tenancy:
+    model: dedicated                  # each branch is scoped to one agent/tenant
+  agentfs:
+    sizeGiB: 20
+    mountPath: /var/agentfs
+    backup:
+      s3:
+        bucket: agents-agentfs-state
+        prefix: tenant-alpha/
+        region: us-east-2
+        sseAlgorithm: AES256
+        versioning: true
+        credentialsRef:
+          secretName: agentfs-s3-creds    # broker-resolved AWS credentials
+      schedule: "@hourly"
+      walSnapshotInterval: 30s
+      retention:
+        maxVersions: 48
+        minAge: 24h
+    restore:
+      mode: latest
+      ifMissing: fresh
