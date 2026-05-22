@@ -59,14 +59,17 @@ func MapSelector(m map[string]memory.Backend) BackendSelector {
 
 // Worker is a concrete api.RetrievalService.
 type Worker struct {
-	cfg      Config
-	selector BackendSelector
-	embedder Embedder
-	logger   *slog.Logger
+	cfg        Config
+	selector   BackendSelector
+	embedder   Embedder
+	summarizer Summarizer // optional; nil = backend.Summarize only
+	logger     *slog.Logger
 }
 
 // New constructs a Worker. embedder may be nil when no real embedding is
 // needed (text-only retrieval via the fallback scorer in VectorBackend).
+// summarizer may be nil; when non-nil it is used by Summarize to produce
+// LLM-generated summaries over retrieved top-K documents.
 func New(cfg Config, selector BackendSelector, embedder Embedder, logger *slog.Logger) (*Worker, error) {
 	if selector == nil {
 		return nil, fmt.Errorf("worker: BackendSelector is required")
@@ -76,6 +79,12 @@ func New(cfg Config, selector BackendSelector, embedder Embedder, logger *slog.L
 	}
 	return &Worker{cfg: cfg, selector: selector, embedder: embedder, logger: logger}, nil
 }
+
+// WithSummarizer attaches a Summarizer to the Worker, enabling the
+// summarize_memory MCP tool to return LLM-generated summaries. When
+// summarizer is nil the worker falls back to backend.Summarize (which
+// returns ErrNotSupported for all current adapters).
+func (w *Worker) WithSummarizer(s Summarizer) { w.summarizer = s }
 
 // compile-time assertion.
 var _ api.RetrievalService = (*Worker)(nil)
@@ -281,6 +290,10 @@ func (w *Worker) ListNamespaces(ctx context.Context, req *api.ListNamespacesRequ
 
 // ── Summarize ───────────────────────────────────────────────────────────────
 
+// Summarize retrieves the top-K documents matching the query and, when a
+// Summarizer is wired, passes them to the LLM to produce a summary.
+// When no Summarizer is configured it delegates to backend.Summarize (which
+// returns ErrNotSupported for all current adapters).
 func (w *Worker) Summarize(ctx context.Context, req *api.SummarizeRequest) (*api.SummarizeResponse, error) {
 	if err := w.validateIdentity(req.Identity); err != nil {
 		return nil, err
@@ -292,9 +305,34 @@ func (w *Worker) Summarize(ctx context.Context, req *api.SummarizeRequest) (*api
 	}
 
 	filter := filterFrom(req.Identity, memory.Filter{})
-	summary, err := backend.Summarize(ctx, req.Query, filter)
-	if err != nil {
-		return nil, wrapBackend(err)
+
+	// When no Summarizer is attached, fall through to the backend's own
+	// Summarize method (typically ErrNotSupported).
+	if w.summarizer == nil {
+		summary, backendErr := backend.Summarize(ctx, req.Query, filter)
+		if backendErr != nil {
+			return nil, wrapBackend(backendErr)
+		}
+		return &api.SummarizeResponse{Summary: summary}, nil
+	}
+
+	// Retrieve top-K documents and build the document set for the LLM.
+	topK := 10
+	result, retrieveErr := backend.Retrieve(ctx, req.Query, topK, filter)
+	if retrieveErr != nil {
+		return nil, wrapBackend(retrieveErr)
+	}
+
+	texts := make([]string, 0, len(result.Chunks))
+	for _, sc := range result.Chunks {
+		if sc.Chunk.Text != "" {
+			texts = append(texts, sc.Chunk.Text)
+		}
+	}
+
+	summary, summErr := w.summarizer.Summarize(ctx, req.Query, texts)
+	if summErr != nil {
+		return nil, memory.BackendUnavailable("summarizer: " + summErr.Error())
 	}
 	return &api.SummarizeResponse{Summary: summary}, nil
 }
