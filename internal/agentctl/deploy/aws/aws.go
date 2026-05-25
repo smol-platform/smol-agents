@@ -83,6 +83,18 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	ec2c := ec2.NewFromConfig(awsCfg)
 	ssmc := ssm.NewFromConfig(awsCfg)
 
+	// 0. Networking plan: decides whether the SG opens 6443 and what URL the
+	// rewritten kubeconfig will point at after the bootstrap finishes.
+	plan, err := cloud.PlanAPIEndpoint(cloud.APIEndpointInput{
+		CloudflareTunnelToken: o.Common.CloudflareTunnelToken,
+		APIHostname:           o.Common.APIHostname,
+		WireGuardConfig:       o.Common.WireGuardConfig,
+	})
+	if err != nil {
+		return fmt.Errorf("networking plan: %w", err)
+	}
+	fmt.Fprintf(out, "==> Networking plan: mode=%s expose-api=%v\n", plan.Mode, plan.ExposeAPIPublicly)
+
 	// 1. Resolve AMI (caller-supplied or SSM lookup).
 	ami, err := resolveAMI(ctx, ssmc, o.AWS.AMI)
 	if err != nil {
@@ -98,7 +110,7 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	fmt.Fprintf(out, "==> Subnet %s (VPC %s)\n", subnet, vpcID)
 
 	// 3. Find-or-create the security group (tagged for idempotency).
-	sgID, err := ensureSecurityGroup(ctx, ec2c, out, vpcID, o.Common.Name)
+	sgID, err := ensureSecurityGroup(ctx, ec2c, out, vpcID, o.Common.Name, plan.ExposeAPIPublicly)
 	if err != nil {
 		return fmt.Errorf("ensure SG: %w", err)
 	}
@@ -112,6 +124,11 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		SubnetID:     subnet,
 		KeyName:      o.AWS.KeyName,
 		SGID:         sgID,
+		CloudInit: cloud.CloudInitOptions{
+			Hostname:              "agentctl-" + o.Common.Name,
+			CloudflareTunnelToken: o.Common.CloudflareTunnelToken,
+			WireGuardConfig:       plan.WGContent,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("ensure instance: %w", err)
@@ -144,13 +161,18 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	}
 	fmt.Fprintf(out, "==> k0s bootstrap complete\n")
 
-	// 7. Fetch + rewrite the kubeconfig (k0s writes server=localhost:6443).
+	// 7. Fetch + rewrite the kubeconfig. The server URL depends on the
+	// networking plan: CF tunnel hostname (real TLS), WG IP (skip verify),
+	// or the public IP (skip verify).
 	raw, err := cloud.FetchFile(ctx, net.JoinHostPort(publicIP, "22"), sshCfg, cloud.DefaultKubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("fetch kubeconfig: %w", err)
 	}
-	publicURL := fmt.Sprintf("https://%s:6443", publicIP)
-	rewritten, err := cloud.RewriteKubeconfig(raw, publicURL)
+	server, skipVerify, err := plan.FinalizeServer(publicIP)
+	if err != nil {
+		return fmt.Errorf("finalize server: %w", err)
+	}
+	rewritten, err := cloud.RewriteKubeconfig(raw, cloud.KubeconfigRewrite{Server: server, InsecureSkipTLSVerify: skipVerify})
 	if err != nil {
 		return fmt.Errorf("rewrite kubeconfig: %w", err)
 	}
@@ -158,12 +180,17 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	if err != nil {
 		return fmt.Errorf("write kubeconfig: %w", err)
 	}
-	defer func() {
-		_ = os.RemoveAll(kcPath)
-	}()
-	fmt.Fprintf(out, "==> Kubeconfig staged at %s (server=%s)\n", kcPath, publicURL)
+	defer func() { _ = os.RemoveAll(kcPath) }()
+	fmt.Fprintf(out, "==> Kubeconfig staged at %s (server=%s skipVerify=%v)\n", kcPath, server, skipVerify)
 
-	// 8. Delegate to the k8s target with the fetched kubeconfig.
+	// 8. Wait for the API to actually answer via the chosen URL (CF tunnel
+	// can take a few seconds to propagate; WG/public are usually instant).
+	fmt.Fprintf(out, "==> Waiting for API at %s\n", server)
+	if err := cloud.WaitForAPI(ctx, kcPath, 90*time.Second); err != nil {
+		return fmt.Errorf("api not reachable: %w", err)
+	}
+
+	// 9. Delegate to the k8s target with the fetched kubeconfig.
 	k8sOpts := *o
 	k8sOpts.K8s.Kubeconfig = kcPath
 	k8sOpts.K8s.Context = ""
@@ -171,8 +198,9 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		return fmt.Errorf("platform install on %s: %w", *instance.InstanceId, err)
 	}
 
-	fmt.Fprintf(out, "==> aws deploy complete — instance=%s ip=%s\n", *instance.InstanceId, publicIP)
+	fmt.Fprintf(out, "==> aws deploy complete — instance=%s ip=%s mode=%s\n", *instance.InstanceId, publicIP, plan.Mode)
 	fmt.Fprintf(out, "    SSH:        ssh -i %s ec2-user@%s\n", o.AWS.SSHKey, publicIP)
+	fmt.Fprintf(out, "    API:        %s\n", server)
 	fmt.Fprintf(out, "    kubeconfig: keep %s while you use the cluster; agentctl will remove it on exit\n", kcPath)
 	return nil
 }
@@ -276,10 +304,12 @@ func resolveSubnet(ctx context.Context, ec2c *ec2.Client, override string) (stri
 	return *ds.Subnets[0].SubnetId, vpcID, nil
 }
 
-// ensureSecurityGroup finds the tagged SG or creates one allowing SSH + k8s API
-// from anywhere (open is acceptable for an edge deployment; production users
-// should restrict via the AWS console after the fact).
-func ensureSecurityGroup(ctx context.Context, ec2c *ec2.Client, out io.Writer, vpcID, name string) (string, error) {
+// ensureSecurityGroup finds the tagged SG or creates one. SSH (tcp/22) is
+// always open (bootstrap needs it); the k8s API (tcp/6443) is open ONLY when
+// exposeAPI is true — i.e. when neither Cloudflare Tunnel nor WireGuard is
+// configured, since in those cases the API is reachable via the tunnel/mesh
+// instead of a public listener.
+func ensureSecurityGroup(ctx context.Context, ec2c *ec2.Client, out io.Writer, vpcID, name string, exposeAPI bool) (string, error) {
 	existing, err := findSGsByTag(ctx, ec2c, name)
 	if err != nil {
 		return "", err
@@ -289,9 +319,13 @@ func ensureSecurityGroup(ctx context.Context, ec2c *ec2.Client, out io.Writer, v
 	}
 
 	sgName := "agentctl-" + name
+	desc := "agentctl deploy " + name + " — SSH"
+	if exposeAPI {
+		desc += " + k8s API"
+	}
 	cr, err := ec2c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
 		GroupName:   awsv2.String(sgName),
-		Description: awsv2.String("agentctl deploy " + name + " — SSH + k8s API"),
+		Description: awsv2.String(desc),
 		VpcId:       awsv2.String(vpcID),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSecurityGroup,
@@ -304,16 +338,21 @@ func ensureSecurityGroup(ctx context.Context, ec2c *ec2.Client, out io.Writer, v
 	id := *cr.GroupId
 	fmt.Fprintf(out, "==> Created SG %s (%s)\n", id, sgName)
 
+	perms := []ec2types.IpPermission{permission("tcp", 22, "ssh")}
+	if exposeAPI {
+		perms = append(perms, permission("tcp", 6443, "k8s API"))
+	}
 	if _, err := ec2c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
-		GroupId: awsv2.String(id),
-		IpPermissions: []ec2types.IpPermission{
-			permission("tcp", 22, "ssh"),
-			permission("tcp", 6443, "k8s API"),
-		},
+		GroupId:       awsv2.String(id),
+		IpPermissions: perms,
 	}); err != nil {
 		return "", fmt.Errorf("authorize ingress: %w", err)
 	}
-	fmt.Fprintf(out, "    ingress: tcp/22 (ssh) + tcp/6443 (k8s) from 0.0.0.0/0 — restrict via the AWS console after install if needed\n")
+	if exposeAPI {
+		fmt.Fprintf(out, "    ingress: tcp/22 + tcp/6443 from 0.0.0.0/0 — restrict via the AWS console after install if needed\n")
+	} else {
+		fmt.Fprintf(out, "    ingress: tcp/22 only (k8s API reachable via Cloudflare Tunnel / WireGuard)\n")
+	}
 	return id, nil
 }
 
@@ -328,6 +367,7 @@ func permission(proto string, port int32, desc string) ec2types.IpPermission {
 
 type ensureInstanceInput struct {
 	Name, Region, AMI, InstanceType, SubnetID, KeyName, SGID string
+	CloudInit                                                cloud.CloudInitOptions
 }
 
 func ensureInstance(ctx context.Context, ec2c *ec2.Client, out io.Writer, in ensureInstanceInput) (*ec2types.Instance, bool, error) {
@@ -342,7 +382,7 @@ func ensureInstance(ctx context.Context, ec2c *ec2.Client, out io.Writer, in ens
 		}
 	}
 
-	userData, err := cloud.CloudInitScript(cloud.CloudInitOptions{Hostname: "agentctl-" + in.Name})
+	userData, err := cloud.CloudInitScript(in.CloudInit)
 	if err != nil {
 		return nil, false, err
 	}

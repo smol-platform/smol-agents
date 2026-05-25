@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 )
 
 // Target is the contract every deploy backend satisfies. Implementations live
@@ -29,7 +30,9 @@ type Target interface {
 	Teardown(context.Context, *Options) error
 }
 
-// CommonOptions are flags every target accepts.
+// CommonOptions are flags every target accepts. The networking fields below
+// apply to provisioning targets (aws, hetzner, baremetal) — k8s target ignores
+// them.
 type CommonOptions struct {
 	Name         string    // logical release name (default: smol-agents)
 	TrustDomain  string    // SPIFFE trust domain (default: smol-agents.ai)
@@ -40,6 +43,24 @@ type CommonOptions struct {
 	Teardown     bool      // remove the deployment instead of installing
 	DryRun       bool      // render + validate, no cluster changes
 	Out          io.Writer // progress sink (stderr)
+
+	// CloudflareTunnelToken, when set, installs cloudflared on the
+	// provisioned host pointing at https://127.0.0.1:6443. The user is
+	// responsible for configuring the tunnel + ingress hostname in
+	// Cloudflare beforehand and passing the matching token here.
+	// Mutually compatible with WireGuardConfig (a node can hold both).
+	CloudflareTunnelToken string
+
+	// APIHostname is the public hostname configured for the Cloudflare
+	// tunnel (e.g. "k8s.example.com"). Required iff CloudflareTunnelToken
+	// is set: the deploy rewrites the kubeconfig to this hostname.
+	APIHostname string
+
+	// WireGuardConfig is the path to a wg-quick config file (wg0.conf) on
+	// the local machine. The deploy uploads its contents via cloud-init,
+	// installs wireguard-tools, brings up wg0, and rewrites the
+	// kubeconfig to the [Interface] Address.
+	WireGuardConfig string
 }
 
 // K8sOptions are the --target=k8s flags.
@@ -95,6 +116,9 @@ func Run(ctx context.Context, target Target, o *Options) error {
 	if o == nil || o.Common.Out == nil {
 		return fmt.Errorf("deploy: Options.Common.Out is required")
 	}
+	if err := validateCommon(&o.Common); err != nil {
+		return fmt.Errorf("deploy(%s): %w", target.Name(), err)
+	}
 	if err := target.Validate(o); err != nil {
 		return fmt.Errorf("deploy(%s): %w", target.Name(), err)
 	}
@@ -102,4 +126,19 @@ func Run(ctx context.Context, target Target, o *Options) error {
 		return target.Teardown(ctx, o)
 	}
 	return target.Deploy(ctx, o)
+}
+
+// validateCommon enforces the cross-target invariants on networking flags:
+// CloudflareTunnelToken and APIHostname must be set together; WireGuardConfig
+// (if set) must point at a readable file.
+func validateCommon(c *CommonOptions) error {
+	if (c.CloudflareTunnelToken == "") != (c.APIHostname == "") {
+		return fmt.Errorf("--cloudflare-tunnel-token and --api-hostname must be set together")
+	}
+	if c.WireGuardConfig != "" {
+		if _, err := os.Stat(c.WireGuardConfig); err != nil {
+			return fmt.Errorf("--wireguard-config %s: %w", c.WireGuardConfig, err)
+		}
+	}
+	return nil
 }

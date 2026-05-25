@@ -66,6 +66,18 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 
 	client := hcloud.NewClient(hcloud.WithToken(os.Getenv(o.Hetzner.TokenEnv)))
 
+	// 0. Networking plan: decides whether the firewall opens 6443 and what URL
+	// the rewritten kubeconfig will point at after bootstrap.
+	plan, err := cloud.PlanAPIEndpoint(cloud.APIEndpointInput{
+		CloudflareTunnelToken: o.Common.CloudflareTunnelToken,
+		APIHostname:           o.Common.APIHostname,
+		WireGuardConfig:       o.Common.WireGuardConfig,
+	})
+	if err != nil {
+		return fmt.Errorf("networking plan: %w", err)
+	}
+	fmt.Fprintf(out, "==> Networking plan: mode=%s expose-api=%v\n", plan.Mode, plan.ExposeAPIPublicly)
+
 	// 1. Ensure the SSH key (find by label or upload).
 	pubKey, err := derivePublicKey(o.Hetzner.SSHKey)
 	if err != nil {
@@ -76,8 +88,8 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		return fmt.Errorf("ensure ssh key: %w", err)
 	}
 
-	// 2. Ensure the firewall (SSH + k8s API ingress).
-	fw, err := ensureFirewall(ctx, client, out, o.Common.Name)
+	// 2. Ensure the firewall (SSH always; k8s API only when public).
+	fw, err := ensureFirewall(ctx, client, out, o.Common.Name, plan.ExposeAPIPublicly)
 	if err != nil {
 		return fmt.Errorf("ensure firewall: %w", err)
 	}
@@ -90,6 +102,11 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		Location:   o.Hetzner.Location,
 		SSHKey:     sshKey,
 		Firewall:   fw,
+		CloudInit: cloud.CloudInitOptions{
+			Hostname:              "agentctl-" + o.Common.Name,
+			CloudflareTunnelToken: o.Common.CloudflareTunnelToken,
+			WireGuardConfig:       plan.WGContent,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("ensure server: %w", err)
@@ -118,13 +135,16 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	}
 	fmt.Fprintf(out, "==> k0s bootstrap complete\n")
 
-	// 5. Fetch + rewrite the kubeconfig.
+	// 5. Fetch + rewrite the kubeconfig. Server URL depends on the plan.
 	raw, err := cloud.FetchFile(ctx, net.JoinHostPort(publicIP, "22"), sshCfg, cloud.DefaultKubeconfigPath)
 	if err != nil {
 		return fmt.Errorf("fetch kubeconfig: %w", err)
 	}
-	publicURL := fmt.Sprintf("https://%s:6443", publicIP)
-	rewritten, err := cloud.RewriteKubeconfig(raw, publicURL)
+	server, skipVerify, err := plan.FinalizeServer(publicIP)
+	if err != nil {
+		return fmt.Errorf("finalize server: %w", err)
+	}
+	rewritten, err := cloud.RewriteKubeconfig(raw, cloud.KubeconfigRewrite{Server: server, InsecureSkipTLSVerify: skipVerify})
 	if err != nil {
 		return fmt.Errorf("rewrite kubeconfig: %w", err)
 	}
@@ -133,9 +153,15 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		return fmt.Errorf("write kubeconfig: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(kcPath) }()
-	fmt.Fprintf(out, "==> Kubeconfig staged at %s (server=%s)\n", kcPath, publicURL)
+	fmt.Fprintf(out, "==> Kubeconfig staged at %s (server=%s skipVerify=%v)\n", kcPath, server, skipVerify)
 
-	// 6. Delegate to the k8s target.
+	// 6. Wait for the API at the chosen URL (CF tunnel propagation).
+	fmt.Fprintf(out, "==> Waiting for API at %s\n", server)
+	if err := cloud.WaitForAPI(ctx, kcPath, 90*time.Second); err != nil {
+		return fmt.Errorf("api not reachable: %w", err)
+	}
+
+	// 7. Delegate to the k8s target.
 	k8sOpts := *o
 	k8sOpts.K8s.Kubeconfig = kcPath
 	k8sOpts.K8s.Context = ""
@@ -143,8 +169,9 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		return fmt.Errorf("platform install on server %d: %w", srv.ID, err)
 	}
 
-	fmt.Fprintf(out, "==> hetzner deploy complete — server=%d ip=%s\n", srv.ID, publicIP)
+	fmt.Fprintf(out, "==> hetzner deploy complete — server=%d ip=%s mode=%s\n", srv.ID, publicIP, plan.Mode)
 	fmt.Fprintf(out, "    SSH:        ssh -i %s root@%s\n", o.Hetzner.SSHKey, publicIP)
+	fmt.Fprintf(out, "    API:        %s\n", server)
 	fmt.Fprintf(out, "    kubeconfig: keep %s while you use the cluster; agentctl will remove it on exit\n", kcPath)
 	return nil
 }
@@ -215,7 +242,7 @@ func ensureSSHKey(ctx context.Context, c *hcloud.Client, out io.Writer, name, pu
 	return created, nil
 }
 
-func ensureFirewall(ctx context.Context, c *hcloud.Client, out io.Writer, name string) (*hcloud.Firewall, error) {
+func ensureFirewall(ctx context.Context, c *hcloud.Client, out io.Writer, name string, exposeAPI bool) (*hcloud.Firewall, error) {
 	fws, err := c.Firewall.AllWithOpts(ctx, hcloud.FirewallListOpts{ListOpts: hcloud.ListOpts{LabelSelector: labelKey + "=" + name}})
 	if err != nil {
 		return nil, err
@@ -224,18 +251,23 @@ func ensureFirewall(ctx context.Context, c *hcloud.Client, out io.Writer, name s
 		return fws[0], nil
 	}
 	fwName := "agentctl-" + name
+	rules := []hcloud.FirewallRule{fwIngressTCP("22", "ssh")}
+	if exposeAPI {
+		rules = append(rules, fwIngressTCP("6443", "k8s API"))
+	}
 	res, _, err := c.Firewall.Create(ctx, hcloud.FirewallCreateOpts{
 		Name:   fwName,
 		Labels: map[string]string{labelKey: name},
-		Rules: []hcloud.FirewallRule{
-			fwIngressTCP("22", "ssh"),
-			fwIngressTCP("6443", "k8s API"),
-		},
+		Rules:  rules,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create firewall: %w", err)
 	}
-	fmt.Fprintf(out, "==> Created firewall %d (%s) — ingress: tcp/22 + tcp/6443 from 0.0.0.0/0,::/0\n", res.Firewall.ID, fwName)
+	if exposeAPI {
+		fmt.Fprintf(out, "==> Created firewall %d (%s) — ingress: tcp/22 + tcp/6443 from 0.0.0.0/0,::/0\n", res.Firewall.ID, fwName)
+	} else {
+		fmt.Fprintf(out, "==> Created firewall %d (%s) — ingress: tcp/22 only (k8s API via tunnel/mesh)\n", res.Firewall.ID, fwName)
+	}
 	return res.Firewall, nil
 }
 
@@ -255,6 +287,7 @@ type ensureServerInput struct {
 	Name, ServerType, Image, Location string
 	SSHKey                            *hcloud.SSHKey
 	Firewall                          *hcloud.Firewall
+	CloudInit                         cloud.CloudInitOptions
 }
 
 func ensureServer(ctx context.Context, c *hcloud.Client, out io.Writer, in ensureServerInput) (*hcloud.Server, bool, error) {
@@ -268,7 +301,7 @@ func ensureServer(ctx context.Context, c *hcloud.Client, out io.Writer, in ensur
 		}
 	}
 
-	userData, err := cloud.CloudInitScript(cloud.CloudInitOptions{Hostname: "agentctl-" + in.Name})
+	userData, err := cloud.CloudInitScript(in.CloudInit)
 	if err != nil {
 		return nil, false, err
 	}

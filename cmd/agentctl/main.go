@@ -117,6 +117,14 @@ func cmdDeploy(args []string) int {
 	teardown := fs.Bool("teardown", false, "remove the deployment instead of installing")
 	dryRun := fs.Bool("dry-run", false, "render + validate, no cluster changes")
 
+	// shared networking (applies to aws / hetzner / baremetal):
+	cfTunnelToken := fs.String("cloudflare-tunnel-token", os.Getenv("CLOUDFLARE_TUNNEL_TOKEN"),
+		"Cloudflare Tunnel token (or $CLOUDFLARE_TUNNEL_TOKEN); installs cloudflared on the host")
+	apiHostname := fs.String("api-hostname", "",
+		"public hostname the Cloudflare Tunnel exposes the k8s API at (required with --cloudflare-tunnel-token)")
+	wireguardConfig := fs.String("wireguard-config", "",
+		"path to a wg-quick config; the host joins the WG mesh and the kubeconfig points at the WG address")
+
 	// target=k8s
 	kubeconfig := fs.String("kubeconfig", "", "kubeconfig path (default: $KUBECONFIG or ~/.kube/config)")
 	kctx := fs.String("context", "", "kubeconfig context (default: current-context)")
@@ -169,15 +177,18 @@ func cmdDeploy(args []string) int {
 
 	opts := &deploy.Options{
 		Common: deploy.CommonOptions{
-			Name:         *name,
-			TrustDomain:  *trustDomain,
-			OperatorImg:  *operatorImg,
-			ManifestsDir: *manifestsDir,
-			WithWebhooks: *withWebhooks,
-			Sample:       *sample,
-			Teardown:     *teardown,
-			DryRun:       *dryRun,
-			Out:          os.Stderr,
+			Name:                  *name,
+			TrustDomain:           *trustDomain,
+			OperatorImg:           *operatorImg,
+			ManifestsDir:          *manifestsDir,
+			WithWebhooks:          *withWebhooks,
+			Sample:                *sample,
+			Teardown:              *teardown,
+			DryRun:                *dryRun,
+			Out:                   os.Stderr,
+			CloudflareTunnelToken: *cfTunnelToken,
+			APIHostname:           *apiHostname,
+			WireGuardConfig:       *wireguardConfig,
 		},
 		K8s: deploy.K8sOptions{
 			Kubeconfig: *kubeconfig, Context: *kctx,

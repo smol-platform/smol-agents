@@ -1,10 +1,7 @@
 // Package cloud contains the bits shared by every provisioning target
-// (currently aws + hetzner): the k0s cloud-init script, an SSH bootstrap
-// client, and kubeconfig rewriting.
-//
-// V1 ships a single-node k0s edge per target. Kata + devmapper is intentionally
-// out of scope here — the hardened recipes for that live under
-// scripts/aws-l2/cloud-init-*.tmpl and are a follow-up integration.
+// (aws + hetzner today; baremetal next): the k0s cloud-init script, an SSH
+// bootstrap client, kubeconfig rewriting, and host-level networking add-ons
+// (Cloudflare Tunnel + WireGuard).
 package cloud
 
 import (
@@ -14,17 +11,19 @@ import (
 )
 
 // CloudInitScript renders the user-data shell script that brings k0s up on a
-// fresh host. The script:
-//   - installs k0s via the upstream installer (OS-agnostic),
-//   - registers a single-node controller (controller + worker on the same host),
-//   - starts the service and waits until the k8s API answers,
-//   - writes the kubeconfig under /root/admin.conf with mode 0600,
-//   - drops a SENTINEL file so the deploy driver knows when to fetch.
+// fresh host and (optionally) joins the host to a private network so its k8s
+// API isn't exposed publicly.
 //
-// The output is a `#!/bin/bash` script suitable as user-data for both AWS EC2
-// (UserData) and Hetzner Cloud (UserData). The script is intentionally idempotent
-// for "rerun-after-reboot" but cloud-init's runcmd only fires once per boot —
-// the idempotence is defensive, not load-bearing.
+// Composition order (deliberate):
+//  1. WireGuard install + wg-quick@wg0 (so the API is reachable via the WG IP
+//     by the time clients try).
+//  2. k0s install + start; wait for readyz.
+//  3. Cloudflare Tunnel install (cloudflared) after k0s is up: cloudflared
+//     dials https://127.0.0.1:6443, so starting it earlier would just retry.
+//  4. Sentinel file the deploy driver polls.
+//
+// Output is a #!/bin/bash script suitable as user-data for both AWS EC2 and
+// Hetzner Cloud.
 func CloudInitScript(opts CloudInitOptions) (string, error) {
 	if opts.SentinelPath == "" {
 		opts.SentinelPath = DefaultSentinelPath
@@ -32,19 +31,44 @@ func CloudInitScript(opts CloudInitOptions) (string, error) {
 	if opts.KubeconfigPath == "" {
 		opts.KubeconfigPath = DefaultKubeconfigPath
 	}
+	// Pre-quote the CF token: it's interpolated as a single shell argument,
+	// and even though current CF tokens are alphanumeric/+/=, the template
+	// shouldn't be load-bearing for that assumption.
+	quotedToken := ""
+	if opts.CloudflareTunnelToken != "" {
+		quotedToken = shellQuote(opts.CloudflareTunnelToken)
+	}
+	type tdata struct {
+		CloudInitOptions
+		QuotedCloudflareToken string
+	}
 	var buf bytes.Buffer
-	if err := cloudInitTmpl.Execute(&buf, opts); err != nil {
+	if err := cloudInitTmpl.Execute(&buf, tdata{opts, quotedToken}); err != nil {
 		return "", fmt.Errorf("render cloud-init: %w", err)
 	}
 	return buf.String(), nil
 }
 
-// CloudInitOptions tunes the rendered script. Most callers can leave the
-// defaults — only Hostname is usually set.
+// CloudInitOptions tunes the rendered script.
 type CloudInitOptions struct {
-	Hostname       string // optional; sets the node hostname pre-install
-	SentinelPath   string // default: DefaultSentinelPath
-	KubeconfigPath string // default: DefaultKubeconfigPath
+	// Hostname: optional; sets node hostname pre-install.
+	Hostname string
+
+	// SentinelPath: defaults to DefaultSentinelPath.
+	SentinelPath string
+
+	// KubeconfigPath: defaults to DefaultKubeconfigPath.
+	KubeconfigPath string
+
+	// CloudflareTunnelToken: non-empty -> install cloudflared as a systemd
+	// service with this tunnel token (user must have configured the tunnel
+	// with an ingress to https://localhost:6443 in the Cloudflare dashboard).
+	CloudflareTunnelToken string
+
+	// WireGuardConfig: non-empty -> install wireguard-tools and write this
+	// content verbatim to /etc/wireguard/wg0.conf; enable wg-quick@wg0.
+	// Must not contain the literal heredoc delimiter "AGENTCTL_WG_EOF".
+	WireGuardConfig string
 }
 
 const (
@@ -52,9 +76,7 @@ const (
 	// know k0s is up and the kubeconfig is fetchable.
 	DefaultSentinelPath = "/var/lib/k0s/READY"
 
-	// DefaultKubeconfigPath is where k0s' admin.conf is copied to. The
-	// driver SSH-reads this file and rewrites the server URL with the
-	// instance's public IP.
+	// DefaultKubeconfigPath is where k0s' admin.conf is copied.
 	DefaultKubeconfigPath = "/root/admin.conf"
 )
 
@@ -67,25 +89,41 @@ exec > >(tee /var/log/agentctl-bootstrap.log) 2>&1
 hostnamectl set-hostname {{ .Hostname }}
 {{- end }}
 
-# Wait for the network to settle; cloud-init kicks off very early on some images.
+# Network warmup.
 for i in $(seq 1 30); do
   if curl -sSf -o /dev/null https://get.k0s.sh; then break; fi
   sleep 2
 done
 
-# Install the k0s binary + systemd unit (OS-agnostic; auto-detects arch).
+{{- if .WireGuardConfig }}
+
+# WireGuard — bring up the mesh before k0s so the API is reachable on wg0.
+if command -v dnf >/dev/null 2>&1; then
+  dnf install -y wireguard-tools iproute
+elif command -v apt-get >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard wireguard-tools iproute2
+else
+  echo "unsupported distro: install wireguard-tools manually" >&2; exit 1
+fi
+install -d -m 0700 /etc/wireguard
+cat > /etc/wireguard/wg0.conf <<'AGENTCTL_WG_EOF'
+{{ .WireGuardConfig }}
+AGENTCTL_WG_EOF
+chmod 600 /etc/wireguard/wg0.conf
+systemctl enable --now wg-quick@wg0
+{{- end }}
+
+# Install k0s (OS-agnostic; auto-detects arch).
 if ! command -v k0s >/dev/null 2>&1; then
   curl -sSLf https://get.k0s.sh | sh
 fi
-
-# Single-node controller = controller + worker on the same host. Idempotent.
 if ! systemctl is-enabled k0scontroller >/dev/null 2>&1; then
   k0s install controller --single
 fi
 systemctl enable --now k0scontroller
 
-# Wait for the kube-apiserver to answer locally (admin.conf appears slightly
-# later than systemd Active=running).
+# Wait for the API to answer.
 for i in $(seq 1 120); do
   if [ -f /var/lib/k0s/pki/admin.conf ] && k0s kubectl get --raw=/readyz >/dev/null 2>&1; then
     break
@@ -96,7 +134,21 @@ done
 install -m 0600 /var/lib/k0s/pki/admin.conf {{ .KubeconfigPath }}
 chown root:root {{ .KubeconfigPath }}
 
-# Sentinel: the deploy driver polls 'test -f' on this path over SSH.
+{{- if .CloudflareTunnelToken }}
+
+# Cloudflare Tunnel — install cloudflared after k0s is up (origin = 127.0.0.1:6443).
+arch=$(uname -m)
+case "$arch" in
+  x86_64)        cfarch=amd64 ;;
+  aarch64|arm64) cfarch=arm64 ;;
+  *) echo "unsupported arch for cloudflared: $arch" >&2; exit 1 ;;
+esac
+curl -fsSLo /usr/local/bin/cloudflared \
+  "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cfarch}"
+chmod +x /usr/local/bin/cloudflared
+cloudflared service install {{ .QuotedCloudflareToken }}
+{{- end }}
+
 touch {{ .SentinelPath }}
 echo "agentctl bootstrap complete at $(date -u +%FT%TZ)"
 `))
