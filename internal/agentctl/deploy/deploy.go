@@ -61,6 +61,17 @@ type CommonOptions struct {
 	// installs wireguard-tools, brings up wg0, and rewrites the
 	// kubeconfig to the [Interface] Address.
 	WireGuardConfig string
+
+	// TailscaleAuthKey, when set, installs Tailscale on the provisioned host
+	// and runs `tailscale up` with this key. The deploy reads the assigned
+	// tailnet IP back over SSH and points the kubeconfig at it. Prefer an
+	// ephemeral key so teardown de-registers the node. Secret: never logged.
+	TailscaleAuthKey string
+
+	// TailscaleTags is an optional comma-separated set of ACL tags advertised
+	// via `tailscale up --advertise-tags` (e.g. "tag:k8s"). Required when the
+	// auth key is tagged; ignored without TailscaleAuthKey.
+	TailscaleTags string
 }
 
 // K8sOptions are the --target=k8s flags.
@@ -139,6 +150,9 @@ func validateCommon(c *CommonOptions) error {
 		if _, err := os.Stat(c.WireGuardConfig); err != nil {
 			return fmt.Errorf("--wireguard-config %s: %w", c.WireGuardConfig, err)
 		}
+	}
+	if c.TailscaleTags != "" && c.TailscaleAuthKey == "" {
+		return fmt.Errorf("--tailscale-tags requires --tailscale-auth-key")
 	}
 	return nil
 }

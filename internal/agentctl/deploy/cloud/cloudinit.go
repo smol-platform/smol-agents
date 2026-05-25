@@ -17,10 +17,12 @@ import (
 // Composition order (deliberate):
 //  1. WireGuard install + wg-quick@wg0 (so the API is reachable via the WG IP
 //     by the time clients try).
-//  2. k0s install + start; wait for readyz.
-//  3. Cloudflare Tunnel install (cloudflared) after k0s is up: cloudflared
+//  2. Tailscale install + `tailscale up` (mesh join before k0s; the node's
+//     tailnet IP is then stable for the deploy driver to read back).
+//  3. k0s install + start; wait for readyz.
+//  4. Cloudflare Tunnel install (cloudflared) after k0s is up: cloudflared
 //     dials https://127.0.0.1:6443, so starting it earlier would just retry.
-//  4. Sentinel file the deploy driver polls.
+//  5. Sentinel file the deploy driver polls.
 //
 // Output is a #!/bin/bash script suitable as user-data for both AWS EC2 and
 // Hetzner Cloud.
@@ -31,19 +33,28 @@ func CloudInitScript(opts CloudInitOptions) (string, error) {
 	if opts.KubeconfigPath == "" {
 		opts.KubeconfigPath = DefaultKubeconfigPath
 	}
-	// Pre-quote the CF token: it's interpolated as a single shell argument,
-	// and even though current CF tokens are alphanumeric/+/=, the template
-	// shouldn't be load-bearing for that assumption.
+	// Pre-quote secrets/args: each is interpolated as a single shell argument.
+	// Even though current CF tokens / Tailscale keys are alphanumeric, the
+	// template shouldn't be load-bearing for that assumption.
 	quotedToken := ""
 	if opts.CloudflareTunnelToken != "" {
 		quotedToken = shellQuote(opts.CloudflareTunnelToken)
 	}
+	quotedTSKey, quotedTSTags := "", ""
+	if opts.TailscaleAuthKey != "" {
+		quotedTSKey = shellQuote(opts.TailscaleAuthKey)
+	}
+	if opts.TailscaleTags != "" {
+		quotedTSTags = shellQuote(opts.TailscaleTags)
+	}
 	type tdata struct {
 		CloudInitOptions
-		QuotedCloudflareToken string
+		QuotedCloudflareToken  string
+		QuotedTailscaleAuthKey string
+		QuotedTailscaleTags    string
 	}
 	var buf bytes.Buffer
-	if err := cloudInitTmpl.Execute(&buf, tdata{opts, quotedToken}); err != nil {
+	if err := cloudInitTmpl.Execute(&buf, tdata{opts, quotedToken, quotedTSKey, quotedTSTags}); err != nil {
 		return "", fmt.Errorf("render cloud-init: %w", err)
 	}
 	return buf.String(), nil
@@ -69,6 +80,17 @@ type CloudInitOptions struct {
 	// content verbatim to /etc/wireguard/wg0.conf; enable wg-quick@wg0.
 	// Must not contain the literal heredoc delimiter "AGENTCTL_WG_EOF".
 	WireGuardConfig string
+
+	// TailscaleAuthKey: non-empty -> install Tailscale and run `tailscale up`
+	// with this auth key, joining the host to the tailnet. Prefer an ephemeral
+	// auth key so the node de-registers automatically on teardown. Secret:
+	// interpolated shell-quoted and never logged.
+	TailscaleAuthKey string
+
+	// TailscaleTags: optional comma-separated ACL tags (e.g. "tag:k8s")
+	// advertised via `tailscale up --advertise-tags`. Required when the auth
+	// key is tagged. Ignored unless TailscaleAuthKey is set.
+	TailscaleTags string
 }
 
 const (
@@ -112,6 +134,15 @@ cat > /etc/wireguard/wg0.conf <<'AGENTCTL_WG_EOF'
 AGENTCTL_WG_EOF
 chmod 600 /etc/wireguard/wg0.conf
 systemctl enable --now wg-quick@wg0
+{{- end }}
+
+{{- if .TailscaleAuthKey }}
+
+# Tailscale — join the tailnet before k0s so the API is reachable on the
+# tailnet IP. The install script auto-detects the distro and starts tailscaled.
+curl -fsSL https://tailscale.com/install.sh | sh
+systemctl enable --now tailscaled
+tailscale up --authkey {{ .QuotedTailscaleAuthKey }}{{ if .Hostname }} --hostname {{ .Hostname }}{{ end }}{{ if .TailscaleTags }} --advertise-tags {{ .QuotedTailscaleTags }}{{ end }}
 {{- end }}
 
 # Install k0s (OS-agnostic; auto-detects arch).

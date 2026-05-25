@@ -124,6 +124,10 @@ func cmdDeploy(args []string) int {
 		"public hostname the Cloudflare Tunnel exposes the k8s API at (required with --cloudflare-tunnel-token)")
 	wireguardConfig := fs.String("wireguard-config", "",
 		"path to a wg-quick config; the host joins the WG mesh and the kubeconfig points at the WG address")
+	tailscaleAuthKey := fs.String("tailscale-auth-key", os.Getenv("TAILSCALE_AUTH_KEY"),
+		"Tailscale auth key (tskey-auth-…; or $TAILSCALE_AUTH_KEY); joins the host to your tailnet and points the kubeconfig at its tailnet IP")
+	tailscaleTags := fs.String("tailscale-tags", "",
+		"comma-separated Tailscale ACL tags to advertise (e.g. tag:k8s); required if the auth key is tagged")
 
 	// target=k8s
 	kubeconfig := fs.String("kubeconfig", "", "kubeconfig path (default: $KUBECONFIG or ~/.kube/config)")
@@ -188,6 +192,8 @@ func cmdDeploy(args []string) int {
 			Out:                   os.Stderr,
 			CloudflareTunnelToken: *cfTunnelToken,
 			APIHostname:           *apiHostname,
+			TailscaleAuthKey:      *tailscaleAuthKey,
+			TailscaleTags:         *tailscaleTags,
 			WireGuardConfig:       *wireguardConfig,
 		},
 		K8s: deploy.K8sOptions{

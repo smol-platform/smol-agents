@@ -71,6 +71,7 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	plan, err := cloud.PlanAPIEndpoint(cloud.APIEndpointInput{
 		CloudflareTunnelToken: o.Common.CloudflareTunnelToken,
 		APIHostname:           o.Common.APIHostname,
+		TailscaleAuthKey:      o.Common.TailscaleAuthKey,
 		WireGuardConfig:       o.Common.WireGuardConfig,
 	})
 	if err != nil {
@@ -105,6 +106,8 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		CloudInit: cloud.CloudInitOptions{
 			Hostname:              "agentctl-" + o.Common.Name,
 			CloudflareTunnelToken: o.Common.CloudflareTunnelToken,
+			TailscaleAuthKey:      o.Common.TailscaleAuthKey,
+			TailscaleTags:         o.Common.TailscaleTags,
 			WireGuardConfig:       plan.WGContent,
 		},
 	})
@@ -140,7 +143,19 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	if err != nil {
 		return fmt.Errorf("fetch kubeconfig: %w", err)
 	}
-	server, skipVerify, err := plan.FinalizeServer(publicIP)
+	// For tailscale the API address is the tailnet IP assigned at join time;
+	// read it back over the same SSH hop. Every other mode uses publicIP (or
+	// ignores it — CF/WG carry their own address in the plan).
+	endpointAddr := publicIP
+	if plan.Mode == "tailscale" {
+		tsIP, err := cloud.FetchTailscaleIPv4(ctx, net.JoinHostPort(publicIP, "22"), sshCfg)
+		if err != nil {
+			return fmt.Errorf("resolve tailscale ip: %w", err)
+		}
+		fmt.Fprintf(out, "==> Tailscale address %s\n", tsIP)
+		endpointAddr = tsIP
+	}
+	server, skipVerify, err := plan.FinalizeServer(endpointAddr)
 	if err != nil {
 		return fmt.Errorf("finalize server: %w", err)
 	}

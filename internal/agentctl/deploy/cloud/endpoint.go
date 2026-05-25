@@ -8,6 +8,7 @@ import "fmt"
 type APIEndpointInput struct {
 	CloudflareTunnelToken string
 	APIHostname           string // required iff CloudflareTunnelToken is set
+	TailscaleAuthKey      string // non-empty -> join tailnet; endpoint is the tailnet IP
 	WireGuardConfig       string // path to wg-quick config; loaded here
 }
 
@@ -15,7 +16,7 @@ type APIEndpointInput struct {
 // It carries the WG content to embed in cloud-init, the wg-side address (if
 // known), and whether the SG/firewall must expose tcp/6443 publicly.
 type APIPlan struct {
-	Mode              string // "cloudflare" | "wireguard" | "public"
+	Mode              string // "cloudflare" | "tailscale" | "wireguard" | "public"
 	WGContent         string // wg0.conf body to embed in cloud-init (or "")
 	WGAddress         string // [Interface] Address of the wg node (or "")
 	APIHostname       string // copy of input for FinalizeServer
@@ -34,11 +35,20 @@ func PlanAPIEndpoint(in APIEndpointInput) (APIPlan, error) {
 		}
 		wgContent, wgAddr = c, a
 	}
+	// Precedence: cloudflare (explicit hostname, real TLS) > tailscale > wireguard
+	// > public. The mesh/tunnel modes all keep tcp/6443 off the public internet.
 	switch {
 	case in.CloudflareTunnelToken != "":
 		return APIPlan{
 			Mode: "cloudflare", APIHostname: in.APIHostname,
 			WGContent: wgContent, WGAddress: wgAddr,
+			ExposeAPIPublicly: false,
+		}, nil
+	case in.TailscaleAuthKey != "":
+		// The tailnet IP is assigned at join time; FinalizeServer takes it as
+		// the addr resolved post-provision (see aws/hetzner Deploy).
+		return APIPlan{
+			Mode: "tailscale", WGContent: wgContent, WGAddress: wgAddr,
 			ExposeAPIPublicly: false,
 		}, nil
 	case wgAddr != "":
@@ -52,19 +62,28 @@ func PlanAPIEndpoint(in APIEndpointInput) (APIPlan, error) {
 }
 
 // FinalizeServer returns the kubeconfig server URL + InsecureSkipTLSVerify
-// after the deploy knows the public IPv4. publicIP is required only when the
-// plan is "public" (it's unused for the cloudflare + wireguard modes).
-func (p APIPlan) FinalizeServer(publicIP string) (server string, skipVerify bool, err error) {
+// once the deploy knows the address the API is reachable at. addr is the
+// address the caller resolved post-provision:
+//   - mode=public:    the public IPv4 (required).
+//   - mode=tailscale: the tailnet IPv4 read back over SSH (required).
+//   - mode=cloudflare: ignored (uses APIHostname).
+//   - mode=wireguard:  ignored (uses WGAddress from the config).
+func (p APIPlan) FinalizeServer(addr string) (server string, skipVerify bool, err error) {
 	switch p.Mode {
 	case "cloudflare":
 		return "https://" + p.APIHostname, false, nil
 	case "wireguard":
 		return "https://" + p.WGAddress + ":6443", true, nil
+	case "tailscale":
+		if addr == "" {
+			return "", false, fmt.Errorf("FinalizeServer: tailnet addr required for mode=tailscale")
+		}
+		return "https://" + addr + ":6443", true, nil
 	case "public":
-		if publicIP == "" {
+		if addr == "" {
 			return "", false, fmt.Errorf("FinalizeServer: publicIP required for mode=public")
 		}
-		return "https://" + publicIP + ":6443", true, nil
+		return "https://" + addr + ":6443", true, nil
 	}
 	return "", false, fmt.Errorf("unknown plan mode %q", p.Mode)
 }

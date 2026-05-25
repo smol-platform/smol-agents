@@ -25,7 +25,7 @@ func TestCloudInitScript_BareK0s(t *testing.T) {
 			t.Errorf("rendered script missing %q\n---\n%s", want, got)
 		}
 	}
-	for _, banned := range []string{"WireGuard", "cloudflared"} {
+	for _, banned := range []string{"WireGuard", "cloudflared", "tailscale"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("bare script unexpectedly contains %q", banned)
 		}
@@ -74,6 +74,126 @@ func TestCloudInitScript_TokenIsShellQuoted(t *testing.T) {
 	}
 	if !strings.Contains(got, `cloudflared service install 'a'\''b'`) {
 		t.Errorf("token not properly shell-quoted; got:\n%s", got)
+	}
+}
+
+func TestCloudInitScript_WithTailscale(t *testing.T) {
+	got, err := CloudInitScript(CloudInitOptions{
+		Hostname:         "agentctl-edge",
+		TailscaleAuthKey: "tskey-auth-abc123",
+		TailscaleTags:    "tag:k8s",
+	})
+	if err != nil {
+		t.Fatalf("CloudInitScript: %v", err)
+	}
+	for _, want := range []string{
+		"https://tailscale.com/install.sh",           // installer
+		"systemctl enable --now tailscaled",          // daemon
+		"tailscale up --authkey 'tskey-auth-abc123'", // shell-quoted key
+		"--hostname agentctl-edge",                   // explicit hostname
+		"--advertise-tags 'tag:k8s'",                 // shell-quoted tags
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("tailscale script missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestCloudInitScript_TailscaleWithoutTags(t *testing.T) {
+	got, err := CloudInitScript(CloudInitOptions{TailscaleAuthKey: "tskey-auth-xyz"})
+	if err != nil {
+		t.Fatalf("CloudInitScript: %v", err)
+	}
+	if !strings.Contains(got, "tailscale up --authkey 'tskey-auth-xyz'") {
+		t.Errorf("tailscale up line missing; got:\n%s", got)
+	}
+	if strings.Contains(got, "--advertise-tags") {
+		t.Errorf("no tags supplied but --advertise-tags rendered:\n%s", got)
+	}
+}
+
+func TestCloudInitScript_TailscaleKeyShellQuoted(t *testing.T) {
+	got, err := CloudInitScript(CloudInitOptions{TailscaleAuthKey: "a'b"})
+	if err != nil {
+		t.Fatalf("CloudInitScript: %v", err)
+	}
+	if !strings.Contains(got, `tailscale up --authkey 'a'\''b'`) {
+		t.Errorf("auth key not properly shell-quoted; got:\n%s", got)
+	}
+}
+
+func TestPlanAPIEndpoint_Tailscale(t *testing.T) {
+	p, err := PlanAPIEndpoint(APIEndpointInput{TailscaleAuthKey: "tskey-auth-1"})
+	if err != nil {
+		t.Fatalf("PlanAPIEndpoint: %v", err)
+	}
+	if p.Mode != "tailscale" {
+		t.Errorf("Mode = %q, want tailscale", p.Mode)
+	}
+	if p.ExposeAPIPublicly {
+		t.Errorf("ExposeAPIPublicly = true; tailscale keeps 6443 off the public internet")
+	}
+}
+
+func TestPlanAPIEndpoint_Precedence(t *testing.T) {
+	wg := "[Interface]\nAddress = 10.0.0.5/24\n"
+	tmp := t.TempDir() + "/wg0.conf"
+	if err := writeFile(tmp, wg); err != nil {
+		t.Fatal(err)
+	}
+	// cloudflare beats tailscale.
+	if p, _ := PlanAPIEndpoint(APIEndpointInput{CloudflareTunnelToken: "t", APIHostname: "h", TailscaleAuthKey: "k"}); p.Mode != "cloudflare" {
+		t.Errorf("CF+tailscale: Mode = %q, want cloudflare", p.Mode)
+	}
+	// tailscale beats wireguard.
+	if p, _ := PlanAPIEndpoint(APIEndpointInput{TailscaleAuthKey: "k", WireGuardConfig: tmp}); p.Mode != "tailscale" {
+		t.Errorf("tailscale+WG: Mode = %q, want tailscale", p.Mode)
+	}
+}
+
+func TestFinalizeServer_Tailscale(t *testing.T) {
+	p := APIPlan{Mode: "tailscale"}
+	server, skip, err := p.FinalizeServer("100.64.0.7")
+	if err != nil {
+		t.Fatalf("FinalizeServer: %v", err)
+	}
+	if server != "https://100.64.0.7:6443" {
+		t.Errorf("server = %q", server)
+	}
+	if !skip {
+		t.Errorf("skipVerify = false; k0s cert SAN is localhost, so direct-IP needs skip")
+	}
+	if _, _, err := p.FinalizeServer(""); err == nil {
+		t.Errorf("expected error when tailnet addr is empty")
+	}
+}
+
+func TestParseTailscaleIPv4(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, want string
+		err             bool
+	}{
+		{name: "plain", raw: "100.64.0.7\n", want: "100.64.0.7"},
+		{name: "trims + first line", raw: "  100.100.20.3\nfd7a::1\n", want: "100.100.20.3"},
+		{name: "empty", raw: "\n", err: true},
+		{name: "not cgnat", raw: "10.0.0.1\n", err: true},
+		{name: "garbage", raw: "not-an-ip\n", err: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseTailscaleIPv4(tc.raw)
+			if tc.err {
+				if err == nil {
+					t.Errorf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseTailscaleIPv4: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q want %q", got, tc.want)
+			}
+		})
 	}
 }
 
