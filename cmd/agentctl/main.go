@@ -126,19 +126,23 @@ func cmdDeploy(args []string) int {
 	// target=aws
 	awsProfile := fs.String("aws-profile", os.Getenv("AWS_PROFILE"), "AWS profile (or $AWS_PROFILE)")
 	awsRegion := fs.String("aws-region", os.Getenv("AWS_REGION"), "AWS region (or $AWS_REGION)")
-	instanceType := fs.String("instance-type", "", "EC2 instance type (use *.metal for kata-fc)")
-	vpcID := fs.String("vpc-id", "", "existing VPC id (empty -> provision a new one)")
-	keyName := fs.String("aws-key-name", "", "EC2 key pair name for SSH access")
+	instanceType := fs.String("instance-type", "", "EC2 instance type (e.g., t3.small for amd64, t4g.small for arm64 + --ami)")
+	subnetID := fs.String("subnet-id", "", "existing subnet id (empty -> first subnet of the default VPC)")
+	keyName := fs.String("aws-key-name", "", "EC2 key pair name registered in your AWS account")
+	ami := fs.String("ami", "", "EC2 AMI id (empty -> latest AL2023 amd64 via SSM)")
 
 	// target=hetzner
 	hcloudTokenEnv := fs.String("hcloud-token-env", "HCLOUD_TOKEN", "env var holding the Hetzner Cloud API token")
-	hcloudLocation := fs.String("hcloud-location", "", "Hetzner location (e.g., nbg1, hel1)")
-	serverType := fs.String("server-type", "", "Hetzner server type (e.g., cax21)")
+	hcloudLocation := fs.String("hcloud-location", "", "Hetzner location (e.g., nbg1, hel1, ash)")
+	serverType := fs.String("server-type", "", "Hetzner server type (e.g., cax21, cx22)")
+	hcloudImage := fs.String("hcloud-image", "ubuntu-24.04", "Hetzner image name")
+
+	// shared: provisioning targets all SSH-fetch the kubeconfig from the host.
+	sshKey := fs.String("ssh-key", "", "SSH private key path (used by aws, hetzner, baremetal)")
 
 	// target=baremetal
 	sshHost := fs.String("ssh-host", "", "SSH host[:port]")
-	sshUser := fs.String("ssh-user", "root", "SSH user")
-	sshKey := fs.String("ssh-key", "", "SSH private key path")
+	sshUser := fs.String("ssh-user", "root", "SSH user (baremetal only)")
 
 	_ = fs.Parse(args)
 
@@ -181,10 +185,11 @@ func cmdDeploy(args []string) int {
 		},
 		AWS: deploy.AWSOptions{
 			Profile: *awsProfile, Region: *awsRegion, InstanceType: *instanceType,
-			VPCID: *vpcID, KeyName: *keyName,
+			SubnetID: *subnetID, KeyName: *keyName, SSHKey: *sshKey, AMI: *ami,
 		},
 		Hetzner: deploy.HetznerOptions{
 			TokenEnv: *hcloudTokenEnv, Location: *hcloudLocation, ServerType: *serverType,
+			Image: *hcloudImage, SSHKey: *sshKey,
 		},
 		BareMetal: deploy.BareMetalOptions{
 			Host: *sshHost, User: *sshUser, KeyPath: *sshKey,

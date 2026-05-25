@@ -50,13 +50,15 @@ type K8sOptions struct {
 	InstallCertMgr bool   // gated; not implemented in V1
 }
 
-// AWSOptions are the --target=aws flags. Drives EC2 + VPC + k0s edge.
+// AWSOptions are the --target=aws flags. Drives EC2 + SG + k0s edge.
 type AWSOptions struct {
 	Profile      string
 	Region       string
 	InstanceType string
-	VPCID        string // empty -> create a new VPC
-	KeyName      string
+	SubnetID     string // empty -> first subnet of the default VPC
+	KeyName      string // EC2 key pair name (must already exist in AWS)
+	SSHKey       string // local path to the matching private key
+	AMI          string // empty -> Amazon Linux 2023 via SSM lookup
 }
 
 // HetznerOptions are the --target=hetzner flags.
@@ -64,6 +66,8 @@ type HetznerOptions struct {
 	TokenEnv   string // env var holding hcloud token (default: HCLOUD_TOKEN)
 	Location   string // e.g. nbg1, hel1
 	ServerType string // e.g. cax21
+	Image      string // default: ubuntu-24.04
+	SSHKey     string // local path to private key; public is read from <path>.pub
 }
 
 // BareMetalOptions are the --target=baremetal flags. SSH to a pre-provisioned
