@@ -241,6 +241,31 @@ func TestRewriteKubeconfig_VerifyOnForCFHostname(t *testing.T) {
 	}
 }
 
+func TestTokenKubeconfig(t *testing.T) {
+	out, err := TokenKubeconfig("https://k8s.example.com", "tok-abc.def")
+	if err != nil {
+		t.Fatalf("TokenKubeconfig: %v", err)
+	}
+	cfg, err := clientcmd.Load(out)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cl := cfg.Clusters["cluster"]
+	if cl == nil || cl.Server != "https://k8s.example.com" {
+		t.Errorf("cluster server wrong: %+v", cl)
+	}
+	if len(cl.CertificateAuthorityData) != 0 || cl.InsecureSkipTLSVerify {
+		t.Errorf("expected no CA + verify-on (system trust for the CF hostname)")
+	}
+	au := cfg.AuthInfos["agentctl"]
+	if au == nil || au.Token != "tok-abc.def" {
+		t.Errorf("token authinfo wrong: %+v", au)
+	}
+	if au != nil && au.ClientCertificateData != nil {
+		t.Errorf("token kubeconfig must not carry a client cert")
+	}
+}
+
 func TestRewriteKubeconfig_RejectsEmpty(t *testing.T) {
 	if _, err := RewriteKubeconfig([]byte(``), KubeconfigRewrite{Server: "https://x"}); err == nil {
 		t.Errorf("expected error on empty input")

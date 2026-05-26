@@ -164,44 +164,35 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	}
 	fmt.Fprintf(out, "==> k0s bootstrap complete\n")
 
-	// 7. Fetch + rewrite the kubeconfig. The server URL depends on the
-	// networking plan: CF tunnel hostname (real TLS), WG IP (skip verify),
-	// or the public IP (skip verify).
-	raw, err := cloud.FetchFile(ctx, net.JoinHostPort(publicIP, "22"), sshCfg, cloud.DefaultKubeconfigPath)
-	if err != nil {
-		return fmt.Errorf("fetch kubeconfig: %w", err)
-	}
+	// 7. Stage the kubeconfig. The server URL + auth depend on the plan:
+	// CF tunnel hostname (real TLS, token auth — client certs don't survive
+	// CF's TLS termination), WG/tailnet IP or public IP (skip verify, cert auth).
+	sshAddr := net.JoinHostPort(publicIP, "22")
 	// For tailscale the API address is the tailnet IP assigned at join time;
 	// read it back over the same SSH hop. Every other mode uses publicIP (or
 	// ignores it — CF/WG carry their own address in the plan).
 	endpointAddr := publicIP
 	if plan.Mode == "tailscale" {
-		tsIP, err := cloud.FetchTailscaleIPv4(ctx, net.JoinHostPort(publicIP, "22"), sshCfg)
+		tsIP, err := cloud.FetchTailscaleIPv4(ctx, sshAddr, sshCfg)
 		if err != nil {
 			return fmt.Errorf("resolve tailscale ip: %w", err)
 		}
 		fmt.Fprintf(out, "==> Tailscale address %s\n", tsIP)
 		endpointAddr = tsIP
 	}
-	server, skipVerify, err := plan.FinalizeServer(endpointAddr)
+	kcPath, server, apiTimeout, err := cloud.StageKubeconfig(ctx, cloud.StageKubeconfigInput{
+		SSHAddr: sshAddr, SSHCfg: sshCfg, Plan: plan, EndpointAddr: endpointAddr, Name: o.Common.Name,
+	})
 	if err != nil {
-		return fmt.Errorf("finalize server: %w", err)
-	}
-	rewritten, err := cloud.RewriteKubeconfig(raw, cloud.KubeconfigRewrite{Server: server, InsecureSkipTLSVerify: skipVerify})
-	if err != nil {
-		return fmt.Errorf("rewrite kubeconfig: %w", err)
-	}
-	kcPath, err := cloud.WriteKubeconfigTemp(o.Common.Name, rewritten)
-	if err != nil {
-		return fmt.Errorf("write kubeconfig: %w", err)
+		return fmt.Errorf("stage kubeconfig: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(kcPath) }()
-	fmt.Fprintf(out, "==> Kubeconfig staged at %s (server=%s skipVerify=%v)\n", kcPath, server, skipVerify)
+	fmt.Fprintf(out, "==> Kubeconfig staged at %s (server=%s)\n", kcPath, server)
 
 	// 8. Wait for the API to actually answer via the chosen URL (CF tunnel
-	// can take a few seconds to propagate; WG/public are usually instant).
-	fmt.Fprintf(out, "==> Waiting for API at %s\n", server)
-	if err := cloud.WaitForAPI(ctx, kcPath, 90*time.Second); err != nil {
+	// needs cloudflared to cold-start + register; WG/public are usually instant).
+	fmt.Fprintf(out, "==> Waiting for API at %s (timeout %s)\n", server, apiTimeout)
+	if err := cloud.WaitForAPI(ctx, kcPath, apiTimeout); err != nil {
 		return fmt.Errorf("api not reachable: %w", err)
 	}
 

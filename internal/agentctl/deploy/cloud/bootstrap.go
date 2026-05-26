@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -63,6 +64,46 @@ func WaitForSentinel(ctx context.Context, addr string, cfg *ssh.ClientConfig, se
 		case <-time.After(every):
 		}
 	}
+}
+
+// MintAdminToken creates (idempotently) a cluster-admin ServiceAccount on the
+// freshly-bootstrapped node and returns a bound token for it. Used by the
+// cloudflare networking mode: Cloudflare terminates the edge TLS and does NOT
+// forward the kubeconfig's client certificate to the origin, so client-cert
+// auth can't survive the tunnel. A bearer token rides as an HTTP header, which
+// cloudflared forwards verbatim, so token auth works through the tunnel.
+//
+// Retries briefly: right after k0s readyz the TokenRequest API + default RBAC
+// can lag by a beat. The returned token is a secret — never log it.
+func MintAdminToken(ctx context.Context, addr string, cfg *ssh.ClientConfig, ttl time.Duration) (string, error) {
+	script := strings.Join([]string{
+		"k0s kubectl create serviceaccount agentctl-admin -n kube-system >/dev/null 2>&1 || true",
+		"k0s kubectl create clusterrolebinding agentctl-admin --clusterrole=cluster-admin --serviceaccount=kube-system:agentctl-admin >/dev/null 2>&1 || true",
+		"k0s kubectl create token agentctl-admin -n kube-system --duration=" + ttl.String(),
+	}, "\n")
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(3 * time.Second):
+			}
+		}
+		out, _, err := runSSH(ctx, addr, cfg, script)
+		if err != nil {
+			lastErr = fmt.Errorf("mint admin token: %w", err)
+			continue
+		}
+		token := strings.TrimSpace(string(out))
+		if token == "" {
+			lastErr = fmt.Errorf("mint admin token: empty token returned")
+			continue
+		}
+		return token, nil
+	}
+	return "", lastErr
 }
 
 // FetchFile reads a remote file's contents over SSH. The remote read uses

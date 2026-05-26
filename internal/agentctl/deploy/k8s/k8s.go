@@ -70,6 +70,12 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	crds, others := splitCRDs(objs)
 	fmt.Fprintf(out, "    %d objects rendered (%d CRDs + %d other)\n", len(objs), len(crds), len(others))
 
+	if n, err := overrideOperatorImage(others, o.Common.OperatorImg); err != nil {
+		return fmt.Errorf("override operator image: %w", err)
+	} else if n > 0 {
+		fmt.Fprintf(out, "    operator image -> %s (%d container(s))\n", o.Common.OperatorImg, n)
+	}
+
 	if o.Common.DryRun {
 		fmt.Fprintf(out, "==> dry-run: skipping apply\n")
 		return nil

@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 // KubeconfigRewrite controls how RewriteKubeconfig transforms the k0s admin.conf.
@@ -54,6 +56,73 @@ func RewriteKubeconfig(raw []byte, r KubeconfigRewrite) ([]byte, error) {
 		cfg.Clusters[name] = c
 	}
 	return clientcmd.Write(*cfg)
+}
+
+// TokenKubeconfig builds a kubeconfig that authenticates with a bearer token
+// against server. No CA is embedded: the server is reached via a hostname
+// fronted by a publicly-trusted cert (Cloudflare Tunnel), so the system trust
+// store verifies it. Used where client-cert auth can't survive a
+// TLS-terminating proxy. token is a secret — keep it out of logs.
+func TokenKubeconfig(server, token string) ([]byte, error) {
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["cluster"] = &clientcmdapi.Cluster{Server: server}
+	cfg.AuthInfos["agentctl"] = &clientcmdapi.AuthInfo{Token: token}
+	cfg.Contexts["agentctl"] = &clientcmdapi.Context{Cluster: "cluster", AuthInfo: "agentctl"}
+	cfg.CurrentContext = "agentctl"
+	return clientcmd.Write(*cfg)
+}
+
+// StageKubeconfigInput drives StageKubeconfig.
+type StageKubeconfigInput struct {
+	SSHAddr      string            // host:22 of the bootstrapped node
+	SSHCfg       *ssh.ClientConfig // to fetch admin.conf or mint a token
+	Plan         APIPlan           // networking plan (decides cert vs token)
+	EndpointAddr string            // resolved addr for FinalizeServer (public/tailnet IP)
+	Name         string            // temp-dir discriminator
+}
+
+// StageKubeconfig produces the kubeconfig the platform install will use and
+// returns its temp path, the resolved server URL, and how long to wait for the
+// API to answer.
+//
+// For cloudflare mode it mints a ServiceAccount token over SSH and writes a
+// token-based kubeconfig (see MintAdminToken for why client certs don't work
+// through Cloudflare), and allows extra time for cloudflared's cold-start +
+// edge registration. Every other mode keeps the cert-based admin.conf (TLS is
+// end-to-end to k0s) and just rewrites the server URL.
+//
+// Callers must os.RemoveAll the returned path (it holds cluster credentials).
+func StageKubeconfig(ctx context.Context, in StageKubeconfigInput) (kcPath, server string, apiTimeout time.Duration, err error) {
+	server, skipVerify, err := in.Plan.FinalizeServer(in.EndpointAddr)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("finalize server: %w", err)
+	}
+
+	var kc []byte
+	if in.Plan.Mode == "cloudflare" {
+		token, terr := MintAdminToken(ctx, in.SSHAddr, in.SSHCfg, 24*time.Hour)
+		if terr != nil {
+			return "", "", 0, terr
+		}
+		kc, err = TokenKubeconfig(server, token)
+		apiTimeout = 4 * time.Minute // cloudflared cold-start + edge registration + DNS
+	} else {
+		raw, ferr := FetchFile(ctx, in.SSHAddr, in.SSHCfg, DefaultKubeconfigPath)
+		if ferr != nil {
+			return "", "", 0, fmt.Errorf("fetch kubeconfig: %w", ferr)
+		}
+		kc, err = RewriteKubeconfig(raw, KubeconfigRewrite{Server: server, InsecureSkipTLSVerify: skipVerify})
+		apiTimeout = 90 * time.Second
+	}
+	if err != nil {
+		return "", "", 0, fmt.Errorf("build kubeconfig: %w", err)
+	}
+
+	kcPath, err = WriteKubeconfigTemp(in.Name, kc)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return kcPath, server, apiTimeout, nil
 }
 
 // WriteKubeconfigTemp writes data to a unique 0600 file under $TMPDIR and

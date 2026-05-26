@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -56,6 +57,52 @@ func splitYAML(in []byte) ([]*unstructured.Unstructured, error) {
 		out = append(out, &u)
 	}
 	return out, nil
+}
+
+// defaultOperatorImagePrefix is the repo/name the bundled manifests pin the
+// operator to (manager.yaml: "smol-agents/operator:<tag>"). The override
+// matches on this prefix so it touches only the operator container, never a
+// sidecar (e.g. kube-rbac-proxy) or an image-typed field in a CRD schema.
+const defaultOperatorImagePrefix = "smol-agents/operator"
+
+// overrideOperatorImage rewrites the operator container image in any rendered
+// Deployment whose container image starts with defaultOperatorImagePrefix.
+// This is what makes --operator-image effective: the bundled manifests pin a
+// local-only ref, so installing against a remote cluster needs a pullable
+// registry ref. Returns the number of containers rewritten.
+func overrideOperatorImage(objs []*unstructured.Unstructured, img string) (int, error) {
+	if img == "" {
+		return 0, nil
+	}
+	rewritten := 0
+	for _, o := range objs {
+		if o.GetKind() != "Deployment" {
+			continue
+		}
+		containers, found, err := unstructured.NestedSlice(o.Object, "spec", "template", "spec", "containers")
+		if err != nil || !found {
+			continue
+		}
+		changed := false
+		for i := range containers {
+			c, ok := containers[i].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if cur, _ := c["image"].(string); strings.HasPrefix(cur, defaultOperatorImagePrefix) {
+				c["image"] = img
+				containers[i] = c
+				changed = true
+				rewritten++
+			}
+		}
+		if changed {
+			if err := unstructured.SetNestedSlice(o.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+				return rewritten, fmt.Errorf("set operator image on %s: %w", nameForLog(o), err)
+			}
+		}
+	}
+	return rewritten, nil
 }
 
 // splitCRDs partitions a manifest set so CRDs can be applied (and become
