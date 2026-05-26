@@ -55,6 +55,14 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 		client = http.DefaultClient
 	}
 
+	// Effective env = spec literals (HarnessEnvVar.Value) overlaid by the
+	// broker-resolved Request.Env (secrets win). The executor passes literal
+	// env via Spec.Env and is expected to fill Request.Env with broker-leased
+	// secretRef values; reading both lets a field be a literal in the CR or a
+	// secretRef resolved at runtime (e.g. HEADER_Authorization as a leased
+	// bearer token).
+	env := effectiveEnv(req)
+
 	// Build the OpenAI chat-completions body: instructions -> system message,
 	// the Run input -> user message.
 	messages := make([]map[string]string, 0, 2)
@@ -64,7 +72,7 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	messages = append(messages, map[string]string{"role": "user", "content": promptFromInput(req.Input)})
 
 	body := map[string]any{
-		"model":    hermesModel(req.Env),
+		"model":    hermesModel(env),
 		"messages": messages,
 		"stream":   false,
 	}
@@ -73,7 +81,7 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	}
 	// BODY_<field> env entries become extra request fields (e.g. temperature,
 	// top_p, reasoning_effort). Applied last so they can override the defaults.
-	for k, v := range req.Env {
+	for k, v := range env {
 		if field, ok := strings.CutPrefix(k, "BODY_"); ok && field != "" {
 			body[field] = jsonOrString(v)
 		}
@@ -96,7 +104,7 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 		httpReq.Header.Set(k, v)
 	}
 	// HEADER_<name> env -> request headers (auth: HEADER_Authorization).
-	for k, v := range req.Env {
+	for k, v := range env {
 		if name, ok := strings.CutPrefix(k, "HEADER_"); ok && v != "" {
 			httpReq.Header.Set(name, v)
 		}
@@ -104,10 +112,10 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	// Persistent sessions carry Hermes memory/skills across Runs via the
 	// gateway's session headers; ephemeral sessions stay stateless.
 	if req.Spec.SessionPolicy == v1.SessionPersistent {
-		if sid := req.Env["HERMES_SESSION_ID"]; sid != "" {
+		if sid := env["HERMES_SESSION_ID"]; sid != "" {
 			httpReq.Header.Set("X-Hermes-Session-Id", sid)
 		}
-		if skey := req.Env["HERMES_SESSION_KEY"]; skey != "" {
+		if skey := env["HERMES_SESSION_KEY"]; skey != "" {
 			httpReq.Header.Set("X-Hermes-Session-Key", skey)
 		}
 	}
@@ -142,6 +150,23 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 		TokensOut:  out,
 		DurationMs: dur,
 	}, nil
+}
+
+// effectiveEnv merges the harness spec's literal env (HarnessEnvVar.Value) with
+// the executor-resolved Request.Env, the latter winning. secretRef entries have
+// an empty Value in the spec and only appear once the executor leases them into
+// Request.Env, so a secret cleanly overrides any same-named literal.
+func effectiveEnv(req Request) map[string]string {
+	env := make(map[string]string, len(req.Spec.Env)+len(req.Env))
+	for _, e := range req.Spec.Env {
+		if e.Value != "" {
+			env[e.Name] = e.Value
+		}
+	}
+	for k, v := range req.Env {
+		env[k] = v
+	}
+	return env
 }
 
 // hermesModel returns the model id to request: the HERMES_MODEL env override

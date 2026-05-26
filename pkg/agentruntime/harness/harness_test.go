@@ -181,15 +181,19 @@ func TestHermesHarness(t *testing.T) {
 			Kind:          v1.HarnessHermes,
 			SessionPolicy: v1.SessionPersistent,
 			HTTP:          &v1.HarnessHTTPSpec{URL: srv.URL},
+			// Literal config travels in Spec.Env (what the executor passes today);
+			// the bearer token is a secretRef the executor resolves into Request.Env.
+			Env: []v1.HarnessEnvVar{
+				{Name: "HERMES_SESSION_ID", Value: "sess-7"},
+				{Name: "HERMES_MODEL", Value: "hermes-4-405b"},
+				{Name: "BODY_temperature", Value: "0.5"},
+				{Name: "HEADER_Authorization", SecretRef: &v1.AuthRef{SecretName: "hermes-gateway"}},
+			},
 		},
 		Instructions: "be terse",
 		Input:        json.RawMessage(`{"prompt":"hi"}`),
-		Env: map[string]string{
-			"HEADER_Authorization": "Bearer sk-xyz",
-			"HERMES_SESSION_ID":    "sess-7",
-			"HERMES_MODEL":         "hermes-4-405b",
-			"BODY_temperature":     "0.5",
-		},
+		// Broker-resolved secret (executor fills Request.Env); overrides the literal.
+		Env:    map[string]string{"HEADER_Authorization": "Bearer sk-xyz"},
 		Budget: v1.Budget{MaxWallClockSeconds: 5, MaxTokens: 4096},
 	})
 	if err != nil {
@@ -245,9 +249,12 @@ func TestHermesHarness_EphemeralOmitsSession(t *testing.T) {
 
 	h := &HermesHarness{Client: srv.Client()}
 	if _, err := h.Run(context.Background(), Request{
-		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, SessionPolicy: v1.SessionEphemeral, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Spec: v1.HarnessSpec{
+			Kind: v1.HarnessHermes, SessionPolicy: v1.SessionEphemeral,
+			HTTP: &v1.HarnessHTTPSpec{URL: srv.URL},
+			Env:  []v1.HarnessEnvVar{{Name: "HERMES_SESSION_ID", Value: "should-not-send"}},
+		},
 		Input: json.RawMessage(`{"prompt":"x"}`),
-		Env:   map[string]string{"HERMES_SESSION_ID": "should-not-send"},
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
