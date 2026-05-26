@@ -95,8 +95,8 @@ func TestBuildKnativeService(t *testing.T) {
 
 func TestAgentImage_Override(t *testing.T) {
 	cr := sample()
-	if AgentImage(cr) != "smol-agents/agent:0.1.0" {
-		t.Errorf("default image wrong: %q", AgentImage(cr))
+	if got := AgentImage(cr); got != Image("agent") {
+		t.Errorf("default image = %q, want %q", got, Image("agent"))
 	}
 	cr.Spec.Image = "myreg.example.com/agent:custom"
 	if AgentImage(cr) != "myreg.example.com/agent:custom" {

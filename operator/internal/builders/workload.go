@@ -21,12 +21,12 @@ func AgentImage(cr *v1.SmolAgent) string {
 	if cr.Spec.Image != "" {
 		return cr.Spec.Image
 	}
-	return "smol-agents/agent:0.1.0"
+	return Image("agent")
 }
 
 // SecretProxyImage is the image for the broker sidecar.
 func SecretProxyImage() string {
-	return "smol-agents/secret-proxy:0.1.0"
+	return Image("secret-proxy")
 }
 
 // BuildAgentPodSpec is the canonical Pod template shared by Deployment,

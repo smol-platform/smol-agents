@@ -86,7 +86,7 @@ func BuildEBPFLoaderDaemonSet(p *v1.SmolAgentPlatform, ns, presetName string) *a
 
 	image := p.Spec.EBPFLoader.Image
 	if image == "" {
-		image = "smol-agents/ebpf-loader:0.1.0"
+		image = Image("ebpf-loader")
 	}
 
 	hostPathDir := corev1.HostPathDirectoryOrCreate

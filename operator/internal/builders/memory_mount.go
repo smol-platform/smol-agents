@@ -51,11 +51,6 @@ const (
 	// defaultMemoryMountPath is the fallback when MountSpec.MountPath is empty.
 	defaultMemoryMountPath = "/var/memory-agentfs"
 
-	// defaultAgentFSSidecarImage is the AgentFS sidecar image used when
-	// AgentFSSpec.Image is empty. This image provides the SQLite-canonical
-	// branchable FS and the S3 backup/restore/WAL engine.
-	defaultAgentFSSidecarImage = "docker.io/smol-agents/agentfs-sidecar:dev"
-
 	// agentFSSidecarName is the sidecar container name for memory AgentFS.
 	agentFSSidecarName = "memory-agentfs-sidecar"
 
@@ -93,8 +88,13 @@ func (m MemoryMountInput) sidecarImage() string {
 	if m.AgentFS != nil && m.AgentFS.Image != "" {
 		return m.AgentFS.Image
 	}
-	return defaultAgentFSSidecarImage
+	return defaultAgentFSSidecarImage()
 }
+
+// defaultAgentFSSidecarImage is the AgentFS sidecar image used when
+// AgentFSSpec.Image is empty (SQLite-canonical FS + S3 backup/restore/WAL).
+// Note: this image isn't built in-repo yet (no cmd/agentfs-sidecar).
+func defaultAgentFSSidecarImage() string { return Image("agentfs-sidecar") }
 
 // volumeSizeLimit returns a resource.Quantity for the EmptyDir SizeLimit based
 // on AgentFSSpec.SizeGiB. Returns nil when SizeGiB is zero (unlimited EmptyDir).

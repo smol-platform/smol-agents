@@ -85,7 +85,9 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 }
 
 func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Container {
-	image := "smol-agents/agent-harness:0.1.0"
+	// The harness driver lives in the agent image; harness.image overrides it
+	// (e.g. an image that bundles a CLI tool + /agent).
+	image := Image("agent")
 	if agent.Spec.Harness != nil && agent.Spec.Harness.Image != "" {
 		image = agent.Spec.Harness.Image
 	}
@@ -125,7 +127,7 @@ func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Con
 func loopContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Container {
 	return corev1.Container{
 		Name:            "agent",
-		Image:           "smol-agents/agent:0.1.0",
+		Image:           Image("agent"),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            []string{"--config=/etc/smol-agents/agent.yaml"},
 		Resources: corev1.ResourceRequirements{

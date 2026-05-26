@@ -62,7 +62,7 @@ func (s StorageMountInput) image() string {
 	if s.AgentFS != nil && s.AgentFS.Image != "" {
 		return s.AgentFS.Image
 	}
-	return defaultAgentFSSidecarImage // shared with memory_mount.go
+	return defaultAgentFSSidecarImage() // shared with memory_mount.go
 }
 
 // AttachStorageFS appends the durable AgentFS volume, restore init container,

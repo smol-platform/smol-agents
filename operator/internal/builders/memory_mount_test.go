@@ -217,8 +217,8 @@ func TestAttachMemoryFS_SidecarImage_Default(t *testing.T) {
 
 	for _, c := range pod.Spec.Containers {
 		if c.Name == agentFSSidecarName {
-			if c.Image != defaultAgentFSSidecarImage {
-				t.Errorf("sidecar image = %q, want %q", c.Image, defaultAgentFSSidecarImage)
+			if c.Image != defaultAgentFSSidecarImage() {
+				t.Errorf("sidecar image = %q, want %q", c.Image, defaultAgentFSSidecarImage())
 			}
 			return
 		}
