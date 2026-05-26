@@ -18,7 +18,6 @@ import (
 	"k8s.io/utils/ptr"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
-	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
@@ -35,20 +34,6 @@ const (
 
 // BrokerConfigSecretName is the per-run broker config Secret name.
 func BrokerConfigSecretName(runName string) string { return runName + "-broker" }
-
-// AgentNeedsBroker reports whether the agent declares any harness env secretRef
-// — the only thing that requires the in-pod broker today.
-func AgentNeedsBroker(spec *pure.AgentSpec) bool {
-	if spec == nil || spec.Harness == nil {
-		return false
-	}
-	for _, e := range spec.Harness.Env {
-		if e.SecretRef != nil && e.SecretRef.SecretName != "" {
-			return true
-		}
-	}
-	return false
-}
 
 // AttachSecretBroker adds the secret-broker UDS volume, the broker-config Secret
 // volume, and the secret-proxy sidecar, and mounts the UDS into the execution

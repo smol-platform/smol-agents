@@ -24,17 +24,29 @@ const (
 
 	runSpecVolumeName = "runspec"
 
-	// These filenames MUST match agentruntime.AgentSpecFile / RunSpecFile.
-	runSpecAgentFile = "agent.json"
-	runSpecRunFile   = "run.json"
+	// These filenames MUST match agentruntime.AgentSpecFile / RunSpecFile and
+	// the provider file cmd/agent reads.
+	runSpecAgentFile    = "agent.json"
+	runSpecRunFile      = "run.json"
+	runSpecProviderFile = "provider.json"
 )
+
+// RunProvider is the resolved ModelProvider a Mode=loop run pod needs to build
+// its LLM client. The API key is NOT embedded — it's leased from the broker by
+// SecretName at runtime. Rendered as provider.json when the agent is loop mode
+// with a providerRef.
+type RunProvider struct {
+	Kind       string `json:"kind"`
+	Endpoint   string `json:"endpoint"`
+	SecretName string `json:"secretName,omitempty"`
+}
 
 // RunSpecConfigMapName is the per-run spec ConfigMap name.
 func RunSpecConfigMapName(runName string) string { return runName + "-runspec" }
 
 // BuildRunSpecConfigMap renders the Agent + AgentRunSpec the run pod executes.
 // The Agent is marshalled as the pure (CRD-free) v1.Agent the executor loads.
-func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent) (*corev1.ConfigMap, error) {
+func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent, provider *RunProvider) (*corev1.ConfigMap, error) {
 	agentJSON, err := json.Marshal(pure.Agent{Spec: agent.Spec})
 	if err != nil {
 		return nil, fmt.Errorf("marshal agent spec: %w", err)
@@ -42,6 +54,17 @@ func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent) (*corev1.Confi
 	runJSON, err := json.Marshal(run.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("marshal run spec: %w", err)
+	}
+	data := map[string]string{
+		runSpecAgentFile: string(agentJSON),
+		runSpecRunFile:   string(runJSON),
+	}
+	if provider != nil {
+		pj, err := json.Marshal(provider)
+		if err != nil {
+			return nil, fmt.Errorf("marshal provider: %w", err)
+		}
+		data[runSpecProviderFile] = string(pj)
 	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
@@ -55,10 +78,7 @@ func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent) (*corev1.Confi
 				"agents.smol-agents.ai/run":   run.Name,
 			},
 		},
-		Data: map[string]string{
-			runSpecAgentFile: string(agentJSON),
-			runSpecRunFile:   string(runJSON),
-		},
+		Data: data,
 	}, nil
 }
 

@@ -48,12 +48,15 @@ func TestBuildRunSpecConfigMap(t *testing.T) {
 	agent.Spec.Instructions = "be terse"
 	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessHermes, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
 
-	cm, err := BuildRunSpecConfigMap(run, agent)
+	cm, err := BuildRunSpecConfigMap(run, agent, nil)
 	if err != nil {
 		t.Fatalf("BuildRunSpecConfigMap: %v", err)
 	}
 	if cm.Name != "r1-runspec" || cm.Namespace != "tenant-a" {
 		t.Errorf("name/ns = %s/%s", cm.Namespace, cm.Name)
+	}
+	if _, ok := cm.Data[runSpecProviderFile]; ok {
+		t.Error("no provider → provider.json should be absent")
 	}
 
 	// agent.json round-trips to a pure Agent carrying the harness + instructions.
@@ -75,5 +78,29 @@ func TestBuildRunSpecConfigMap(t *testing.T) {
 	}
 	if rs.Seed != 7 || string(rs.Input) != `{"prompt":"hi"}` {
 		t.Errorf("run.json wrong: %+v", rs)
+	}
+}
+
+func TestBuildRunSpecConfigMap_Provider(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+	agent := &amv1.Agent{}
+	agent.Name = "a1"
+	agent.Namespace = "tenant-a"
+	agent.Spec.Model = pure.ModelRef{ProviderRef: "openai", Name: "gpt-4"}
+
+	cm, err := BuildRunSpecConfigMap(run, agent, &RunProvider{
+		Kind: "openai", Endpoint: "https://api.openai.com", SecretName: "openai-key",
+	})
+	if err != nil {
+		t.Fatalf("BuildRunSpecConfigMap: %v", err)
+	}
+	var p RunProvider
+	if err := json.Unmarshal([]byte(cm.Data[runSpecProviderFile]), &p); err != nil {
+		t.Fatalf("provider.json: %v", err)
+	}
+	if p.Kind != "openai" || p.Endpoint != "https://api.openai.com" || p.SecretName != "openai-key" {
+		t.Errorf("provider.json = %+v", p)
 	}
 }

@@ -126,22 +126,25 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	pod := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod)
 	if apierrors.IsNotFound(err) {
+		// Resolve the loop-mode ModelProvider + gather every secret the broker
+		// must serve (harness env secretRef + the provider API key). A missing
+		// source Secret / ModelProvider keeps the run Pending and retries.
+		provider, brokerValues, prepErr := r.prepareRun(ctx, agent)
+		if prepErr != nil {
+			r.markPending(run, "RunPrepPending", prepErr.Error())
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.Status().Update(ctx, run)
+		}
+
 		// Render the spec the run pod executes (`agent run` reads it) before the
 		// pod, so the mounted ConfigMap exists when the pod schedules.
-		if err := r.ensureRunSpec(ctx, run, agent); err != nil {
+		if err := r.ensureRunSpec(ctx, run, agent, provider); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure run spec: %w", err)
 		}
 
-		// When the agent leases harness env secrets, generate the per-run broker
-		// config (resolved values + a uid-keyed policy) before the pod mounts it.
-		if builders.AgentNeedsBroker(&agent.Spec) {
-			values, verr := r.resolveBrokerSecrets(ctx, agent)
-			if verr != nil {
-				// Source Secret not ready/readable — stay Pending and retry.
-				r.markPending(run, "SecretPending", verr.Error())
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, r.Status().Update(ctx, run)
-			}
-			if err := r.ensureBrokerConfig(ctx, run, values); err != nil {
+		// Generate the per-run broker config (resolved values + a uid-keyed
+		// policy) before the pod mounts it.
+		if len(brokerValues) > 0 {
+			if err := r.ensureBrokerConfig(ctx, run, brokerValues); err != nil {
 				return ctrl.Result{}, fmt.Errorf("ensure broker config: %w", err)
 			}
 		}
@@ -161,6 +164,12 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			r.markPending(run, "MemoryRetrieverPending",
 				fmt.Sprintf("MemoryRetriever %q not ready for mounting", run.Spec.MemoryRetrieverRef))
 			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.Status().Update(ctx, run)
+		}
+
+		// Attach the in-pod secret broker when there are secrets to serve
+		// (harness env secretRef and/or the loop provider key).
+		if len(brokerValues) > 0 {
+			builders.AttachSecretBroker(desired, run.Name)
 		}
 
 		if err := ctrl.SetControllerReference(run, desired, r.Scheme); err != nil {
@@ -245,34 +254,59 @@ func terminationReason(pod *corev1.Pod) string {
 	return "pod:Failed"
 }
 
-// resolveBrokerSecrets reads the k8s Secret behind each harness env secretRef
-// and returns lease-name (== SecretRef.SecretName) → value. The value is the
-// SecretRef.Key entry, or the sole key when Key is empty.
-func (r *AgentRunReconciler) resolveBrokerSecrets(ctx context.Context, agent *amv1.Agent) (map[string][]byte, error) {
-	out := map[string][]byte{}
-	for _, e := range agent.Spec.Harness.Env {
-		if e.SecretRef == nil || e.SecretRef.SecretName == "" {
-			continue
+// prepareRun resolves the loop-mode ModelProvider (rendered into the run spec)
+// and gathers every secret the broker must serve: each harness env secretRef
+// value plus the provider API key. Values are keyed by lease name (the
+// SecretRef.SecretName the runtime leases by). Harness mode returns a nil
+// provider; agents with no secrets return an empty map.
+func (r *AgentRunReconciler) prepareRun(ctx context.Context, agent *amv1.Agent) (*builders.RunProvider, map[string][]byte, error) {
+	values := map[string][]byte{}
+
+	if agent.Spec.Harness != nil {
+		for _, e := range agent.Spec.Harness.Env {
+			if e.SecretRef == nil || e.SecretRef.SecretName == "" {
+				continue
+			}
+			val, err := r.readSecret(ctx, agent.Namespace, e.SecretRef.SecretName, e.SecretRef.Key)
+			if err != nil {
+				return nil, nil, err
+			}
+			values[e.SecretRef.SecretName] = val
 		}
-		sec := &corev1.Secret{}
-		key := types.NamespacedName{Namespace: agent.Namespace, Name: e.SecretRef.SecretName}
-		if err := r.Get(ctx, key, sec); err != nil {
-			return nil, fmt.Errorf("get secret %q: %w", e.SecretRef.SecretName, err)
-		}
-		val, err := pickSecretValue(sec, e.SecretRef.Key)
-		if err != nil {
-			return nil, fmt.Errorf("secret %q: %w", e.SecretRef.SecretName, err)
-		}
-		out[e.SecretRef.SecretName] = val
 	}
-	return out, nil
+
+	var provider *builders.RunProvider
+	if agent.Spec.Mode != pure.ModeHarness && agent.Spec.Model.ProviderRef != "" {
+		mp := &amv1.ModelProvider{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: agent.Spec.Model.ProviderRef}, mp); err != nil {
+			return nil, nil, fmt.Errorf("get ModelProvider %q: %w", agent.Spec.Model.ProviderRef, err)
+		}
+		provider = &builders.RunProvider{
+			Kind:       mp.Spec.Kind,
+			Endpoint:   mp.Spec.Endpoint,
+			SecretName: mp.Spec.SecretRef.SecretName,
+		}
+		if mp.Spec.SecretRef.SecretName != "" {
+			val, err := r.readSecret(ctx, agent.Namespace, mp.Spec.SecretRef.SecretName, mp.Spec.SecretRef.Key)
+			if err != nil {
+				return nil, nil, err
+			}
+			values[mp.Spec.SecretRef.SecretName] = val
+		}
+	}
+	return provider, values, nil
 }
 
-func pickSecretValue(sec *corev1.Secret, key string) ([]byte, error) {
+// readSecret fetches one key from a k8s Secret (the sole key when key is empty).
+func (r *AgentRunReconciler) readSecret(ctx context.Context, ns, name, key string) ([]byte, error) {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, sec); err != nil {
+		return nil, fmt.Errorf("get secret %q: %w", name, err)
+	}
 	if key != "" {
 		v, ok := sec.Data[key]
 		if !ok {
-			return nil, fmt.Errorf("key %q not present", key)
+			return nil, fmt.Errorf("secret %q: key %q not present", name, key)
 		}
 		return v, nil
 	}
@@ -281,7 +315,7 @@ func pickSecretValue(sec *corev1.Secret, key string) ([]byte, error) {
 			return v, nil
 		}
 	}
-	return nil, fmt.Errorf("secretRef.key required (secret has %d keys)", len(sec.Data))
+	return nil, fmt.Errorf("secret %q: key required (has %d keys)", name, len(sec.Data))
 }
 
 // ensureBrokerConfig creates (once) the run-owned Secret holding the
@@ -306,8 +340,8 @@ func (r *AgentRunReconciler) ensureBrokerConfig(ctx context.Context, run *amv1.A
 // Agent + AgentRunSpec the `agent run` entrypoint executes. Owned by the run so
 // it is garbage-collected with it. The spec is immutable per run, so an existing
 // ConfigMap is left as-is.
-func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) error {
-	cm, err := builders.BuildRunSpecConfigMap(run, agent)
+func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent, provider *builders.RunProvider) error {
+	cm, err := builders.BuildRunSpecConfigMap(run, agent, provider)
 	if err != nil {
 		return err
 	}

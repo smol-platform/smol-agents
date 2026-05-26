@@ -10,20 +10,7 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
 
-func TestAgentNeedsBroker(t *testing.T) {
-	literal := &pure.AgentSpec{Harness: &pure.HarnessSpec{Env: []pure.HarnessEnvVar{{Name: "X", Value: "y"}}}}
-	if AgentNeedsBroker(literal) {
-		t.Error("literal-only env should not need the broker")
-	}
-	withSecret := &pure.AgentSpec{Harness: &pure.HarnessSpec{Env: []pure.HarnessEnvVar{
-		{Name: "HEADER_Authorization", SecretRef: &pure.AuthRef{SecretName: "gw"}},
-	}}}
-	if !AgentNeedsBroker(withSecret) {
-		t.Error("secretRef env should need the broker")
-	}
-}
-
-func TestBuildAgentRunPod_AttachesBroker(t *testing.T) {
+func TestAttachSecretBroker(t *testing.T) {
 	run := &amv1.AgentRun{}
 	run.Name = "r1"
 	run.Namespace = "tenant-a"
@@ -31,37 +18,30 @@ func TestBuildAgentRunPod_AttachesBroker(t *testing.T) {
 	agent.Name = "a1"
 	agent.Namespace = "tenant-a"
 	agent.Spec.Mode = pure.ModeHarness
-	agent.Spec.Harness = &pure.HarnessSpec{
-		Kind: pure.HarnessHermes,
-		HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"},
-		Env:  []pure.HarnessEnvVar{{Name: "HEADER_Authorization", SecretRef: &pure.AuthRef{SecretName: "gw"}}},
-	}
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessHermes, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
 
 	pod := BuildAgentRunPod(run, agent)
+	// BuildAgentRunPod alone does not attach the broker — the controller drives it.
+	if hasSidecar(pod, secretProxyName) {
+		t.Fatal("BuildAgentRunPod should not attach the broker")
+	}
+
+	AttachSecretBroker(pod, run.Name)
 	if !hasSidecar(pod, secretProxyName) {
 		t.Error("secret-proxy sidecar not attached")
 	}
 	if !hasVolume(pod, secretBrokerVolumeName) || !hasVolume(pod, brokerConfigVolumeName) {
 		t.Error("broker volumes missing")
 	}
-	// The execution container can dial the broker UDS.
 	if _, ok := hasMount(pod.Spec.Containers[0], secretBrokerVolumeName); !ok {
 		t.Error("execution container missing broker UDS mount")
 	}
-}
 
-func TestBuildAgentRunPod_NoBrokerWithoutSecretRef(t *testing.T) {
-	run := &amv1.AgentRun{}
-	run.Name = "r1"
-	run.Namespace = "t"
-	agent := &amv1.Agent{}
-	agent.Name = "a1"
-	agent.Namespace = "t"
-	agent.Spec.Mode = pure.ModeHarness
-	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessHermes, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
-	pod := BuildAgentRunPod(run, agent)
-	if hasSidecar(pod, secretProxyName) {
-		t.Error("no secretRef → no broker sidecar")
+	// Idempotent: a second call adds nothing.
+	n := len(pod.Spec.Containers)
+	AttachSecretBroker(pod, run.Name)
+	if len(pod.Spec.Containers) != n {
+		t.Error("AttachSecretBroker not idempotent")
 	}
 }
 

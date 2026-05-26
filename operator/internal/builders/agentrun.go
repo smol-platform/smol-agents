@@ -76,11 +76,8 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	if input, ok := storageMountFor(&agent.Spec); ok {
 		AttachStorageFS(pod, input)
 	}
-
-	// In-pod secret broker when the agent leases harness env secretRef values.
-	if AgentNeedsBroker(&agent.Spec) {
-		AttachSecretBroker(pod, run.Name)
-	}
+	// The secret broker (AttachSecretBroker) is wired by the controller, which
+	// resolves the secrets to serve (harness env secretRef + loop ModelProvider).
 	return pod
 }
 
