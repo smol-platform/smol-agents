@@ -76,7 +76,7 @@ spec:
                           value: { type: string }
                           secretRef:
                             type: object
-                            properties: { secretName: { type: string } }
+                            properties: { secretName: { type: string }, key: { type: string } }
                     cli:
                       type: object
                       properties:
@@ -136,7 +136,7 @@ spec:
                                 versioning: { type: boolean }
                                 credentialsRef:
                                   type: object
-                                  properties: { secretName: { type: string } }
+                                  properties: { secretName: { type: string }, key: { type: string } }
                         restore:
                           type: object
                           properties:

@@ -134,6 +134,12 @@ type FunctionSpec struct {
 // AuthRef points at a secret in the broker.
 type AuthRef struct {
 	SecretName string `json:"secretName"`
+
+	// Key is the key within the referenced Secret that holds the value. When
+	// empty and the Secret has exactly one key, that key is used. Consumed by
+	// the broker config generator (R-SEC) to populate the static backend.
+	// +optional
+	Key string `json:"key,omitempty"`
 }
 
 // ToolSpec is a discriminated union by Kind.

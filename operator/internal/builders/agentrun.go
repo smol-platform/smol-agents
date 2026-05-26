@@ -58,9 +58,9 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 			ServiceAccountName: agent.Name + "-agent",
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: ptr.To(true),
-				RunAsUser:    ptr.To[int64](65532),
-				RunAsGroup:   ptr.To[int64](65532),
-				FSGroup:      ptr.To[int64](65532),
+				RunAsUser:    ptr.To(RunPodUID),
+				RunAsGroup:   ptr.To(RunPodUID),
+				FSGroup:      ptr.To(RunPodUID),
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
@@ -75,6 +75,11 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	// so the agent's files actually persist across Runs (R-AFS).
 	if input, ok := storageMountFor(&agent.Spec); ok {
 		AttachStorageFS(pod, input)
+	}
+
+	// In-pod secret broker when the agent leases harness env secretRef values.
+	if AgentNeedsBroker(&agent.Spec) {
+		AttachSecretBroker(pod, run.Name)
 	}
 	return pod
 }

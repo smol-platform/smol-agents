@@ -43,10 +43,11 @@ rules:
     resources: [pods]
     verbs: [get, list, watch, create, update, patch, delete]
 
-  # AgentNetwork resolves broker secrets to fail fast.
+  # AgentNetwork resolves broker secrets to fail fast; AgentRun generates a
+  # per-run broker config Secret (static backend + policy).
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch, create]
 
   # Identity feature
   - apiGroups: [""]
