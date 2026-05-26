@@ -29,6 +29,12 @@ import (
 )
 
 func main() {
+	// `agent run ...` executes a single AgentRun (inside an AgentRun pod) and
+	// exits; bare `agent` boots the long-lived agent services.
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		os.Exit(runAgentRun(os.Args[2:]))
+	}
+
 	configPath := flag.String("config", "", "path to agent.yaml")
 	logLevel := flag.String("log-level", "info", "debug|info|warn|error")
 	showVersion := flag.Bool("version", false, "print version and exit")

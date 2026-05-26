@@ -89,3 +89,64 @@ func TestExecutor_HarnessMode_RequiresRunner(t *testing.T) {
 		t.Fatal("expected error when Harness nil")
 	}
 }
+
+// envCapturingRunner records the env the executor resolves for the harness.
+type envCapturingRunner struct{ gotEnv map[string]string }
+
+func (s *envCapturingRunner) RunHarness(_ context.Context, _ v1.HarnessSpec, _ string,
+	_ json.RawMessage, _ string, env map[string]string, _ v1.Budget, _ int64,
+) ([]byte, int64, int64, int64, error) {
+	s.gotEnv = env
+	return []byte(`{"ok":true}`), 1, 1, 0, nil
+}
+
+type fakeLeaser struct {
+	vals map[string]string
+	err  error
+}
+
+func (f fakeLeaser) LeaseSecret(_ context.Context, name string, _ time.Duration) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	v, ok := f.vals[name]
+	if !ok {
+		return nil, errors.New("secret not found: " + name)
+	}
+	return []byte(v), nil
+}
+
+func TestExecutor_HarnessMode_ResolvesSecretRefEnv(t *testing.T) {
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	runner := &envCapturingRunner{}
+	e.Harness = runner
+	e.Secrets = fakeLeaser{vals: map[string]string{"gw-token": "Bearer s3cr3t"}}
+
+	a := harnessAgent()
+	a.Spec.Harness.Env = []v1.HarnessEnvVar{
+		{Name: "HEADER_Authorization", SecretRef: &v1.AuthRef{SecretName: "gw-token"}},
+		{Name: "HERMES_MODEL", Value: "hermes-agent"}, // literal — must NOT enter the broker env map
+	}
+	if _, err := e.Run(context.Background(), a, json.RawMessage(`{"prompt":"hi"}`), 0); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if runner.gotEnv["HEADER_Authorization"] != "Bearer s3cr3t" {
+		t.Errorf("resolved env = %v, want HEADER_Authorization leased", runner.gotEnv)
+	}
+	if _, ok := runner.gotEnv["HERMES_MODEL"]; ok {
+		t.Error("literal env leaked into the broker-resolved env map (harness reads literals itself)")
+	}
+}
+
+func TestExecutor_HarnessMode_SecretRefWithoutBrokerErrors(t *testing.T) {
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	e.Harness = &stubRunner{output: []byte(`{}`)}
+	// e.Secrets is nil — a declared secretRef must fail loudly.
+	a := harnessAgent()
+	a.Spec.Harness.Env = []v1.HarnessEnvVar{{Name: "HEADER_Authorization", SecretRef: &v1.AuthRef{SecretName: "x"}}}
+	if _, err := e.Run(context.Background(), a, json.RawMessage(`{}`), 0); err == nil {
+		t.Fatal("expected error: secretRef declared with no broker configured")
+	}
+}

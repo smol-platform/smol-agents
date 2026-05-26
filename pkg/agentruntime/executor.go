@@ -21,6 +21,15 @@ type HarnessRunner interface {
 		budget v1.Budget, seed int64) ([]byte, int64, int64, int64, error)
 }
 
+// SecretLeaser leases a named secret from the broker so the executor can
+// resolve a harness env entry's secretRef into a value the harness sees.
+// Implemented by pkg/secrets.Client (adapter wired in cmd/agent); nil when the
+// run has no broker, in which case a declared secretRef is a hard error rather
+// than a silently-missing credential.
+type SecretLeaser interface {
+	LeaseSecret(ctx context.Context, name string, ttl time.Duration) ([]byte, error)
+}
+
 // Executor is the in-process implementation of the plan-act-observe loop.
 // One Executor instance corresponds to one AgentRun.
 type Executor struct {
@@ -32,6 +41,10 @@ type Executor struct {
 	// Harness drives Mode==harness Agents. Optional when every Agent
 	// the executor sees is Mode==loop.
 	Harness HarnessRunner
+
+	// Secrets resolves harness env secretRef entries via the broker. Optional;
+	// required only when an Agent declares a harness env with a secretRef.
+	Secrets SecretLeaser
 }
 
 // New returns a default Executor. Caller must set LLM (for Mode=loop)
@@ -331,6 +344,32 @@ func (e *Executor) toolsFor(allowed map[string]bool) []v1.Tool {
 // helper — keep an import alive
 var _ = time.Second
 
+// resolveHarnessEnv leases each harness env entry that carries a secretRef and
+// returns a name→value map for the harness. Entries with a literal Value are
+// left to the harness (it reads HarnessSpec.Env directly). A secretRef with no
+// configured broker is a hard error — a missing credential must fail loudly,
+// not silently produce an unauthenticated call.
+func (e *Executor) resolveHarnessEnv(ctx context.Context, vars []v1.HarnessEnvVar) (map[string]string, error) {
+	var out map[string]string
+	for _, v := range vars {
+		if v.SecretRef == nil || v.SecretRef.SecretName == "" {
+			continue
+		}
+		if e.Secrets == nil {
+			return nil, fmt.Errorf("agentruntime: harness env %q has a secretRef but no secret broker is configured", v.Name)
+		}
+		val, err := e.Secrets.LeaseSecret(ctx, v.SecretRef.SecretName, 0)
+		if err != nil {
+			return nil, fmt.Errorf("agentruntime: lease secret %q for env %q: %w", v.SecretRef.SecretName, v.Name, err)
+		}
+		if out == nil {
+			out = make(map[string]string, len(vars))
+		}
+		out[v.Name] = string(val)
+	}
+	return out, nil
+}
+
 // runHarness drives a single Mode==harness execution. The harness gets
 // one shot at the input; we record one Step capturing the entire call.
 func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.RawMessage, seed int64) (Result, error) {
@@ -340,9 +379,17 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 	if agent.Spec.Harness == nil {
 		return Result{}, errors.New("agentruntime: spec.harness is required (mode=harness)")
 	}
+	// Resolve harness env secretRef entries to values via the broker. Literal
+	// env travels in the HarnessSpec and is read by the harness itself; this
+	// map carries only the broker-leased secrets (e.g. a gateway bearer token).
+	env, err := e.resolveHarnessEnv(ctx, agent.Spec.Harness.Env)
+	if err != nil {
+		return Result{}, err
+	}
+
 	startedAt := e.Clock.Now()
 	out, tIn, tOut, durMs, err := e.Harness.RunHarness(ctx, *agent.Spec.Harness, agent.Spec.Instructions,
-		input, agent.Spec.Harness.WorkingDirOrEmpty(), nil, agent.Spec.Budget, seed)
+		input, agent.Spec.Harness.WorkingDirOrEmpty(), env, agent.Spec.Budget, seed)
 	endedAt := e.Clock.Now()
 
 	usage := v1.Usage{Steps: 1, Tokens: tIn + tOut, ToolCalls: 0,
