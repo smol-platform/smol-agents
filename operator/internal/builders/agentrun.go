@@ -32,6 +32,12 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	default:
 		main = loopContainer(agent, nil)
 	}
+	// Every run pod executes `agent run` against the mounted spec, regardless of
+	// mode — this overrides the container builders' default entrypoint/args. The
+	// container image (harness.image / agent default) must contain /agent.
+	main.Command = []string{"/agent", "run", "--dir=" + RunSpecMountPath}
+	main.Args = nil
+	main.VolumeMounts = append(main.VolumeMounts, runSpecMount())
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":      "smol-agents",
@@ -60,6 +66,7 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 				},
 			},
 			Containers: []corev1.Container{main},
+			Volumes:    []corev1.Volume{runSpecVolume(run.Name)},
 		},
 	}
 

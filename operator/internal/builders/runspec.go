@@ -1,0 +1,79 @@
+// Package builders — runspec.go
+//
+// The AgentRun pod executes `agent run --dir=<RunSpecMountPath>`, reading the
+// Agent + AgentRunSpec from a projected ConfigMap the controller renders. This
+// is what gives the run pod something to execute (the executor/harness layer
+// otherwise had no caller).
+package builders
+
+import (
+	"encoding/json"
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+)
+
+const (
+	// RunSpecMountPath is where the run-spec ConfigMap is mounted; the
+	// `agent run` entrypoint reads agent.json + run.json from here.
+	RunSpecMountPath = "/etc/smol-agents/run"
+
+	runSpecVolumeName = "runspec"
+
+	// These filenames MUST match agentruntime.AgentSpecFile / RunSpecFile.
+	runSpecAgentFile = "agent.json"
+	runSpecRunFile   = "run.json"
+)
+
+// RunSpecConfigMapName is the per-run spec ConfigMap name.
+func RunSpecConfigMapName(runName string) string { return runName + "-runspec" }
+
+// BuildRunSpecConfigMap renders the Agent + AgentRunSpec the run pod executes.
+// The Agent is marshalled as the pure (CRD-free) v1.Agent the executor loads.
+func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent) (*corev1.ConfigMap, error) {
+	agentJSON, err := json.Marshal(pure.Agent{Spec: agent.Spec})
+	if err != nil {
+		return nil, fmt.Errorf("marshal agent spec: %w", err)
+	}
+	runJSON, err := json.Marshal(run.Spec)
+	if err != nil {
+		return nil, fmt.Errorf("marshal run spec: %w", err)
+	}
+	return &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      RunSpecConfigMapName(run.Name),
+			Namespace: run.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "smol-agents",
+				"app.kubernetes.io/component": "agent-run",
+				"agents.smol-agents.ai/agent": agent.Name,
+				"agents.smol-agents.ai/run":   run.Name,
+			},
+		},
+		Data: map[string]string{
+			runSpecAgentFile: string(agentJSON),
+			runSpecRunFile:   string(runJSON),
+		},
+	}, nil
+}
+
+// runSpecVolume + mount wire the spec ConfigMap into the run container.
+func runSpecVolume(runName string) corev1.Volume {
+	return corev1.Volume{
+		Name: runSpecVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: RunSpecConfigMapName(runName)},
+			},
+		},
+	}
+}
+
+func runSpecMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: runSpecVolumeName, MountPath: RunSpecMountPath, ReadOnly: true}
+}

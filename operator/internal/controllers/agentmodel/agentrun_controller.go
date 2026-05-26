@@ -2,6 +2,7 @@ package agentmodel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
 
 // memoryFSRetriever resolves a MemoryRetriever by name in the same namespace as
@@ -124,6 +126,12 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	pod := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod)
 	if apierrors.IsNotFound(err) {
+		// Render the spec the run pod executes (`agent run` reads it) before the
+		// pod, so the mounted ConfigMap exists when the pod schedules.
+		if err := r.ensureRunSpec(ctx, run, agent); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure run spec: %w", err)
+		}
+
 		desired := builders.BuildAgentRunPod(run, agent)
 
 		// Attach filesystem MemoryRetriever mount if referenced (R-MEM-FS-2).
@@ -163,8 +171,10 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.markRunning(run)
 	case corev1.PodSucceeded:
 		r.markTerminal(run, pure.PhaseCompleted, "")
+		r.foldRunResult(run, pod)
 	case corev1.PodFailed:
 		r.markTerminal(run, pure.PhaseFailed, terminationReason(pod))
+		r.foldRunResult(run, pod)
 	}
 
 	if err := r.Status().Update(ctx, run); err != nil {
@@ -219,4 +229,62 @@ func terminationReason(pod *corev1.Pod) string {
 		}
 	}
 	return "pod:Failed"
+}
+
+// ensureRunSpec creates (once) the ConfigMap the run pod mounts, carrying the
+// Agent + AgentRunSpec the `agent run` entrypoint executes. Owned by the run so
+// it is garbage-collected with it. The spec is immutable per run, so an existing
+// ConfigMap is left as-is.
+func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) error {
+	cm, err := builders.BuildRunSpecConfigMap(run, agent)
+	if err != nil {
+		return err
+	}
+	if err := ctrl.SetControllerReference(run, cm, r.Scheme); err != nil {
+		return err
+	}
+	existing := &corev1.ConfigMap{}
+	getErr := r.Get(ctx, types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, existing)
+	if apierrors.IsNotFound(getErr) {
+		return r.Create(ctx, cm)
+	}
+	return getErr
+}
+
+// foldRunResult parses the run container's termination message (the RunResult
+// the `agent run` entrypoint emits) into AgentRun.Status: output, usage, and —
+// when the runtime reports a more specific phase than the Pod (e.g. Expired on
+// a budget cap, which still exits 0) — the phase itself.
+func (r *AgentRunReconciler) foldRunResult(run *amv1.AgentRun, pod *corev1.Pod) {
+	rr, ok := runResultFromPod(pod)
+	if !ok {
+		return
+	}
+	run.Status.Output = rr.Output
+	run.Status.Usage = rr.Usage
+	if rr.Error != "" && run.Status.TerminationReason == "" {
+		run.Status.TerminationReason = rr.Error
+	}
+	if rr.Phase != "" {
+		run.Status.State = rr.Phase
+	}
+}
+
+// runResultFromPod reads the RunResult JSON the run container wrote to its
+// termination message. Matches the execution container (agent|harness), not the
+// AgentFS / memory / secret-proxy sidecars.
+func runResultFromPod(pod *corev1.Pod) (agentruntime.RunResult, bool) {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != "agent" && cs.Name != "harness" {
+			continue
+		}
+		if cs.State.Terminated == nil || cs.State.Terminated.Message == "" {
+			continue
+		}
+		var rr agentruntime.RunResult
+		if err := json.Unmarshal([]byte(cs.State.Terminated.Message), &rr); err == nil {
+			return rr, true
+		}
+	}
+	return agentruntime.RunResult{}, false
 }
