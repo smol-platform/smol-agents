@@ -27,3 +27,9 @@ func NewSPIREPeerAttestor(addr string) (*SPIREPeerAttestor, error) {
 func (a *SPIREPeerAttestor) Attest(ctx context.Context, conn net.Conn) (spiffeid.ID, error) {
 	return spiffeid.ID{}, ErrUnsupportedOS
 }
+
+// Attest on non-Linux returns ErrUnsupportedOS (SO_PEERCRED is Linux-only). The
+// pure ID logic (localPrincipal / LocalIDForUID) remains testable everywhere.
+func (a LocalPeerAttestor) Attest(ctx context.Context, conn net.Conn) (spiffeid.ID, error) {
+	return spiffeid.ID{}, ErrUnsupportedOS
+}

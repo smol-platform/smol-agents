@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
@@ -80,15 +79,40 @@ func pickByPID(svids []*x509svid.SVID, pid int) (spiffeid.ID, bool) {
 	return svids[0].ID, true
 }
 
+// Attest authenticates the peer by its SO_PEERCRED uid and returns the
+// synthetic local identity. No SPIRE/workload-API dependency.
+func (a LocalPeerAttestor) Attest(_ context.Context, conn net.Conn) (spiffeid.ID, error) {
+	uc, err := peerUcred(conn)
+	if err != nil {
+		return spiffeid.ID{}, fmt.Errorf("secrets: SO_PEERCRED: %w", err)
+	}
+	td := a.TrustDomain
+	if td.IsZero() {
+		if td, err = spiffeid.TrustDomainFromString(DefaultLocalTrustDomain); err != nil {
+			return spiffeid.ID{}, err
+		}
+	}
+	return localPrincipal(td, uc.Uid)
+}
+
 // peerPID returns the PID of the unix-domain socket peer.
 func peerPID(conn net.Conn) (int, error) {
+	uc, err := peerUcred(conn)
+	if err != nil {
+		return 0, err
+	}
+	return int(uc.Pid), nil
+}
+
+// peerUcred returns the peer's SO_PEERCRED (uid/gid/pid).
+func peerUcred(conn net.Conn) (*unix.Ucred, error) {
 	uconn, ok := conn.(*net.UnixConn)
 	if !ok {
-		return 0, errors.New("secrets: connection is not unix-domain")
+		return nil, errors.New("secrets: connection is not unix-domain")
 	}
 	raw, err := uconn.SyscallConn()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var ucred *unix.Ucred
 	var inner error
@@ -96,17 +120,13 @@ func peerPID(conn net.Conn) (int, error) {
 		ucred, inner = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
 	})
 	if cerr != nil {
-		return 0, cerr
+		return nil, cerr
 	}
 	if inner != nil {
-		return 0, inner
+		return nil, inner
 	}
 	if ucred == nil {
-		return 0, errors.New("secrets: SO_PEERCRED returned nil")
+		return nil, errors.New("secrets: SO_PEERCRED returned nil")
 	}
-	pid, err := strconv.Atoi(strconv.Itoa(int(ucred.Pid)))
-	if err != nil {
-		return 0, err
-	}
-	return pid, nil
+	return ucred, nil
 }

@@ -24,11 +24,16 @@ import (
 
 // brokerConfig describes the broker's YAML configuration.
 type brokerConfig struct {
-	SocketPath      string        `yaml:"socketPath"`
-	WorkloadAPIAddr string        `yaml:"workloadAPI"`
-	MaxLeaseTTL     time.Duration `yaml:"maxLeaseTTL"`
-	DefaultTTL      time.Duration `yaml:"defaultTTL"`
-	Backend         struct {
+	SocketPath      string `yaml:"socketPath"`
+	WorkloadAPIAddr string `yaml:"workloadAPI"`
+	// PeerAuth selects how peers are attested: "spire" (default) uses the
+	// SPIRE workload API; "local" uses SO_PEERCRED uid (no SPIRE); "spire+local"
+	// tries SPIRE then falls back to local.
+	PeerAuth         string        `yaml:"peerAuth"`
+	LocalTrustDomain string        `yaml:"localTrustDomain"` // synthetic TD for peerAuth=local
+	MaxLeaseTTL      time.Duration `yaml:"maxLeaseTTL"`
+	DefaultTTL       time.Duration `yaml:"defaultTTL"`
+	Backend          struct {
 		Kind   string `yaml:"kind"` // "static" | "vault"
 		Static []struct {
 			SPIFFEID string            `yaml:"spiffeID"`
@@ -72,7 +77,7 @@ func main() {
 		logger.Error("policy", "err", err)
 		os.Exit(2)
 	}
-	attestor, err := secrets.NewSPIREPeerAttestor(cfg.WorkloadAPIAddr)
+	attestor, err := buildAttestor(cfg)
 	if err != nil {
 		logger.Error("attestor", "err", err)
 		os.Exit(2)
@@ -127,6 +132,30 @@ func loadBrokerConfig(path string) (brokerConfig, error) {
 		cfg.Backend.Kind = "static"
 	}
 	return cfg, nil
+}
+
+// buildAttestor selects the peer attestor per cfg.PeerAuth. "spire" (default)
+// needs the SPIRE workload API; "local" uses SO_PEERCRED uid (no SPIRE, for
+// in-pod brokers); "spire+local" prefers SPIRE and falls back to local.
+func buildAttestor(cfg brokerConfig) (secrets.PeerAttestor, error) {
+	switch cfg.PeerAuth {
+	case "", "spire":
+		return secrets.NewSPIREPeerAttestor(cfg.WorkloadAPIAddr)
+	case "local":
+		return secrets.NewLocalPeerAttestor(cfg.LocalTrustDomain)
+	case "spire+local":
+		s, err := secrets.NewSPIREPeerAttestor(cfg.WorkloadAPIAddr)
+		if err != nil {
+			return nil, err
+		}
+		l, err := secrets.NewLocalPeerAttestor(cfg.LocalTrustDomain)
+		if err != nil {
+			return nil, err
+		}
+		return secrets.MultiAttestor{s, l}, nil
+	default:
+		return nil, errors.New("unknown peerAuth: " + cfg.PeerAuth)
+	}
 }
 
 func buildBackend(cfg brokerConfig) (secrets.Backend, error) {
