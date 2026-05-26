@@ -92,8 +92,8 @@ func (m MemoryMountInput) sidecarImage() string {
 }
 
 // defaultAgentFSSidecarImage is the AgentFS sidecar image used when
-// AgentFSSpec.Image is empty (SQLite-canonical FS + S3 backup/restore/WAL).
-// Note: this image isn't built in-repo yet (no cmd/agentfs-sidecar).
+// AgentFSSpec.Image is empty (built from cmd/agentfs-sidecar: S3 restore +
+// periodic full-snapshot backup; SQLite WAL streaming is not yet implemented).
 func defaultAgentFSSidecarImage() string { return Image("agentfs-sidecar") }
 
 // volumeSizeLimit returns a resource.Quantity for the EmptyDir SizeLimit based
