@@ -28,7 +28,7 @@ func TestRegistry_AllKindsRegistered(t *testing.T) {
 	r := Default()
 	for _, k := range []v1.HarnessKind{
 		v1.HarnessClaudeCode, v1.HarnessCodex, v1.HarnessAider, v1.HarnessGoose,
-		v1.HarnessGenericCLI, v1.HarnessPi, v1.HarnessGenericHTTP,
+		v1.HarnessGenericCLI, v1.HarnessPi, v1.HarnessGenericHTTP, v1.HarnessHermes,
 	} {
 		if _, err := r.For(k); err != nil {
 			t.Errorf("missing impl for %s: %v", k, err)
@@ -160,6 +160,106 @@ func TestGenericHTTPHarness_HTTPError(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "500") {
 		t.Errorf("expected 500 error: %v", err)
+	}
+}
+
+func TestHermesHarness(t *testing.T) {
+	var gotBody map[string]any
+	var gotHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		gotHeaders = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello from hermes"}}],` +
+			`"usage":{"prompt_tokens":12,"completion_tokens":34}}`))
+	}))
+	defer srv.Close()
+
+	h := &HermesHarness{Client: srv.Client()}
+	resp, err := h.Run(context.Background(), Request{
+		Spec: v1.HarnessSpec{
+			Kind:          v1.HarnessHermes,
+			SessionPolicy: v1.SessionPersistent,
+			HTTP:          &v1.HarnessHTTPSpec{URL: srv.URL},
+		},
+		Instructions: "be terse",
+		Input:        json.RawMessage(`{"prompt":"hi"}`),
+		Env: map[string]string{
+			"HEADER_Authorization": "Bearer sk-xyz",
+			"HERMES_SESSION_ID":    "sess-7",
+			"HERMES_MODEL":         "hermes-4-405b",
+			"BODY_temperature":     "0.5",
+		},
+		Budget: v1.Budget{MaxWallClockSeconds: 5, MaxTokens: 4096},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Response + real token accounting from usage.
+	if string(resp.Output) != "hello from hermes" {
+		t.Errorf("output = %q", resp.Output)
+	}
+	if resp.TokensIn != 12 || resp.TokensOut != 34 {
+		t.Errorf("usage tokens = %d/%d, want 12/34", resp.TokensIn, resp.TokensOut)
+	}
+	// Model override + budget-derived max_tokens + JSON-typed BODY_ extra.
+	if gotBody["model"] != "hermes-4-405b" {
+		t.Errorf("model = %v", gotBody["model"])
+	}
+	if gotBody["max_tokens"] != float64(4096) {
+		t.Errorf("max_tokens = %v", gotBody["max_tokens"])
+	}
+	if gotBody["temperature"] != 0.5 {
+		t.Errorf("temperature = %v (%T), want 0.5 number", gotBody["temperature"], gotBody["temperature"])
+	}
+	// messages = [system(instructions), user(prompt)].
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages len = %d, want 2", len(msgs))
+	}
+	m0, _ := msgs[0].(map[string]any)
+	m1, _ := msgs[1].(map[string]any)
+	if m0["role"] != "system" || m0["content"] != "be terse" {
+		t.Errorf("system message = %v", m0)
+	}
+	if m1["role"] != "user" || m1["content"] != "hi" {
+		t.Errorf("user message = %v", m1)
+	}
+	// Auth + session-continuity headers.
+	if gotHeaders.Get("Authorization") != "Bearer sk-xyz" {
+		t.Errorf("Authorization = %q", gotHeaders.Get("Authorization"))
+	}
+	if gotHeaders.Get("X-Hermes-Session-Id") != "sess-7" {
+		t.Errorf("X-Hermes-Session-Id = %q", gotHeaders.Get("X-Hermes-Session-Id"))
+	}
+}
+
+func TestHermesHarness_EphemeralOmitsSession(t *testing.T) {
+	var gotHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	h := &HermesHarness{Client: srv.Client()}
+	if _, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, SessionPolicy: v1.SessionEphemeral, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Input: json.RawMessage(`{"prompt":"x"}`),
+		Env:   map[string]string{"HERMES_SESSION_ID": "should-not-send"},
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := gotHeaders.Get("X-Hermes-Session-Id"); got != "" {
+		t.Errorf("ephemeral run leaked session header: %q", got)
+	}
+}
+
+func TestHermesHarness_RequiresURL(t *testing.T) {
+	h := &HermesHarness{}
+	if _, err := h.Run(context.Background(), Request{Spec: v1.HarnessSpec{Kind: v1.HarnessHermes}}); err == nil {
+		t.Error("expected error when http.url is missing")
 	}
 }
 

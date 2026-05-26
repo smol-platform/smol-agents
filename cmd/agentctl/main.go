@@ -113,7 +113,7 @@ func cmdDeploy(args []string) int {
 	operatorImg := fs.String("operator-image", "", "operator image override (default: chart pin)")
 	manifestsDir := fs.String("manifests-dir", "", "kustomize source root (default: walk up to repo)")
 	withWebhooks := fs.Bool("with-webhooks", false, "install operator with admission webhooks (requires cert-manager)")
-	sample := fs.String("sample", "", "also apply a sample CR: minimal | full | claude-code | codex | pi")
+	sample := fs.String("sample", "", "also apply a sample CR: minimal | full | claude-code | codex | pi | hermes")
 	teardown := fs.Bool("teardown", false, "remove the deployment instead of installing")
 	dryRun := fs.Bool("dry-run", false, "render + validate, no cluster changes")
 

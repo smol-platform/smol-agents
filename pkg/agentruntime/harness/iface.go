@@ -87,6 +87,7 @@ func Default() *Registry {
 	r.Register(&GenericCLIHarness{})
 	r.Register(&PiHarness{})
 	r.Register(&GenericHTTPHarness{})
+	r.Register(&HermesHarness{})
 	return r
 }
 

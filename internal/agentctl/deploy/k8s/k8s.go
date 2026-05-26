@@ -109,7 +109,7 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	if o.Common.Sample != "" {
 		f, ok := sampleFileFor(o.Common.Sample)
 		if !ok {
-			return fmt.Errorf("unknown --sample %q (one of: minimal, full, claude-code, codex, pi)", o.Common.Sample)
+			return fmt.Errorf("unknown --sample %q (one of: minimal, full, claude-code, codex, pi, hermes)", o.Common.Sample)
 		}
 		fmt.Fprintf(out, "==> Applying sample agent (%s)\n", f)
 		if err := applySampleFile(ctx, c, out, o, f); err != nil {
@@ -229,6 +229,8 @@ func sampleFileFor(name string) (string, bool) {
 		return "agent_codex.yaml", true
 	case "pi":
 		return "agent_pi.yaml", true
+	case "hermes":
+		return "agent_hermes.yaml", true
 	}
 	return "", false
 }

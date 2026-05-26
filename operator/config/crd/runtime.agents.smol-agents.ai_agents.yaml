@@ -56,7 +56,7 @@ spec:
                   properties:
                     kind:
                       type: string
-                      enum: [claude-code, codex, pi, aider, goose, generic-cli, generic-http]
+                      enum: [claude-code, codex, pi, aider, goose, generic-cli, generic-http, hermes]
                     image: { type: string }
                     version: { type: string }
                     command:

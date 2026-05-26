@@ -42,6 +42,9 @@ const (
 	HarnessGoose       HarnessKind = "goose"
 	HarnessGenericCLI  HarnessKind = "generic-cli"
 	HarnessGenericHTTP HarnessKind = "generic-http"
+	// HarnessHermes drives NousResearch's Hermes Agent gateway via its
+	// OpenAI-compatible /v1/chat/completions API (HTTP, like pi/generic-http).
+	HarnessHermes HarnessKind = "hermes"
 )
 
 // Valid returns true iff k is a known kind. Unknown kinds are rejected
@@ -49,7 +52,7 @@ const (
 func (k HarnessKind) Valid() bool {
 	switch k {
 	case HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessAider, HarnessGoose,
-		HarnessGenericCLI, HarnessGenericHTTP:
+		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes:
 		return true
 	}
 	return false
@@ -186,7 +189,7 @@ func ValidateHarness(h HarnessSpec) error {
 		errs = append(errs, fmt.Errorf("harness.sessionPolicy=%q is invalid", h.SessionPolicy))
 	}
 	switch h.Kind {
-	case HarnessGenericHTTP, HarnessPi:
+	case HarnessGenericHTTP, HarnessPi, HarnessHermes:
 		if h.HTTP == nil || strings.TrimSpace(h.HTTP.URL) == "" {
 			errs = append(errs, errors.New("harness.http.url is required for kind="+string(h.Kind)))
 		}

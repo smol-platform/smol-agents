@@ -1,0 +1,60 @@
+# Hermes Agent (NousResearch) wrapped as a smol-agents Agent.
+#
+# Hermes is a full self-hosted agent (memory + skills + tools); deploy its
+# gateway separately as a normal workload — it IS the agent:
+#
+#   nousresearch/hermes-agent gateway run   (Deployment + Service on :8642)
+#   env: API_SERVER_ENABLED=true, API_SERVER_KEY=<bearer>, OPENROUTER_API_KEY=<provider key>
+#
+# This Agent then delegates each Run to that gateway over its OpenAI-compatible
+# API, so Hermes runs gain the platform's budget / SPIFFE identity / AgentPolicy
+# / audit. The `hermes` harness builds the chat request, forwards a persistent
+# session id (Hermes memory across Runs), and folds usage tokens back into the
+# Run status.
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: hermes-gateway, namespace: tenant-a }
+stringData:
+  # Must match the gateway's API_SERVER_KEY; stored as a full header value.
+  authorization: "Bearer change-me-to-API_SERVER_KEY"
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: hermes
+  namespace: tenant-a
+spec:
+  mode: harness
+  instructions: "You are Hermes — candid, resourceful, concise."
+  budget:
+    maxSteps: 1
+    maxTokens: 100000
+    maxWallClockSeconds: 300
+    maxToolCalls: 0
+  harness:
+    kind: hermes
+    image: ghcr.io/smol-platform/smol-agents/agent:0.1.0   # the harness runtime
+    sessionPolicy: persistent          # carry Hermes memory/skills across Runs
+    http:
+      url: http://hermes.hermes.svc.cluster.local:8642/v1/chat/completions
+    env:
+      # Auth to the gateway (broker-managed): HEADER_<name> -> request header.
+      - name: HEADER_Authorization
+        secretRef: { secretName: hermes-gateway }
+      # Stable id -> Hermes remembers across Runs (sent only when persistent).
+      - name: HERMES_SESSION_ID
+        value: tenant-a-hermes
+      # Optional: pick the gateway model + sampling knobs (BODY_ -> request body).
+      - name: HERMES_MODEL
+        value: hermes-agent
+      - name: BODY_temperature
+        value: "0.7"
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata: { name: hermes-001, namespace: tenant-a }
+spec:
+  agentRef: hermes
+  input: { prompt: "Introduce yourself and summarize what you can do." }
+  seed: 1
