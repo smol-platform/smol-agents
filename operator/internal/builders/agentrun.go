@@ -23,38 +23,24 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 		mode = pure.ModeLoop
 	}
 
-	containers := []corev1.Container{}
-	volumes := []corev1.Volume{}
-	volumeMounts := []corev1.VolumeMount{}
-
-	// AgentFS sidecar + shared volume when Storage is configured.
-	if agent.Spec.Storage != nil && agent.Spec.Storage.Kind == pure.StorageAgentFS && agent.Spec.Storage.AgentFS != nil {
-		mp := agent.Spec.Storage.AgentFS.MountPath
-		if mp == "" {
-			mp = "/var/agentfs"
-		}
-		volumes = append(volumes, corev1.Volume{
-			Name:         "agentfs",
-			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
-		})
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "agentfs", MountPath: mp})
-	}
-
+	// The single execution container; the AgentFS volume mount (if any) is
+	// added by AttachStorageFS after the pod is assembled.
+	var main corev1.Container
 	switch mode {
 	case pure.ModeHarness:
-		containers = append(containers, harnessContainer(agent, volumeMounts))
+		main = harnessContainer(agent, nil)
 	default:
-		containers = append(containers, loopContainer(agent, volumeMounts))
+		main = loopContainer(agent, nil)
 	}
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":      "smol-agents",
 		"app.kubernetes.io/component": "agent-run",
-		"agents.smol-agents.ai/agent":      agent.Name,
-		"agents.smol-agents.ai/run":        run.Name,
+		"agents.smol-agents.ai/agent": agent.Name,
+		"agents.smol-agents.ai/run":   run.Name,
 	}
 
-	return &corev1.Pod{
+	pod := &corev1.Pod{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      run.Name,
@@ -73,10 +59,17 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
 			},
-			Containers: containers,
-			Volumes:    volumes,
+			Containers: []corev1.Container{main},
 		},
 	}
+
+	// Durable AgentFS storage: bounded volume + restore init container +
+	// serving sidecar (S3 backup/WAL). Replaces the former EmptyDir-only stub
+	// so the agent's files actually persist across Runs (R-AFS).
+	if input, ok := storageMountFor(&agent.Spec); ok {
+		AttachStorageFS(pod, input)
+	}
+	return pod
 }
 
 func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Container {
