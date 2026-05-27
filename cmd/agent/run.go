@@ -40,10 +40,12 @@ func runAgentRun(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Wire the broker leaser only when its socket is actually present — the
-	// executor errors clearly if a secretRef is declared without it.
+	// Wire the broker leaser when the broker sidecar is attached. The sidecar
+	// starts concurrently with this container, so the socket can lag our
+	// startup by a few seconds — poll for it. The executor errors clearly if a
+	// secretRef is declared but no broker ever appears.
 	var leaser agentruntime.SecretLeaser
-	if fi, err := os.Stat(*socket); err == nil && fi.Mode()&os.ModeSocket != 0 {
+	if waitForBrokerSocket(*socket, 60*time.Second) {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
@@ -69,6 +71,28 @@ func runAgentRun(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// waitForBrokerSocket reports whether the secret-broker UDS is usable. The
+// broker runs as a sidecar that starts in parallel with this container, so the
+// socket can lag our startup. The operator mounts the broker's EmptyDir (the
+// socket's parent dir) only when it injects the sidecar, so a present directory
+// means "a broker is attached" and we poll until the socket binds or timeout
+// elapses; an absent directory means no broker, so we return immediately.
+func waitForBrokerSocket(socket string, timeout time.Duration) bool {
+	if fi, err := os.Stat(filepath.Dir(socket)); err != nil || !fi.IsDir() {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if fi, err := os.Stat(socket); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // buildLoopLLM constructs the Mode=loop LLM client from the mounted
