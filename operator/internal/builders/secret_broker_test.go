@@ -4,11 +4,28 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
+
+// findNativeSidecar returns the InitContainer with the given name and reports
+// whether it is a properly-configured native sidecar (restartPolicy=Always),
+// which is what makes the pod transition to a terminal phase when the main
+// container exits.
+func findNativeSidecar(pod *corev1.Pod, name string) (*corev1.Container, bool) {
+	for i := range pod.Spec.InitContainers {
+		c := &pod.Spec.InitContainers[i]
+		if c.Name != name {
+			continue
+		}
+		isNative := c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways
+		return c, isNative
+	}
+	return nil, false
+}
 
 func TestAttachSecretBroker(t *testing.T) {
 	run := &amv1.AgentRun{}
@@ -22,14 +39,29 @@ func TestAttachSecretBroker(t *testing.T) {
 
 	pod := BuildAgentRunPod(run, agent)
 	// BuildAgentRunPod alone does not attach the broker — the controller drives it.
-	if hasSidecar(pod, secretProxyName) {
+	if _, ok := findNativeSidecar(pod, secretProxyName); ok {
 		t.Fatal("BuildAgentRunPod should not attach the broker")
 	}
 
 	AttachSecretBroker(pod, run.Name)
-	if !hasSidecar(pod, secretProxyName) {
-		t.Error("secret-proxy sidecar not attached")
+
+	// secret-proxy must be a native sidecar (InitContainer + restartPolicy=Always)
+	// so k8s SIGTERMs it when the run container exits and the pod can reach a
+	// terminal phase — without that, AgentRun.Status would stay stuck Running.
+	c, native := findNativeSidecar(pod, secretProxyName)
+	if c == nil {
+		t.Fatal("secret-proxy not present in InitContainers")
 	}
+	if !native {
+		t.Errorf("secret-proxy must be a native sidecar (restartPolicy=Always), got %v", c.RestartPolicy)
+	}
+
+	// It must be FIRST in InitContainers so it's running before any subsequent
+	// regular init container (and well before main containers start).
+	if pod.Spec.InitContainers[0].Name != secretProxyName {
+		t.Errorf("secret-proxy must be the first InitContainer, got %q", pod.Spec.InitContainers[0].Name)
+	}
+
 	if !hasVolume(pod, secretBrokerVolumeName) || !hasVolume(pod, brokerConfigVolumeName) {
 		t.Error("broker volumes missing")
 	}
@@ -38,9 +70,10 @@ func TestAttachSecretBroker(t *testing.T) {
 	}
 
 	// Idempotent: a second call adds nothing.
-	n := len(pod.Spec.Containers)
+	nInit := len(pod.Spec.InitContainers)
+	nMain := len(pod.Spec.Containers)
 	AttachSecretBroker(pod, run.Name)
-	if len(pod.Spec.Containers) != n {
+	if len(pod.Spec.InitContainers) != nInit || len(pod.Spec.Containers) != nMain {
 		t.Error("AttachSecretBroker not idempotent")
 	}
 }
