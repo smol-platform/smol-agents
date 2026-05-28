@@ -10,7 +10,11 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-char LICENSE[] SEC("license") = "Apache-2.0";
+/* The Linux BPF verifier rejects calls to GPL-restricted helpers
+ * (bpf_probe_read_kernel, bpf_get_current_task, …) unless the program
+ * declares a GPL-compatible license. Dual-license THIS kernel-side BPF
+ * file — userland in this repo stays Apache-2.0. */
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
 struct connect_event {
     __u64 ts_ns;

@@ -24,7 +24,11 @@
 #define AF_INET 2
 #endif
 
-char LICENSE[] SEC("license") = "Apache-2.0";
+/* The Linux BPF verifier rejects calls to GPL-restricted helpers
+ * (bpf_probe_read_kernel, bpf_get_current_task, …) unless the program
+ * declares a GPL-compatible license. Dual-license THIS kernel-side BPF
+ * file — userland in this repo stays Apache-2.0. */
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
 // ---------------------------------------------------------------------
 // redirect_cidrs — LPM trie keyed by an IPv4 prefix; the value is the
