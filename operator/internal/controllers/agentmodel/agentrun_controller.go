@@ -232,9 +232,10 @@ func (r *AgentRunReconciler) markTerminal(run *amv1.AgentRun, phase pure.Phase, 
 	run.Status.State = phase
 	now := metav1.Now()
 	run.Status.EndedAt = &now
-	if reason != "" {
-		run.Status.TerminationReason = reason
-	}
+	// Terminal state owns TerminationReason — overwrite any stale Pending/
+	// Running hint (e.g. "Pod is Pending" left by an earlier markPending).
+	// foldRunResult may refine this further with the runtime's own reason.
+	run.Status.TerminationReason = reason
 }
 
 func (r *AgentRunReconciler) deletePod(ctx context.Context, run *amv1.AgentRun) error {
@@ -359,7 +360,9 @@ func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentR
 // foldRunResult parses the run container's termination message (the RunResult
 // the `agent run` entrypoint emits) into AgentRun.Status: output, usage, and —
 // when the runtime reports a more specific phase than the Pod (e.g. Expired on
-// a budget cap, which still exits 0) — the phase itself.
+// a budget cap, which still exits 0) — the phase itself. The runtime's own
+// reason (e.g. "budget:tokens") is the most specific signal we have and wins
+// over any pod-level reason markTerminal set; a runtime error wins outright.
 func (r *AgentRunReconciler) foldRunResult(run *amv1.AgentRun, pod *corev1.Pod) {
 	rr, ok := runResultFromPod(pod)
 	if !ok {
@@ -367,8 +370,11 @@ func (r *AgentRunReconciler) foldRunResult(run *amv1.AgentRun, pod *corev1.Pod) 
 	}
 	run.Status.Output = rr.Output
 	run.Status.Usage = rr.Usage
-	if rr.Error != "" && run.Status.TerminationReason == "" {
+	switch {
+	case rr.Error != "":
 		run.Status.TerminationReason = rr.Error
+	case rr.TerminationReason != "":
+		run.Status.TerminationReason = rr.TerminationReason
 	}
 	if rr.Phase != "" {
 		run.Status.State = rr.Phase

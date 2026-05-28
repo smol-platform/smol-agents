@@ -1,6 +1,7 @@
 package agentmodel
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,7 +11,29 @@ import (
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
+
+// runPodWithTerminationMessage builds a Pod whose `harness` container has
+// already terminated with the given RunResult serialised into its termination
+// message — the same shape `agent run` writes for the controller to fold.
+func runPodWithTerminationMessage(rr agentruntime.RunResult) *corev1.Pod {
+	msg, _ := json.Marshal(rr)
+	return &corev1.Pod{
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "harness",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 0,
+						Reason:   "Completed",
+						Message:  string(msg),
+					},
+				},
+			}},
+		},
+	}
+}
 
 func sampleAgent() *amv1.Agent {
 	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "tenant-a"}}
@@ -114,5 +137,83 @@ func TestAgentRunReconciler_MarkTerminal(t *testing.T) {
 	}
 	if run.Status.EndedAt == nil {
 		t.Error("EndedAt not set")
+	}
+}
+
+// markTerminal must own TerminationReason — without this, a stale
+// "Pod is Pending" hint left by markPending was surviving into Completed.
+func TestAgentRunReconciler_MarkTerminal_ClearsStaleReason(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := sampleRun()
+	r.markPending(run, "PodPending", "Pod is Pending") // leaves a stale reason
+	if run.Status.TerminationReason != "Pod is Pending" {
+		t.Fatalf("setup: terminationReason=%q", run.Status.TerminationReason)
+	}
+	r.markTerminal(run, pure.PhaseCompleted, "")
+	if run.Status.TerminationReason != "" {
+		t.Errorf("markTerminal(\"\") should clear stale reason, got %q", run.Status.TerminationReason)
+	}
+}
+
+// The runtime's own reason ("budget:tokens" for an Expired run that still
+// exits 0) is the most specific signal and must win over whatever pod-level
+// reason markTerminal left behind.
+func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := sampleRun()
+	r.markTerminal(run, pure.PhaseCompleted, "") // pod said Succeeded, no reason
+	pod := runPodWithTerminationMessage(agentruntime.RunResult{
+		Phase:             pure.PhaseExpired,
+		TerminationReason: "budget:tokens",
+		Usage:             pure.Usage{Steps: 1, Tokens: 16102},
+	})
+	r.foldRunResult(run, pod)
+	if run.Status.State != pure.PhaseExpired {
+		t.Errorf("state should be refined to Expired, got %q", run.Status.State)
+	}
+	if run.Status.TerminationReason != "budget:tokens" {
+		t.Errorf("terminationReason = %q, want budget:tokens", run.Status.TerminationReason)
+	}
+	if run.Status.Usage.Tokens != 16102 {
+		t.Errorf("usage not folded: tokens=%d", run.Status.Usage.Tokens)
+	}
+}
+
+// A runtime error wins over both any prior reason and over the runtime's own
+// TerminationReason (an Error is more diagnostic than the bare reason).
+func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := sampleRun()
+	r.markTerminal(run, pure.PhaseFailed, "pod:Error")
+	pod := runPodWithTerminationMessage(agentruntime.RunResult{
+		Phase:             pure.PhaseFailed,
+		TerminationReason: "harness:timeout",
+		Error:             "harness: http 502: upstream refused",
+	})
+	r.foldRunResult(run, pod)
+	if run.Status.TerminationReason != "harness: http 502: upstream refused" {
+		t.Errorf("error should win, got %q", run.Status.TerminationReason)
+	}
+}
+
+// A clean RunResult (no Error, no TerminationReason) must not clobber what
+// markTerminal already set — for a normal Completed run that's the empty
+// string, and the status should land empty.
+func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) {
+	r := &AgentRunReconciler{}
+	run := sampleRun()
+	r.markPending(run, "PodPending", "Pod is Pending")
+	r.markTerminal(run, pure.PhaseCompleted, "")
+	pod := runPodWithTerminationMessage(agentruntime.RunResult{
+		Phase:  pure.PhaseCompleted,
+		Output: json.RawMessage(`{"answer":42}`),
+		Usage:  pure.Usage{Steps: 1, Tokens: 100},
+	})
+	r.foldRunResult(run, pod)
+	if run.Status.TerminationReason != "" {
+		t.Errorf("clean success should leave empty terminationReason, got %q", run.Status.TerminationReason)
+	}
+	if string(run.Status.Output) != `{"answer":42}` {
+		t.Errorf("output not folded: %s", run.Status.Output)
 	}
 }
