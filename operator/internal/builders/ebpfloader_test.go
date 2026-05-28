@@ -41,6 +41,19 @@ func TestBuildEBPFLoaderDaemonSet_Generic(t *testing.T) {
 	}
 }
 
+// The loader binary mounts bpffs itself when MountBPFFS=true (see
+// pkg/ebpfloader/loader_linux.go), so the DaemonSet must NOT include an init
+// container that tries to do it from a shell — the ebpf-loader image is
+// distroless and has no /bin/sh.
+func TestBuildEBPFLoaderDaemonSet_NoInitContainer(t *testing.T) {
+	for name := range LoaderPresets {
+		ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "smol-agents", name)
+		if got := len(ds.Spec.Template.Spec.InitContainers); got != 0 {
+			t.Errorf("preset %q: want 0 init containers, got %d", name, got)
+		}
+	}
+}
+
 func TestBuildEBPFLoaderDaemonSet_MinimalCaps(t *testing.T) {
 	ds := BuildEBPFLoaderDaemonSet(samplePlatform(), "smol-agents", "eks-bottlerocket")
 	sc := ds.Spec.Template.Spec.Containers[0].SecurityContext

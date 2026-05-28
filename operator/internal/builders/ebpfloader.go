@@ -192,30 +192,13 @@ func BuildEBPFLoaderDaemonSet(p *v1.SmolAgentPlatform, ns, presetName string) *a
 					},
 					HostPID:     true,
 					HostNetwork: false,
-					InitContainers: []corev1.Container{{
-						Name:    "init-bpffs",
-						Image:   image,
-						Command: []string{"/bin/sh", "-c", "mountpoint -q " + preset.HostPathBPFFS + " || mount -t bpf bpf " + preset.HostPathBPFFS},
-						SecurityContext: &corev1.SecurityContext{
-							Privileged: ptr.To(true),
-							RunAsUser:  ptr.To[int64](0),
-						},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:             "bpffs",
-							MountPath:        preset.HostPathBPFFS,
-							MountPropagation: ptr.To(corev1.MountPropagationBidirectional),
-						}},
-						Resources: corev1.ResourceRequirements{
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("50m"),
-								corev1.ResourceMemory: resource.MustParse("32Mi"),
-							},
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("10m"),
-								corev1.ResourceMemory: resource.MustParse("16Mi"),
-							},
-						},
-					}},
+					// No init container: the loader binary itself mounts bpffs
+					// when needed (pkg/ebpfloader/loader_linux.go: gated by
+					// cfg.MountBPFFS, which the config emits as true). The old
+					// init-bpffs container ran `/bin/sh -c 'mount ...'` from the
+					// distroless ebpf-loader image — broken on first try since
+					// distroless has no shell, just masked for months by the
+					// preceding ErrImagePull.
 					Containers: []corev1.Container{{
 						Name:            "ebpf-loader",
 						Image:           image,
