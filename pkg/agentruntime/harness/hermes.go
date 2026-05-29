@@ -3,6 +3,8 @@ package harness
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,7 +24,8 @@ import (
 //   - cross-run memory — when SessionPolicy=persistent and a HERMES_SESSION_ID
 //     is present in the resolved env, it sends the X-Hermes-Session-Id (and, if
 //     set, X-Hermes-Session-Key) headers so the agent's memory and skills carry
-//     across Runs. Ephemeral sessions omit them (fresh context per Run).
+//     across Runs. Ephemeral runs (the default) instead send a fresh unique id
+//     per run — omitting the header is NOT stateless (see Run for why).
 //   - extra request fields — any env named BODY_<field> is merged into the
 //     request body, JSON-typed when parseable (e.g. BODY_temperature=0.7,
 //     BODY_reasoning_effort=high). Covers OpenAI knobs + Hermes extra_body.
@@ -109,15 +112,26 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 			httpReq.Header.Set(name, v)
 		}
 	}
-	// Persistent sessions carry Hermes memory/skills across Runs via the
-	// gateway's session headers; ephemeral sessions stay stateless.
-	if req.Spec.SessionPolicy == v1.SessionPersistent {
+	// Hermes's /v1/chat/completions is NOT stateless. When no X-Hermes-Session-Id
+	// header is sent, the gateway derives one from sha256(system prompt + first
+	// user message) and reuses that session across requests — so repeated runs of
+	// the same prompt pile into one ever-growing conversation until it overflows
+	// the model's context window and the gateway returns empty output (cleared
+	// only by restarting the gateway). We therefore always set the header
+	// explicitly, keyed by SessionPolicy, instead of relying on that default.
+	switch req.Spec.SessionPolicy {
+	case v1.SessionPersistent:
+		// Carry Hermes memory/skills across runs via a caller-stable id.
 		if sid := env["HERMES_SESSION_ID"]; sid != "" {
 			httpReq.Header.Set("X-Hermes-Session-Id", sid)
 		}
 		if skey := env["HERMES_SESSION_KEY"]; skey != "" {
 			httpReq.Header.Set("X-Hermes-Session-Key", skey)
 		}
+	default:
+		// Ephemeral (the default): a unique id per run gives each run its own
+		// fresh, empty session — making "ephemeral" actually ephemeral.
+		httpReq.Header.Set("X-Hermes-Session-Id", newEphemeralSessionID())
 	}
 
 	startedAt := time.Now()
@@ -176,6 +190,22 @@ func hermesModel(env map[string]string) string {
 		return m
 	}
 	return defaultHermesModel
+}
+
+// newEphemeralSessionID returns a per-run-unique Hermes session id. Sending a
+// fresh id makes the gateway start a new, empty session instead of falling back
+// to its hash-of-(system+first-user-message) session reuse, which otherwise
+// accumulates an unbounded conversation across runs (see Run). Each AgentRun
+// executes in its own `agent run` process that calls Run exactly once, so a
+// value unique per process is unique per run.
+func newEphemeralSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand effectively never fails; if it somehow does, fall back to
+		// a still-unique value rather than reintroduce a shared session.
+		return fmt.Sprintf("api-eph-%d", time.Now().UnixNano())
+	}
+	return "api-eph-" + hex.EncodeToString(b[:])
 }
 
 // jsonOrString parses v as a JSON scalar/object/array, falling back to the raw

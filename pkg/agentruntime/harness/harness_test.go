@@ -239,27 +239,52 @@ func TestHermesHarness(t *testing.T) {
 	}
 }
 
-func TestHermesHarness_EphemeralOmitsSession(t *testing.T) {
-	var gotHeaders http.Header
+// Ephemeral runs MUST send a unique X-Hermes-Session-Id per run. Omitting it is
+// not stateless: the gateway derives a session from a hash of the system prompt
+// + first user message and reuses it, so repeated identical prompts accumulate
+// one ever-growing conversation until it overflows the context window and the
+// gateway returns empty output. A fresh id per run keeps each run isolated.
+func TestHermesHarness_EphemeralUsesUniqueSession(t *testing.T) {
+	var ids []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHeaders = r.Header.Clone()
+		ids = append(ids, r.Header.Get("X-Hermes-Session-Id"))
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
 	defer srv.Close()
 
 	h := &HermesHarness{Client: srv.Client()}
-	if _, err := h.Run(context.Background(), Request{
+	req := Request{
 		Spec: v1.HarnessSpec{
 			Kind: v1.HarnessHermes, SessionPolicy: v1.SessionEphemeral,
 			HTTP: &v1.HarnessHTTPSpec{URL: srv.URL},
-			Env:  []v1.HarnessEnvVar{{Name: "HERMES_SESSION_ID", Value: "should-not-send"}},
+			// Even if a HERMES_SESSION_ID literal is present, ephemeral must not
+			// reuse it (that is the persistent-mode knob).
+			Env: []v1.HarnessEnvVar{{Name: "HERMES_SESSION_ID", Value: "should-not-send"}},
 		},
 		Input: json.RawMessage(`{"prompt":"x"}`),
-	}); err != nil {
-		t.Fatalf("Run: %v", err)
 	}
-	if got := gotHeaders.Get("X-Hermes-Session-Id"); got != "" {
-		t.Errorf("ephemeral run leaked session header: %q", got)
+	for i := 0; i < 2; i++ {
+		if _, err := h.Run(context.Background(), req); err != nil {
+			t.Fatalf("Run #%d: %v", i, err)
+		}
+	}
+
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(ids))
+	}
+	for _, id := range ids {
+		if id == "" {
+			t.Fatal("ephemeral run omitted X-Hermes-Session-Id (lets the gateway reuse a content-hash session)")
+		}
+		if !strings.HasPrefix(id, "api-eph-") {
+			t.Errorf("session id %q lacks the api-eph- prefix", id)
+		}
+		if id == "should-not-send" {
+			t.Error("ephemeral run reused the HERMES_SESSION_ID literal (that is persistent-only)")
+		}
+	}
+	if ids[0] == ids[1] {
+		t.Errorf("two ephemeral runs shared session id %q; each run must be isolated", ids[0])
 	}
 }
 
