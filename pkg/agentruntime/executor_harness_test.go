@@ -54,6 +54,45 @@ func TestExecutor_HarnessMode_Completed(t *testing.T) {
 	}
 }
 
+// A harness that returns non-JSON text (the common case — a reasoning model
+// explaining its steps in `content`, not a bare JSON object) must still
+// produce a Result whose Output is valid JSON, so the whole RunResult
+// marshals. Regression test for the silent-empty-output bug: non-JSON bytes in
+// a json.RawMessage made json.Marshal fail, and the run entrypoint swallowed
+// the error, emitting empty output.
+func TestExecutor_HarnessMode_NonJSONOutputWrapped(t *testing.T) {
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	prose := "Step 1: F(12) = 144\nFinal line: {\"fib12\": 144}"
+	e.Harness = &stubRunner{output: []byte(prose), tokensIn: 10, tokensOut: 5}
+
+	res, err := e.Run(context.Background(), harnessAgent(), json.RawMessage(`{"prompt":"hi"}`), 0)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Phase != v1.PhaseCompleted {
+		t.Errorf("phase=%s, want Completed", res.Phase)
+	}
+	if !json.Valid(res.Output) {
+		t.Fatalf("Output must be valid JSON, got %q", res.Output)
+	}
+	// The whole wire result must marshal (this is what silently failed before).
+	if _, err := json.Marshal(ResultToWire(res, nil)); err != nil {
+		t.Fatalf("RunResult must marshal: %v", err)
+	}
+	// Output must be a JSON object — AgentRun's status.output is object-typed,
+	// so a bare JSON string would be rejected by the CRD. Non-object text is
+	// wrapped as {"output": "..."} holding the original text verbatim.
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(res.Output, &m); err != nil {
+		t.Fatalf("Output must decode as a JSON object: %v (got %q)", err, res.Output)
+	}
+	var s string
+	if err := json.Unmarshal(m["output"], &s); err != nil || s != prose {
+		t.Errorf("output.output = %q (err %v), want %q", s, err, prose)
+	}
+}
+
 func TestExecutor_HarnessMode_BudgetExpiredOnTokens(t *testing.T) {
 	e := New()
 	e.Clock = &FakeClock{T: time.Unix(0, 0)}

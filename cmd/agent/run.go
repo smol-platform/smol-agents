@@ -53,8 +53,7 @@ func runAgentRun(args []string) int {
 	wire := agentruntime.ResultToWire(res, runErr)
 
 	// Full result to stdout for log-based debugging.
-	full, _ := json.Marshal(wire)
-	os.Stdout.Write(full)
+	os.Stdout.Write(marshalRunResult(wire))
 	os.Stdout.Write([]byte("\n"))
 
 	// Termination message must stay valid JSON within the kubelet's ~4KiB cap,
@@ -63,14 +62,29 @@ func runAgentRun(args []string) int {
 	if len(wire.Output) > 2048 {
 		wire.Output = json.RawMessage(`"<truncated; see pod logs>"`)
 	}
-	if tm, err := json.Marshal(wire); err == nil {
-		_ = os.WriteFile(*termLog, tm, 0o600)
-	}
+	_ = os.WriteFile(*termLog, marshalRunResult(wire), 0o600)
 
 	if runErr != nil {
 		return 1
 	}
 	return 0
+}
+
+// marshalRunResult serializes the run result, never returning empty. If it
+// fails to marshal — e.g. a non-JSON Output slipped into the json.RawMessage —
+// emit a minimal Failed result rather than silently writing nothing. A
+// swallowed marshal error here is exactly how a non-JSON harness answer used to
+// surface as silently-empty AgentRun output.
+func marshalRunResult(wire agentruntime.RunResult) []byte {
+	b, err := json.Marshal(wire)
+	if err == nil {
+		return b
+	}
+	b, _ = json.Marshal(map[string]string{
+		"phase": "Failed",
+		"error": "agent: run result could not be serialized: " + err.Error(),
+	})
+	return b
 }
 
 // waitForBrokerSocket reports whether the secret-broker UDS is usable. The
