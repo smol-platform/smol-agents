@@ -429,27 +429,23 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 	}, nil
 }
 
-// harnessOutputJSON normalizes a harness's raw stdout into a json.RawMessage
-// that is always a JSON object. Two constraints force this:
-//   - Harness output is frequently plain text — an LLM's prose answer, e.g. a
-//     reasoning model that explains its steps before the final line — not a
-//     JSON document. Storing non-JSON bytes in a json.RawMessage makes every
-//     later json.Marshal of the Result/RunResult fail, which (because the
-//     AgentRun pod marshals best-effort) surfaces as silently-empty output.
-//   - AgentRun's status.output is typed `object` in the CRD, so even a valid
-//     bare JSON string/array/number is rejected ("output must be of type
-//     object") and the controller can't fold it.
-//
-// So: pass a JSON object through unchanged (a harness that emits the requested
-// JSON keeps its shape), otherwise wrap the raw text in {"output": "..."}.
+// harnessOutputJSON normalizes a harness's raw stdout into a valid
+// json.RawMessage. Harness output is frequently plain text — an LLM's prose
+// answer, e.g. a reasoning model that explains its steps before the final
+// line — not a JSON document. Storing non-JSON bytes in a json.RawMessage makes
+// every later json.Marshal of the Result/RunResult fail, which (because the
+// AgentRun pod marshals best-effort) surfaces as silently-empty output. So:
+// pass valid JSON through unchanged (a harness that emits structured JSON keeps
+// its shape), otherwise encode the text as a JSON string. AgentRun.status.output
+// accepts any JSON value, so both forms are stored as the run's answer as-is.
 func harnessOutputJSON(out []byte) json.RawMessage {
 	t := bytes.TrimSpace(out)
 	if len(t) == 0 {
 		return nil
 	}
-	if t[0] == '{' && json.Valid(t) {
+	if json.Valid(t) {
 		return json.RawMessage(t)
 	}
-	b, _ := json.Marshal(map[string]string{"output": string(out)}) // cannot fail
+	b, _ := json.Marshal(string(out)) // marshaling a string cannot fail
 	return json.RawMessage(b)
 }

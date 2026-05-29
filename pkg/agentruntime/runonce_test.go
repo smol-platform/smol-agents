@@ -44,10 +44,10 @@ func TestRunOnce_HarnessHTTP(t *testing.T) {
 		t.Fatalf("RunOnce: %v", err)
 	}
 	// The harness content "hi from server" is plain text, not JSON, so it is
-	// wrapped as a JSON object {"output": ...} — a raw non-JSON Output would make
-	// the RunResult fail to marshal (the silent empty-output bug), and a bare
-	// JSON string would be rejected by AgentRun's object-typed status.output.
-	if string(res.Output) != `{"output":"hi from server"}` {
+	// encoded as a JSON string — a raw non-JSON Output would make the RunResult
+	// fail to marshal (the silent empty-output bug). AgentRun's status.output
+	// accepts any JSON value, so the string is stored as the run's answer.
+	if string(res.Output) != `"hi from server"` {
 		t.Errorf("output = %q", res.Output)
 	}
 	if _, err := json.Marshal(ResultToWire(res, nil)); err != nil {

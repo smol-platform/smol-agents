@@ -80,16 +80,14 @@ func TestExecutor_HarnessMode_NonJSONOutputWrapped(t *testing.T) {
 	if _, err := json.Marshal(ResultToWire(res, nil)); err != nil {
 		t.Fatalf("RunResult must marshal: %v", err)
 	}
-	// Output must be a JSON object — AgentRun's status.output is object-typed,
-	// so a bare JSON string would be rejected by the CRD. Non-object text is
-	// wrapped as {"output": "..."} holding the original text verbatim.
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(res.Output, &m); err != nil {
-		t.Fatalf("Output must decode as a JSON object: %v (got %q)", err, res.Output)
-	}
+	// Non-JSON text is encoded as a JSON string (AgentRun.status.output accepts
+	// any JSON value), round-tripping to the original text verbatim.
 	var s string
-	if err := json.Unmarshal(m["output"], &s); err != nil || s != prose {
-		t.Errorf("output.output = %q (err %v), want %q", s, err, prose)
+	if err := json.Unmarshal(res.Output, &s); err != nil {
+		t.Fatalf("Output should decode as a JSON string: %v (got %q)", err, res.Output)
+	}
+	if s != prose {
+		t.Errorf("round-tripped output = %q, want %q", s, prose)
 	}
 }
 

@@ -65,7 +65,10 @@ spec:
                 endedAt: { type: string, format: date-time }
                 terminationReason: { type: string }
                 output:
-                  type: object
+                  # The run's answer is arbitrary JSON — a structured object for
+                  # schema-constrained agents, or a bare JSON string for a
+                  # harness that returns free-form text. Omitting `type` (with
+                  # preserve-unknown-fields) accepts any JSON value.
                   x-kubernetes-preserve-unknown-fields: true
                 usage:
                   type: object
