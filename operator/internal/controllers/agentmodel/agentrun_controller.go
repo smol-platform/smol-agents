@@ -109,7 +109,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			r.markPending(run, "AgentMissing", "spec.agentRef not found")
-			return ctrl.Result{}, r.Status().Update(ctx, run)
+			return r.updateRunStatus(ctx, run, ctrl.Result{})
 		}
 		return ctrl.Result{}, err
 	}
@@ -119,7 +119,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if run.Spec.Cancel && !run.Status.State.Terminal() {
 		_ = r.deletePod(ctx, run)
 		r.markTerminal(run, pure.PhaseCancelled, "cancel:requested")
-		return ctrl.Result{}, r.Status().Update(ctx, run)
+		return r.updateRunStatus(ctx, run, ctrl.Result{})
 	}
 
 	// Ensure the Pod exists.
@@ -132,7 +132,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		provider, brokerValues, prepErr := r.prepareRun(ctx, agent)
 		if prepErr != nil {
 			r.markPending(run, "RunPrepPending", prepErr.Error())
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.Status().Update(ctx, run)
+			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
 		}
 
 		// Render the spec the run pod executes (`agent run` reads it) before the
@@ -163,7 +163,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			// Retriever referenced but not yet resolvable — stay Pending.
 			r.markPending(run, "MemoryRetrieverPending",
 				fmt.Sprintf("MemoryRetriever %q not ready for mounting", run.Spec.MemoryRetrieverRef))
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, r.Status().Update(ctx, run)
+			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
 		}
 
 		// Attach the in-pod secret broker when there are secrets to serve
@@ -180,7 +180,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 		r.markRunning(run)
 		logger.Info("created run pod", "agent", agent.Name)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.Status().Update(ctx, run)
+		return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 5 * time.Second})
 	}
 	if err != nil {
 		return ctrl.Result{}, err
@@ -200,14 +200,29 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.foldRunResult(run, pod)
 	}
 
+	// poll Pod state every 5s until terminal
+	res := ctrl.Result{}
+	if !run.Status.State.Terminal() {
+		res = ctrl.Result{RequeueAfter: 5 * time.Second}
+	}
+	return r.updateRunStatus(ctx, run, res)
+}
+
+// updateRunStatus persists run.Status and maps the outcome onto the (Result,
+// error) the reconcile returns. An optimistic-lock conflict is benign and
+// expected: the cached AgentRun can lag a just-written status (e.g. the Pod
+// watch reconcile racing the periodic 5s poll), so a conflict means the object
+// already advanced — requeue and let the next reconcile read fresh, rather than
+// surfacing a noisy "Reconciler error". onSuccess is returned verbatim when the
+// write lands.
+func (r *AgentRunReconciler) updateRunStatus(ctx context.Context, run *amv1.AgentRun, onSuccess ctrl.Result) (ctrl.Result, error) {
 	if err := r.Status().Update(ctx, run); err != nil {
+		if apierrors.IsConflict(err) {
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return ctrl.Result{}, err
 	}
-	if !run.Status.State.Terminal() {
-		// poll Pod state every 5s until terminal
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-	}
-	return ctrl.Result{}, nil
+	return onSuccess, nil
 }
 
 func (r *AgentRunReconciler) markPending(run *amv1.AgentRun, reason, msg string) {

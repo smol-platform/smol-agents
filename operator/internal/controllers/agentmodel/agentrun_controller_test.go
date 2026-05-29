@@ -1,12 +1,21 @@
 package agentmodel
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
@@ -125,6 +134,77 @@ func TestAgentRunReconciler_MarkRunning(t *testing.T) {
 	r.markRunning(run)
 	if !run.Status.StartedAt.Equal(&first) {
 		t.Errorf("StartedAt drifted on idempotent mark")
+	}
+}
+
+// newRunReconcilerForTest builds an in-memory AgentRun reconciler, optionally
+// intercepting client calls (e.g. to inject a status-update conflict).
+func newRunReconcilerForTest(t *testing.T, fns interceptor.Funcs, initial ...client.Object) *AgentRunReconciler {
+	t.Helper()
+	sch := runtime.NewScheme()
+	if err := corev1.AddToScheme(sch); err != nil {
+		t.Fatalf("corev1 scheme: %v", err)
+	}
+	if err := amv1.AddToScheme(sch); err != nil {
+		t.Fatalf("amv1 scheme: %v", err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(sch).
+		WithObjects(initial...).
+		WithStatusSubresource(&amv1.AgentRun{}).
+		WithInterceptorFuncs(fns).
+		Build()
+	return &AgentRunReconciler{Client: c, Scheme: sch}
+}
+
+// A status-update conflict is benign cache lag, not a failure: updateRunStatus
+// must requeue without surfacing an error (otherwise the controller logs a
+// noisy "Reconciler error" on every Pod-watch/poll race).
+func TestAgentRunReconciler_updateRunStatus_ConflictRequeues(t *testing.T) {
+	run := sampleRun()
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: "runtime.agents.smol-agents.ai", Resource: "agentruns"},
+		run.Name, errors.New("the object has been modified"))
+	r := newRunReconcilerForTest(t, interceptor.Funcs{
+		SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+			return conflict
+		},
+	}, run)
+
+	res, err := r.updateRunStatus(context.Background(), run, ctrl.Result{RequeueAfter: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("conflict must not surface as an error, got %v", err)
+	}
+	if !res.Requeue {
+		t.Errorf("conflict should requeue, got %+v", res)
+	}
+}
+
+// A successful write returns the caller's intended Result verbatim.
+func TestAgentRunReconciler_updateRunStatus_SuccessReturnsResult(t *testing.T) {
+	run := sampleRun()
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, run)
+	want := ctrl.Result{RequeueAfter: 5 * time.Second}
+	res, err := r.updateRunStatus(context.Background(), run, want)
+	if err != nil {
+		t.Fatalf("updateRunStatus: %v", err)
+	}
+	if res != want {
+		t.Errorf("res = %+v, want %+v", res, want)
+	}
+}
+
+// A non-conflict error must still surface — conflict tolerance must not swallow
+// real failures.
+func TestAgentRunReconciler_updateRunStatus_NonConflictErrorSurfaces(t *testing.T) {
+	run := sampleRun()
+	r := newRunReconcilerForTest(t, interceptor.Funcs{
+		SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+			return errors.New("boom")
+		},
+	}, run)
+	if _, err := r.updateRunStatus(context.Background(), run, ctrl.Result{}); err == nil {
+		t.Error("a non-conflict error must surface, not be swallowed")
 	}
 }
 
