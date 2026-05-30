@@ -75,6 +75,10 @@ type BackupPolicy struct {
 
 	// WALSnapshotInterval is the cadence for incremental WAL frame
 	// uploads between full backups. Default is 30s.
+	//
+	// NOT YET ENFORCED: the FilesystemStorage sidecar does full snapshots only
+	// (the serve loop hardcodes WALInterval=0); this field is reserved for a
+	// future WAL-streaming storage driver.
 	// +optional
 	WALSnapshotInterval string `json:"walSnapshotInterval,omitempty"`
 

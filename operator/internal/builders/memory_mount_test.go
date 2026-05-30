@@ -61,10 +61,14 @@ func hasInitContainer(pod *corev1.Pod, name string) bool {
 	return false
 }
 
+// hasSidecar reports whether name is present as a NATIVE sidecar: an init
+// container with restartPolicy=Always. The storage/memory serving sidecars use
+// this shape so the pod can still reach a terminal phase after the agent exits
+// (a regular long-running sidecar would pin Phase=Running on a Never pod).
 func hasSidecar(pod *corev1.Pod, name string) bool {
-	for _, c := range pod.Spec.Containers {
+	for _, c := range pod.Spec.InitContainers {
 		if c.Name == name {
-			return true
+			return c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways
 		}
 	}
 	return false
@@ -172,14 +176,11 @@ func TestAttachMemoryFS_AddsSidecar(t *testing.T) {
 	AttachMemoryFS(pod, input)
 
 	if !hasSidecar(pod, agentFSSidecarName) {
-		t.Errorf("sidecar container %q not added", agentFSSidecarName)
+		t.Errorf("sidecar container %q not added as a native sidecar", agentFSSidecarName)
 	}
-	for _, c := range pod.Spec.Containers {
-		if c.Name == agentFSSidecarName {
-			_, ok := hasMount(c, memoryFSVolumeName)
-			if !ok {
-				t.Error("sidecar container missing VolumeMount for memory-agentfs")
-			}
+	if sc := findCtr(pod, agentFSSidecarName); sc != nil {
+		if _, ok := hasMount(*sc, memoryFSVolumeName); !ok {
+			t.Error("sidecar container missing VolumeMount for memory-agentfs")
 		}
 	}
 }
@@ -194,15 +195,13 @@ func TestAttachMemoryFS_SidecarImage_Custom(t *testing.T) {
 
 	AttachMemoryFS(pod, input)
 
-	for _, c := range pod.Spec.Containers {
-		if c.Name == agentFSSidecarName {
-			if c.Image != "myreg/agentfs:v2" {
-				t.Errorf("sidecar image = %q, want myreg/agentfs:v2", c.Image)
-			}
-			return
-		}
+	sc := findCtr(pod, agentFSSidecarName)
+	if sc == nil {
+		t.Fatal("sidecar container not found")
 	}
-	t.Error("sidecar container not found")
+	if sc.Image != "myreg/agentfs:v2" {
+		t.Errorf("sidecar image = %q, want myreg/agentfs:v2", sc.Image)
+	}
 }
 
 // TestAttachMemoryFS_SidecarImage_Default verifies the default image is used when empty.
@@ -215,15 +214,13 @@ func TestAttachMemoryFS_SidecarImage_Default(t *testing.T) {
 
 	AttachMemoryFS(pod, input)
 
-	for _, c := range pod.Spec.Containers {
-		if c.Name == agentFSSidecarName {
-			if c.Image != defaultAgentFSSidecarImage() {
-				t.Errorf("sidecar image = %q, want %q", c.Image, defaultAgentFSSidecarImage())
-			}
-			return
-		}
+	sc := findCtr(pod, agentFSSidecarName)
+	if sc == nil {
+		t.Fatal("sidecar container not found")
 	}
-	t.Error("sidecar container not found")
+	if sc.Image != defaultAgentFSSidecarImage() {
+		t.Errorf("sidecar image = %q, want %q", sc.Image, defaultAgentFSSidecarImage())
+	}
 }
 
 // TestAttachMemoryFS_AgentContainerMountedNotSidecar verifies the agent container
@@ -243,10 +240,14 @@ func TestAttachMemoryFS_AgentContainerMountedNotSidecar(t *testing.T) {
 		t.Error("agent container missing memory-agentfs VolumeMount")
 	}
 
-	// Sidecar (last container) has exactly one mount for the volume.
-	sidecar := pod.Spec.Containers[len(pod.Spec.Containers)-1]
-	if sidecar.Name != agentFSSidecarName {
-		t.Fatalf("expected sidecar at last index, got %q", sidecar.Name)
+	// The serving sidecar is now a native sidecar (init container,
+	// restartPolicy=Always) with exactly one mount for the volume.
+	sidecar := findCtr(pod, agentFSSidecarName)
+	if sidecar == nil {
+		t.Fatalf("sidecar container %q not found", agentFSSidecarName)
+	}
+	if sidecar.RestartPolicy == nil || *sidecar.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+		t.Error("serving sidecar must be a native sidecar (restartPolicy=Always)")
 	}
 	count := 0
 	for _, vm := range sidecar.VolumeMounts {
@@ -344,7 +345,7 @@ func TestAttachMemoryFS_Idempotent(t *testing.T) {
 	}
 
 	sidecarCount := 0
-	for _, c := range pod.Spec.Containers {
+	for _, c := range pod.Spec.InitContainers {
 		if c.Name == agentFSSidecarName {
 			sidecarCount++
 		}

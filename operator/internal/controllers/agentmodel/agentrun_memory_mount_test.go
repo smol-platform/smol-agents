@@ -8,6 +8,7 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -263,13 +264,17 @@ func TestMemoryMount_PodWiring(t *testing.T) {
 		t.Error("memory-agentfs-init init container missing")
 	}
 
-	// Sidecar must exist.
+	// Sidecar must exist as a native sidecar (init container, restartPolicy=Always)
+	// so the pod can reach a terminal phase after the agent exits.
 	var gotSidecar bool
-	for _, c := range pod.Spec.Containers {
+	for _, c := range pod.Spec.InitContainers {
 		if c.Name == "memory-agentfs-sidecar" {
 			gotSidecar = true
 			if c.Image != "test/agentfs:v1" {
 				t.Errorf("sidecar image = %q, want test/agentfs:v1", c.Image)
+			}
+			if c.RestartPolicy == nil || *c.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+				t.Error("memory-agentfs-sidecar must be a native sidecar (restartPolicy=Always)")
 			}
 		}
 	}

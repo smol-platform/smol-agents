@@ -37,6 +37,11 @@ const (
 	// storageFSSidecarName / storageFSInitName are the storage AgentFS containers.
 	storageFSSidecarName = "agentfs-sidecar"
 	storageFSInitName    = "agentfs-init"
+
+	// agentFSShutdownGraceSeconds is the pod terminationGracePeriod floor when a
+	// durable AgentFS sidecar is attached, so its final backup-on-SIGTERM has
+	// time to upload before SIGKILL.
+	agentFSShutdownGraceSeconds int64 = 120
 )
 
 // StorageMountInput carries the resolved AgentFS storage spec for a pod.
@@ -94,21 +99,40 @@ func AttachStorageFS(pod *corev1.Pod, input StorageMountInput) *corev1.Pod {
 	})
 
 	backupEnv := agentFSBackupEnv(input.AgentFS)
+	// Restore runs as a regular init container (restore from S3, then exit).
 	pod.Spec.InitContainers = append(pod.Spec.InitContainers,
 		agentFSContainer(storageFSInitName, input.image(), "init", mp, append(backupEnv, restoreEnv(input.AgentFS.Restore)...)))
-	pod.Spec.Containers = append(pod.Spec.Containers,
-		agentFSContainer(storageFSSidecarName, input.image(), "serve", mp, backupEnv))
+	// The serving sidecar is a NATIVE sidecar (init container with
+	// restartPolicy=Always): k8s starts it before the main container and SIGTERMs
+	// it once the main container exits, so the pod reaches a terminal phase. A
+	// regular long-running sidecar would pin Phase=Running forever on this
+	// RestartPolicy=Never pod and the controller's status fold would never fire
+	// (the same reason the secret broker is a native sidecar). On SIGTERM the
+	// sidecar takes one final backup (see cmd/agentfs-sidecar).
+	serve := agentFSContainer(storageFSSidecarName, input.image(), "serve", mp, backupEnv)
+	serve.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, serve)
 
-	// Mount into every pre-existing container (the harness/loop), not the
-	// sidecar we just appended.
+	// Give the final backup time to upload before SIGKILL.
+	ensureGracePeriod(pod, agentFSShutdownGraceSeconds)
+
+	// Mount the volume into the execution container(s); the init + serve
+	// containers carry their own mount (they live in InitContainers now).
 	vm := corev1.VolumeMount{Name: storageFSVolumeName, MountPath: mp}
-	lastIdx := len(pod.Spec.Containers) - 1
-	for i := range pod.Spec.Containers[:lastIdx] {
+	for i := range pod.Spec.Containers {
 		if !hasVolumeMount(pod.Spec.Containers[i].VolumeMounts, storageFSVolumeName) {
 			pod.Spec.Containers[i].VolumeMounts = append(pod.Spec.Containers[i].VolumeMounts, vm)
 		}
 	}
 	return pod
+}
+
+// ensureGracePeriod raises the pod's terminationGracePeriodSeconds to at least
+// floor, never lowering a larger explicit value.
+func ensureGracePeriod(pod *corev1.Pod, floor int64) {
+	if pod.Spec.TerminationGracePeriodSeconds == nil || *pod.Spec.TerminationGracePeriodSeconds < floor {
+		pod.Spec.TerminationGracePeriodSeconds = ptr.To(floor)
+	}
 }
 
 // agentFSContainer builds an init/sidecar container for the AgentFS sidecar

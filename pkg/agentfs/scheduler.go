@@ -13,6 +13,17 @@ type Scheduler struct {
 	WALInterval  time.Duration // 0 disables WAL uploads
 	FullInterval time.Duration // 0 disables full backups
 	Logger       *slog.Logger
+
+	// BackupOnShutdown runs one final full backup when ctx is cancelled (SIGTERM),
+	// before Run returns — so a short-lived run's work is captured even if it
+	// never reached a full-backup tick. The pod's terminationGracePeriodSeconds
+	// must allow time for it (the operator sets a floor when a durable AgentFS
+	// sidecar is attached).
+	BackupOnShutdown bool
+
+	// ShutdownBackupTimeout bounds the final backup so it can't outrun the pod's
+	// termination grace. Defaults to 90s.
+	ShutdownBackupTimeout time.Duration
 }
 
 // Run blocks until ctx is cancelled. Two tickers are driven in
@@ -37,6 +48,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if s.BackupOnShutdown {
+				s.finalBackup()
+			}
 			return ctx.Err()
 		case <-fullT:
 			if v, err := s.Manager.Backup(); err != nil {
@@ -55,6 +69,40 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// finalBackup runs one full backup on shutdown (ctx is already cancelled),
+// bounded by shutdownBackupTimeout so it can't outrun the pod's termination
+// grace. Manager.Backup uses its own context internally (the S3 client does not
+// capture the cancelled signal ctx), so the upload still proceeds after SIGTERM.
+func (s *Scheduler) finalBackup() {
+	type result struct {
+		v   Version
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		v, err := s.Manager.Backup()
+		ch <- result{v, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			s.Logger.Warn("final backup on shutdown failed", "err", r.err)
+			return
+		}
+		s.Logger.Info("final backup on shutdown uploaded", "version", r.v.ID, "size", r.v.SizeBytes)
+	case <-time.After(s.shutdownBackupTimeout()):
+		s.Logger.Warn("final backup on shutdown timed out; relying on the periodic backup",
+			"timeout", s.shutdownBackupTimeout())
+	}
+}
+
+func (s *Scheduler) shutdownBackupTimeout() time.Duration {
+	if s.ShutdownBackupTimeout > 0 {
+		return s.ShutdownBackupTimeout
+	}
+	return 90 * time.Second
 }
 
 // disabledTicker returns a channel that never fires.

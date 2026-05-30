@@ -1,7 +1,8 @@
 // Command agentfs-sidecar is the AgentFS storage sidecar/init container.
 //
 //	agentfs-sidecar init  --mount <dir>   # restore the tree from S3 (or fresh)
-//	agentfs-sidecar serve --mount <dir>   # periodic full backups to S3 until SIGTERM
+//	agentfs-sidecar serve --mount <dir>   # periodic full backups to S3, plus one
+//	                                      # final backup on SIGTERM, then exit
 //
 // It wraps pkg/agentfs (Manager + AWSS3 + Scheduler) with FilesystemStorage,
 // reading its S3 destination / restore policy from the AGENTFS_* env the
@@ -70,9 +71,14 @@ func main() {
 			Manager:      mgr,
 			FullInterval: scheduleInterval(os.Getenv("AGENTFS_BACKUP_SCHEDULE")),
 			WALInterval:  0, // FilesystemStorage does full snapshots only
-			Logger:       logger,
+			// One final backup on SIGTERM (when an S3 destination is configured) so
+			// a short run's work isn't lost between ticks. The native-sidecar grace
+			// period (set by the operator) gives this time before SIGKILL.
+			BackupOnShutdown: os.Getenv("AGENTFS_S3_BUCKET") != "",
+			Logger:           logger,
 		}
-		logger.Info("serving AgentFS backups", "mount", *mount, "fullInterval", sched.FullInterval)
+		logger.Info("serving AgentFS backups", "mount", *mount,
+			"fullInterval", sched.FullInterval, "backupOnShutdown", sched.BackupOnShutdown)
 		if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
 			logger.Error("scheduler", "err", err)
 			os.Exit(1)

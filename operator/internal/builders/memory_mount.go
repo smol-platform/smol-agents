@@ -150,6 +150,10 @@ func buildAgentFSSidecarContainer(input MemoryMountInput, mountPath string) core
 		Image:           input.sidecarImage(),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            []string{"serve", "--mount=" + mountPath},
+		// Native sidecar: init container + restartPolicy=Always so the pod can
+		// reach a terminal phase after the main container exits (a regular
+		// long-running sidecar pins Phase=Running on this RestartPolicy=Never pod).
+		RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways),
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: ptr.To(false),
 			ReadOnlyRootFilesystem:   ptr.To(false), // writes WAL frames to the volume
@@ -192,17 +196,22 @@ func AttachMemoryFS(pod *corev1.Pod, input MemoryMountInput) *corev1.Pod {
 	// Append the real AgentFS volume (EmptyDir with SizeLimit).
 	pod.Spec.Volumes = append(pod.Spec.Volumes, buildMemoryAgentFSVolume(input))
 
-	// Add the init container that restores/initialises the SQLite DB.
-	pod.Spec.InitContainers = append(pod.Spec.InitContainers, buildAgentFSInitContainer(input, mp))
+	// Restore runs as a regular init container; the serving sidecar is a NATIVE
+	// sidecar (init container with restartPolicy=Always, set in
+	// buildAgentFSSidecarContainer) so the pod reaches a terminal phase after the
+	// main container exits — a regular long-running sidecar would pin
+	// Phase=Running on this RestartPolicy=Never pod (see secret_broker.go).
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers,
+		buildAgentFSInitContainer(input, mp),
+		buildAgentFSSidecarContainer(input, mp))
 
-	// Add the sidecar container.
-	pod.Spec.Containers = append(pod.Spec.Containers, buildAgentFSSidecarContainer(input, mp))
+	// Give a final backup-on-SIGTERM time to upload before SIGKILL.
+	ensureGracePeriod(pod, agentFSShutdownGraceSeconds)
 
-	// Mount the volume into every pre-existing container (the agent/harness).
+	// Mount the volume into the execution container(s); the sidecars carry their
+	// own mount (they live in InitContainers).
 	vm := corev1.VolumeMount{Name: memoryFSVolumeName, MountPath: mp}
-	// Mount into all containers except the sidecar we just appended (last index).
-	lastIdx := len(pod.Spec.Containers) - 1
-	for i := range pod.Spec.Containers[:lastIdx] {
+	for i := range pod.Spec.Containers {
 		if !hasVolumeMount(pod.Spec.Containers[i].VolumeMounts, memoryFSVolumeName) {
 			pod.Spec.Containers[i].VolumeMounts = append(pod.Spec.Containers[i].VolumeMounts, vm)
 		}

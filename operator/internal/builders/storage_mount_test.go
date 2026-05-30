@@ -88,6 +88,23 @@ func TestBuildAgentRunPod_StorageAgentFS(t *testing.T) {
 	if _, ok := hasMount(pod.Spec.Containers[0], storageFSVolumeName); !ok {
 		t.Error("main container missing agentfs mount")
 	}
+	// The serving sidecar is a NATIVE sidecar (InitContainers + restartPolicy=Always,
+	// asserted by hasSidecar), NOT a regular container — a regular long-running
+	// sidecar would pin Phase=Running on this RestartPolicy=Never pod so the status
+	// fold never fires.
+	if !hasInitContainer(pod, storageFSSidecarName) {
+		t.Error("serving sidecar must live in InitContainers (native sidecar)")
+	}
+	for _, c := range pod.Spec.Containers {
+		if c.Name == storageFSSidecarName {
+			t.Error("serving sidecar must not be a regular container")
+		}
+	}
+	// terminationGracePeriod is raised so the final backup-on-SIGTERM can upload.
+	if pod.Spec.TerminationGracePeriodSeconds == nil || *pod.Spec.TerminationGracePeriodSeconds < agentFSShutdownGraceSeconds {
+		t.Errorf("terminationGracePeriodSeconds = %v, want >= %d for the final backup",
+			pod.Spec.TerminationGracePeriodSeconds, agentFSShutdownGraceSeconds)
+	}
 
 	// Sidecar carries the S3 backup config from the BackupPolicy.
 	sc := findCtr(pod, storageFSSidecarName)
@@ -143,5 +160,25 @@ func TestBuildAgentRunPod_NoStorage(t *testing.T) {
 	}
 	if len(pod.Spec.Containers) != 1 {
 		t.Errorf("expected exactly 1 container, got %d", len(pod.Spec.Containers))
+	}
+}
+
+// Regression for the native-sidecar move: with the AgentFS sidecars now in
+// InitContainers, the exec container stays Containers[0], so AttachSecretBroker
+// still mounts the broker UDS into the agent — not into a sidecar.
+func TestStorageAndBroker_BrokerMountsExecContainer(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+
+	pod := BuildAgentRunPod(run, storageAgent()) // AgentFS sidecars -> InitContainers
+	AttachSecretBroker(pod, run.Name)
+
+	if len(pod.Spec.Containers) != 1 {
+		t.Fatalf("expected exactly 1 (exec) container, got %d", len(pod.Spec.Containers))
+	}
+	exec := pod.Spec.Containers[0]
+	if _, ok := hasMount(exec, secretBrokerVolumeName); !ok {
+		t.Errorf("broker UDS not mounted into the exec container (Containers[0]=%q)", exec.Name)
 	}
 }
