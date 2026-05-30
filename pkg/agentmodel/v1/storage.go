@@ -15,6 +15,14 @@ const (
 	StorageAgentFS StorageKind = "agentfs" // Turso AgentFS (SQLite-backed)
 )
 
+// DefaultAgentFSMountPath is where the AgentFS volume is mounted — and where a
+// harness runs by default when the Agent has AgentFS storage but no explicit
+// CLI working dir — unless AgentFSSpec.MountPath overrides it. It is the single
+// source of truth shared by AgentSpec.EffectiveWorkingDir (the harness CWD) and
+// the operator's storage mount, so the two never drift. Keep in sync with the
+// kubebuilder default on AgentFSSpec.MountPath below.
+const DefaultAgentFSMountPath = "/var/agentfs"
+
 // StorageSpec wires persistent state into an Agent. Today only AgentFS
 // is implemented; the discriminator leaves room for future backends.
 type StorageSpec struct {

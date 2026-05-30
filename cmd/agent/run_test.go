@@ -1,11 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
 
 func TestWaitForBrokerSocket(t *testing.T) {
@@ -40,5 +45,58 @@ func TestWaitForBrokerSocket(t *testing.T) {
 	empty := t.TempDir()
 	if waitForBrokerSocket(filepath.Join(empty, "secret-broker.sock"), 300*time.Millisecond) {
 		t.Error("want false when the dir exists but no socket binds")
+	}
+}
+
+func TestClampForTerminationMessage(t *testing.T) {
+	fatStep := func(i int32) v1.Step {
+		return v1.Step{
+			Index: i, Kind: v1.StepObservation,
+			ToolCalls: []v1.ToolCallRecord{{
+				Tool:      "search",
+				Arguments: json.RawMessage(`{"q":"` + strings.Repeat("x", 200) + `"}`),
+				Result:    json.RawMessage(`"` + strings.Repeat("y", 400) + `"`),
+			}},
+		}
+	}
+
+	// Small result with a Final step passes through untouched.
+	small := agentruntime.RunResult{
+		Phase:  "Completed",
+		Output: json.RawMessage(`{"answer":42}`),
+		Steps:  []v1.Step{{Index: 0, Kind: v1.StepFinal}},
+	}
+	if got := clampForTerminationMessage(small); len(got.Steps) != 1 || !termMessageFits(got) {
+		t.Errorf("small result should keep its steps and fit: steps=%d", len(got.Steps))
+	}
+
+	// Large output is truncated to the placeholder (pre-existing behavior).
+	bigOut := agentruntime.RunResult{Phase: "Completed", Output: json.RawMessage(`"` + strings.Repeat("z", 4096) + `"`)}
+	if got := clampForTerminationMessage(bigOut); string(got.Output) != `"<truncated; see pod logs>"` {
+		t.Errorf("large output not truncated: %s", got.Output)
+	}
+
+	// Many fat steps must still fit the cap and stay valid JSON — never overflow,
+	// and never lose the verdict fields (phase/output).
+	steps := make([]v1.Step, 50)
+	for i := range steps {
+		steps[i] = fatStep(int32(i))
+	}
+	fat := agentruntime.RunResult{
+		Phase:  "Completed",
+		Output: json.RawMessage(`{"answer":42}`),
+		Steps:  steps,
+		Usage:  v1.Usage{Steps: 50},
+	}
+	got := clampForTerminationMessage(fat)
+	b := marshalRunResult(got)
+	if len(b) > terminationMessageBudget {
+		t.Errorf("clamped message = %d bytes, exceeds budget %d", len(b), terminationMessageBudget)
+	}
+	if !json.Valid(b) {
+		t.Errorf("clamped message must be valid JSON: %s", b)
+	}
+	if got.Phase != "Completed" || string(got.Output) != `{"answer":42}` {
+		t.Errorf("clamp must preserve phase/output: %+v", got)
 	}
 }

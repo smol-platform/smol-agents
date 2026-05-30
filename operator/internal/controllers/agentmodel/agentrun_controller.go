@@ -384,6 +384,7 @@ func (r *AgentRunReconciler) foldRunResult(run *amv1.AgentRun, pod *corev1.Pod) 
 		return
 	}
 	run.Status.Output = rr.Output
+	run.Status.Steps = rr.Steps
 	run.Status.Usage = rr.Usage
 	switch {
 	case rr.Error != "":

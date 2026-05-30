@@ -178,6 +178,30 @@ func (h HarnessSpec) WorkingDirOrEmpty() string {
 	return ""
 }
 
+// EffectiveWorkingDir is the directory the harness actually runs in. An explicit
+// HarnessCLISpec.WorkingDir wins; otherwise, when the Agent has durable AgentFS
+// storage, the harness runs in the AgentFS mount so its file writes land on the
+// backed-up volume (the operator mounts the volume there — see
+// builders.AttachStorageFS). Empty means the runtime picks a default (/tmp).
+//
+// This is the single seam that keeps the harness CWD aligned with the operator's
+// mount path. Before it, an AgentFS-backed harness ran in /tmp regardless of the
+// mount, so its output never reached the durable volume.
+func (a AgentSpec) EffectiveWorkingDir() string {
+	if a.Harness != nil {
+		if wd := a.Harness.WorkingDirOrEmpty(); wd != "" {
+			return wd
+		}
+	}
+	if a.Storage != nil && a.Storage.Kind == StorageAgentFS {
+		if a.Storage.AgentFS != nil && a.Storage.AgentFS.MountPath != "" {
+			return a.Storage.AgentFS.MountPath
+		}
+		return DefaultAgentFSMountPath
+	}
+	return ""
+}
+
 // ValidateHarness enforces structural rules. Implements R-AM-API-1
 // extension: harness mode requires a kind-appropriate config block.
 func ValidateHarness(h HarnessSpec) error {

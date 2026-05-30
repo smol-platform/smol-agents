@@ -22,8 +22,10 @@ type Request struct {
 	// Input is the user-provided prompt for this Run, as JSON.
 	Input json.RawMessage
 
-	// WorkingDir is set when Storage.AgentFS is configured; otherwise
-	// the harness is told to run in /tmp.
+	// WorkingDir is where the harness runs, resolved by
+	// AgentSpec.EffectiveWorkingDir: an explicit CLI working dir wins, else the
+	// AgentFS mount when the Agent has durable storage, else empty (the harness
+	// falls back to /tmp).
 	WorkingDir string
 
 	// Env is the resolved environment (literal Env values + secrets

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime/openaillm"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
@@ -56,13 +57,12 @@ func runAgentRun(args []string) int {
 	os.Stdout.Write(marshalRunResult(wire))
 	os.Stdout.Write([]byte("\n"))
 
-	// Termination message must stay valid JSON within the kubelet's ~4KiB cap,
-	// so truncate a large output there (the controller reads phase/usage/error
-	// from it; full output is in the logs).
-	if len(wire.Output) > 2048 {
-		wire.Output = json.RawMessage(`"<truncated; see pod logs>"`)
-	}
-	_ = os.WriteFile(*termLog, marshalRunResult(wire), 0o600)
+	// The termination message is the controller's primary signal and must stay
+	// valid JSON under the kubelet's ~4KiB cap. clampForTerminationMessage trims
+	// it to fit so a large run can't overflow the cap and corrupt the JSON —
+	// which would fail the controller's fold and silently zero the run. The
+	// full, untrimmed result is in the stdout logs written above.
+	_ = os.WriteFile(*termLog, marshalRunResult(clampForTerminationMessage(wire)), 0o600)
 
 	if runErr != nil {
 		return 1
@@ -85,6 +85,61 @@ func marshalRunResult(wire agentruntime.RunResult) []byte {
 		"error": "agent: run result could not be serialized: " + err.Error(),
 	})
 	return b
+}
+
+// terminationMessageBudget bounds the bytes written to /dev/termination-log.
+// The kubelet caps the termination message near 4 KiB and truncates it
+// silently; we stay under that with headroom so the JSON the controller
+// unmarshals is always complete.
+const terminationMessageBudget = 3072
+
+// clampForTerminationMessage returns a copy of wire trimmed to fit the kubelet's
+// termination-message cap. The full, untrimmed result is written to stdout (pod
+// logs); this only bounds the controller's primary signal. It sheds detail in
+// order of least value — a large output (as before), then tool-call argument /
+// result bodies, then the step trace entirely — always preserving
+// phase/usage/reason, which is what the controller folds for the run's verdict.
+func clampForTerminationMessage(wire agentruntime.RunResult) agentruntime.RunResult {
+	if len(wire.Output) > 2048 {
+		wire.Output = json.RawMessage(`"<truncated; see pod logs>"`)
+	}
+	if termMessageFits(wire) {
+		return wire
+	}
+	wire.Steps = elideStepPayloads(wire.Steps)
+	if termMessageFits(wire) {
+		return wire
+	}
+	wire.Steps = nil
+	return wire
+}
+
+func termMessageFits(wire agentruntime.RunResult) bool {
+	b, err := json.Marshal(wire)
+	return err == nil && len(b) <= terminationMessageBudget
+}
+
+// elideStepPayloads copies steps, stripping each tool call's argument and result
+// bodies while keeping the lightweight skeleton (kind, tokens, timing, error,
+// tool names). The full payloads remain in the stdout logs.
+func elideStepPayloads(steps []v1.Step) []v1.Step {
+	if len(steps) == 0 {
+		return steps
+	}
+	out := make([]v1.Step, len(steps))
+	for i, s := range steps {
+		if len(s.ToolCalls) > 0 {
+			tcs := make([]v1.ToolCallRecord, len(s.ToolCalls))
+			for j, tc := range s.ToolCalls {
+				tc.Arguments = nil
+				tc.Result = nil
+				tcs[j] = tc
+			}
+			s.ToolCalls = tcs
+		}
+		out[i] = s
+	}
+	return out
 }
 
 // waitForBrokerSocket reports whether the secret-broker UDS is usable. The

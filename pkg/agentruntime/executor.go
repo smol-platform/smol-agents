@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/harness"
 )
 
 // HarnessRunner is the abstract harness driver. The agentruntime/harness
@@ -19,7 +20,7 @@ import (
 type HarnessRunner interface {
 	RunHarness(ctx context.Context, spec v1.HarnessSpec, instructions string,
 		input json.RawMessage, workingDir string, env map[string]string,
-		budget v1.Budget, seed int64) ([]byte, int64, int64, int64, error)
+		budget v1.Budget, seed int64) (harness.Response, error)
 }
 
 // SecretLeaser leases a named secret from the broker so the executor can
@@ -389,19 +390,22 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 	}
 
 	startedAt := e.Clock.Now()
-	out, tIn, tOut, durMs, err := e.Harness.RunHarness(ctx, *agent.Spec.Harness, agent.Spec.Instructions,
-		input, agent.Spec.Harness.WorkingDirOrEmpty(), env, agent.Spec.Budget, seed)
+	resp, err := e.Harness.RunHarness(ctx, *agent.Spec.Harness, agent.Spec.Instructions,
+		input, agent.Spec.EffectiveWorkingDir(), env, agent.Spec.Budget, seed)
 	endedAt := e.Clock.Now()
 
-	usage := v1.Usage{Steps: 1, Tokens: tIn + tOut, ToolCalls: 0,
-		WallClockUsed: e.Clock.Since(startedAt)}
+	usage := v1.Usage{Steps: 1, Tokens: resp.TokensIn + resp.TokensOut,
+		ToolCalls: int32(len(resp.ToolCalls)), WallClockUsed: e.Clock.Since(startedAt)}
 
+	// One Step captures the whole bounded call. ToolCalls carries the harness's
+	// own tool log when it surfaces one (e.g. Hermes via the Responses API);
+	// chat/subprocess harnesses leave it empty and the Step is just the Final.
 	step := v1.Step{
 		Index: 0, Kind: v1.StepFinal,
 		StartedAt: metav1.NewTime(startedAt), EndedAt: metav1.NewTime(endedAt),
-		TokensIn: tIn, TokensOut: tOut,
+		TokensIn: resp.TokensIn, TokensOut: resp.TokensOut,
+		ToolCalls: resp.ToolCalls,
 	}
-	_ = durMs // surfaced via WallClockUsed; kept for symmetry with harness Response
 
 	if err != nil {
 		step.Error = err.Error()
@@ -425,7 +429,7 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 		Phase:  v1.PhaseCompleted,
 		Steps:  []v1.Step{step},
 		Usage:  usage,
-		Output: harnessOutputJSON(out),
+		Output: harnessOutputJSON(resp.Output),
 	}, nil
 }
 

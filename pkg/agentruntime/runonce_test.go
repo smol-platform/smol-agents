@@ -65,9 +65,18 @@ func TestRunOnce_MissingSpec(t *testing.T) {
 }
 
 func TestResultToWire(t *testing.T) {
-	w := ResultToWire(Result{Phase: v1.PhaseCompleted, Output: json.RawMessage(`"ok"`), Usage: v1.Usage{Steps: 1}}, nil)
+	w := ResultToWire(Result{
+		Phase:  v1.PhaseCompleted,
+		Output: json.RawMessage(`"ok"`),
+		Steps:  []v1.Step{{Index: 0, Kind: v1.StepFinal}},
+		Usage:  v1.Usage{Steps: 1},
+	}, nil)
 	if w.Phase != v1.PhaseCompleted || string(w.Output) != `"ok"` || w.Error != "" {
 		t.Errorf("wire = %+v", w)
+	}
+	// Steps must travel on the wire (folded into AgentRun.Status.Steps).
+	if len(w.Steps) != 1 || w.Steps[0].Kind != v1.StepFinal {
+		t.Errorf("steps not carried to wire: %+v", w.Steps)
 	}
 	// Error path defaults phase to Failed.
 	we := ResultToWire(Result{}, errors.New("boom"))

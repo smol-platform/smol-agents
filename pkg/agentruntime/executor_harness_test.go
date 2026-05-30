@@ -8,6 +8,7 @@ import (
 	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/harness"
 )
 
 // stubRunner is a fake HarnessRunner used to drive Mode=harness tests.
@@ -15,14 +16,23 @@ type stubRunner struct {
 	output    []byte
 	tokensIn  int64
 	tokensOut int64
+	toolCalls []v1.ToolCallRecord
 	err       error
+
+	gotWorkingDir string // captured for the WorkingDir-binding test
 }
 
 func (s *stubRunner) RunHarness(_ context.Context, _ v1.HarnessSpec, _ string,
-	_ json.RawMessage, _ string, _ map[string]string,
+	_ json.RawMessage, workingDir string, _ map[string]string,
 	_ v1.Budget, _ int64,
-) ([]byte, int64, int64, int64, error) {
-	return s.output, s.tokensIn, s.tokensOut, 0, s.err
+) (harness.Response, error) {
+	s.gotWorkingDir = workingDir
+	return harness.Response{
+		Output:    s.output,
+		TokensIn:  s.tokensIn,
+		TokensOut: s.tokensOut,
+		ToolCalls: s.toolCalls,
+	}, s.err
 }
 
 func harnessAgent() v1.Agent {
@@ -51,6 +61,62 @@ func TestExecutor_HarnessMode_Completed(t *testing.T) {
 	}
 	if res.Usage.Steps != 1 || res.Usage.Tokens != 150 {
 		t.Errorf("usage=%+v", res.Usage)
+	}
+}
+
+// O1: the harness's Final step — and any tool-call log it surfaces — must reach
+// the wire RunResult (and thus AgentRun.Status.Steps), not be dropped. Today
+// chat harnesses surface no tool calls; this proves the plumbing carries them
+// when they do (e.g. Hermes via the Responses API).
+func TestExecutor_HarnessMode_StepsAndToolCallsSurfaced(t *testing.T) {
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	e.Harness = &stubRunner{
+		output:    []byte(`{"answer":"ok"}`),
+		tokensIn:  10,
+		tokensOut: 5,
+		toolCalls: []v1.ToolCallRecord{{
+			Tool:      "search",
+			Arguments: json.RawMessage(`{"q":"x"}`),
+			Result:    json.RawMessage(`"hit"`),
+		}},
+	}
+
+	res, err := e.Run(context.Background(), harnessAgent(), json.RawMessage(`{"prompt":"hi"}`), 0)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	wire := ResultToWire(res, nil)
+	if len(wire.Steps) != 1 {
+		t.Fatalf("want 1 step on the wire, got %d", len(wire.Steps))
+	}
+	if wire.Steps[0].Kind != v1.StepFinal {
+		t.Errorf("step kind = %s, want Final", wire.Steps[0].Kind)
+	}
+	if len(wire.Steps[0].ToolCalls) != 1 || wire.Steps[0].ToolCalls[0].Tool != "search" {
+		t.Errorf("harness tool calls not surfaced into the Step: %+v", wire.Steps[0].ToolCalls)
+	}
+	if res.Usage.ToolCalls != 1 {
+		t.Errorf("usage.ToolCalls = %d, want 1", res.Usage.ToolCalls)
+	}
+}
+
+// F1: when an Agent has durable AgentFS storage but no explicit CLI working dir,
+// the harness must run in the AgentFS mount (so its writes hit the backed-up
+// volume), not /tmp. Regression test for the WorkingDir that was never bound.
+func TestExecutor_HarnessMode_WorkingDirBindsToAgentFS(t *testing.T) {
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	runner := &stubRunner{output: []byte(`{"ok":true}`)}
+	e.Harness = runner
+
+	a := harnessAgent()
+	a.Spec.Storage = &v1.StorageSpec{Kind: v1.StorageAgentFS, AgentFS: &v1.AgentFSSpec{SizeGiB: 1}}
+	if _, err := e.Run(context.Background(), a, json.RawMessage(`{"prompt":"hi"}`), 0); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if runner.gotWorkingDir != v1.DefaultAgentFSMountPath {
+		t.Errorf("harness workingDir = %q, want the AgentFS mount %q", runner.gotWorkingDir, v1.DefaultAgentFSMountPath)
 	}
 }
 
@@ -132,9 +198,9 @@ type envCapturingRunner struct{ gotEnv map[string]string }
 
 func (s *envCapturingRunner) RunHarness(_ context.Context, _ v1.HarnessSpec, _ string,
 	_ json.RawMessage, _ string, env map[string]string, _ v1.Budget, _ int64,
-) ([]byte, int64, int64, int64, error) {
+) (harness.Response, error) {
 	s.gotEnv = env
-	return []byte(`{"ok":true}`), 1, 1, 0, nil
+	return harness.Response{Output: []byte(`{"ok":true}`), TokensIn: 1, TokensOut: 1}, nil
 }
 
 type fakeLeaser struct {

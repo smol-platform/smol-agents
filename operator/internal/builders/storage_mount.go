@@ -30,7 +30,9 @@ const (
 	storageFSVolumeName = "agentfs"
 
 	// defaultStorageMountPath is the fallback when AgentFSSpec.MountPath is empty.
-	defaultStorageMountPath = "/var/agentfs"
+	// Sourced from the shared const so the operator's mount and the harness CWD
+	// (pure.AgentSpec.EffectiveWorkingDir) never drift.
+	defaultStorageMountPath = pure.DefaultAgentFSMountPath
 
 	// storageFSSidecarName / storageFSInitName are the storage AgentFS containers.
 	storageFSSidecarName = "agentfs-sidecar"

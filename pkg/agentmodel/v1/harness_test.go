@@ -116,3 +116,50 @@ func TestValidateAgent_PersistentRequiresStorage(t *testing.T) {
 		t.Errorf("with storage: %v", err)
 	}
 }
+
+func TestEffectiveWorkingDir(t *testing.T) {
+	agentFS := func(mount string) *StorageSpec {
+		return &StorageSpec{Kind: StorageAgentFS, AgentFS: &AgentFSSpec{SizeGiB: 1, MountPath: mount}}
+	}
+	cases := []struct {
+		name string
+		spec AgentSpec
+		want string
+	}{
+		{
+			name: "explicit CLI working dir wins over storage",
+			spec: AgentSpec{
+				Harness: &HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{WorkingDir: "/work"}},
+				Storage: agentFS("/var/agentfs"),
+			},
+			want: "/work",
+		},
+		{
+			name: "AgentFS mount used when no CLI dir (default mount)",
+			spec: AgentSpec{Harness: &HarnessSpec{Kind: HarnessClaudeCode}, Storage: agentFS("")},
+			want: DefaultAgentFSMountPath,
+		},
+		{
+			name: "AgentFS custom mount honored",
+			spec: AgentSpec{Harness: &HarnessSpec{Kind: HarnessHermes}, Storage: agentFS("/data")},
+			want: "/data",
+		},
+		{
+			name: "no storage, no CLI dir → empty (runtime default)",
+			spec: AgentSpec{Harness: &HarnessSpec{Kind: HarnessHermes}},
+			want: "",
+		},
+		{
+			name: "storage kind none → empty",
+			spec: AgentSpec{Harness: &HarnessSpec{Kind: HarnessClaudeCode}, Storage: &StorageSpec{Kind: StorageNone}},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.spec.EffectiveWorkingDir(); got != tc.want {
+				t.Errorf("EffectiveWorkingDir() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

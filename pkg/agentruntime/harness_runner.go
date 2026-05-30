@@ -24,20 +24,22 @@ func NewRegistryRunner(r *harness.Registry) *RegistryRunner {
 	return &RegistryRunner{Registry: r}
 }
 
-// RunHarness satisfies HarnessRunner.
+// RunHarness satisfies HarnessRunner. It returns the harness.Response whole so
+// the executor sees the harness's tool-call log (resp.ToolCalls) and token
+// accounting rather than a lossy subset.
 func (r *RegistryRunner) RunHarness(
 	ctx context.Context, spec v1.HarnessSpec, instructions string,
 	input json.RawMessage, workingDir string, env map[string]string,
 	budget v1.Budget, seed int64,
-) (output []byte, tokensIn int64, tokensOut int64, durationMs int64, err error) {
+) (harness.Response, error) {
 	if r == nil || r.Registry == nil {
 		r.Registry = harness.Default()
 	}
 	h, err := r.Registry.For(spec.Kind)
 	if err != nil {
-		return nil, 0, 0, 0, err
+		return harness.Response{}, err
 	}
-	resp, err := h.Run(ctx, harness.Request{
+	return h.Run(ctx, harness.Request{
 		Spec:         spec,
 		Instructions: instructions,
 		Input:        input,
@@ -46,5 +48,4 @@ func (r *RegistryRunner) RunHarness(
 		Budget:       budget,
 		Seed:         seed,
 	})
-	return resp.Output, resp.TokensIn, resp.TokensOut, resp.DurationMs, err
 }

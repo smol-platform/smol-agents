@@ -22,11 +22,16 @@ const (
 // message (the controller's primary signal) and stdout (logs). It is the
 // runtime → controller contract for folding into AgentRun.Status.
 type RunResult struct {
-	Phase             v1.Phase        `json:"phase"`
-	Output            json.RawMessage `json:"output,omitempty"`
-	Usage             v1.Usage        `json:"usage"`
-	TerminationReason string          `json:"terminationReason,omitempty"`
-	Error             string          `json:"error,omitempty"`
+	Phase  v1.Phase        `json:"phase"`
+	Output json.RawMessage `json:"output,omitempty"`
+	// Steps is the per-step execution trace folded into AgentRun.Status.Steps:
+	// the loop's plan-act-observe iterations, or the single Final step a harness
+	// run produces (carrying the harness's tool-call log when it surfaces one).
+	// Bounded for the termination message by cmd/agent (see clampForTerminationMessage).
+	Steps             []v1.Step `json:"steps,omitempty"`
+	Usage             v1.Usage  `json:"usage"`
+	TerminationReason string    `json:"terminationReason,omitempty"`
+	Error             string    `json:"error,omitempty"`
 }
 
 // RunOnce loads the Agent + AgentRunSpec from dir and executes one bounded run.
@@ -59,6 +64,7 @@ func ResultToWire(res Result, runErr error) RunResult {
 	w := RunResult{
 		Phase:             res.Phase,
 		Output:            res.Output,
+		Steps:             res.Steps,
 		Usage:             res.Usage,
 		TerminationReason: res.TerminationReason,
 	}

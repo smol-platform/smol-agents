@@ -287,6 +287,7 @@ func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) 
 	pod := runPodWithTerminationMessage(agentruntime.RunResult{
 		Phase:  pure.PhaseCompleted,
 		Output: json.RawMessage(`{"answer":42}`),
+		Steps:  []pure.Step{{Index: 0, Kind: pure.StepFinal, TokensIn: 60, TokensOut: 40}},
 		Usage:  pure.Usage{Steps: 1, Tokens: 100},
 	})
 	r.foldRunResult(run, pod)
@@ -295,5 +296,8 @@ func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) 
 	}
 	if string(run.Status.Output) != `{"answer":42}` {
 		t.Errorf("output not folded: %s", run.Status.Output)
+	}
+	if len(run.Status.Steps) != 1 || run.Status.Steps[0].Kind != pure.StepFinal {
+		t.Errorf("steps not folded into status: %+v", run.Status.Steps)
 	}
 }
