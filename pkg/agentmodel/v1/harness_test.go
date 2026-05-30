@@ -3,6 +3,7 @@ package v1
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHarnessKind_Valid(t *testing.T) {
@@ -161,5 +162,42 @@ func TestEffectiveWorkingDir(t *testing.T) {
 				t.Errorf("EffectiveWorkingDir() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRetrySpec_Defaults(t *testing.T) {
+	var nilSpec *RetrySpec
+	if nilSpec.Attempts() != 1 {
+		t.Errorf("nil Attempts = %d, want 1", nilSpec.Attempts())
+	}
+	if nilSpec.BackoffBase() != 250*time.Millisecond {
+		t.Errorf("nil BackoffBase = %v, want 250ms", nilSpec.BackoffBase())
+	}
+	if nilSpec.MaxBackoff() != 5*time.Second {
+		t.Errorf("nil MaxBackoff = %v, want 5s", nilSpec.MaxBackoff())
+	}
+	// MaxAttempts clamps to [1,5]; 0/1 = single attempt (no retry).
+	if (&RetrySpec{MaxAttempts: 0}).Attempts() != 1 {
+		t.Error("0 should be a single attempt")
+	}
+	if (&RetrySpec{MaxAttempts: 99}).Attempts() != 5 {
+		t.Error("99 should clamp to 5")
+	}
+	if (&RetrySpec{MaxAttempts: 3}).Attempts() != 3 {
+		t.Error("3 should be 3")
+	}
+	if (&RetrySpec{BackoffBaseMs: 100}).BackoffBase() != 100*time.Millisecond {
+		t.Error("custom BackoffBaseMs not honored")
+	}
+}
+
+func TestValidateHarness_Retry(t *testing.T) {
+	bad := HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "http://x", Retry: &RetrySpec{MaxAttempts: -1}}}
+	if err := ValidateHarness(bad); err == nil || !strings.Contains(err.Error(), "retry") {
+		t.Errorf("expected retry validation error, got %v", err)
+	}
+	ok := HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "http://x", Retry: &RetrySpec{MaxAttempts: 3}}}
+	if err := ValidateHarness(ok); err != nil {
+		t.Errorf("valid retry should pass: %v", err)
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -98,18 +97,18 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	ctx, cancel := budgetTimeout(ctx, req.Budget)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, spec.URL, bytes.NewReader(raw))
-	if err != nil {
-		return Response{}, fmt.Errorf("harness: request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	// Resolve the request headers ONCE, before the retry loop. In particular the
+	// ephemeral session id is minted once here (not per attempt): a fresh id per
+	// retry would defeat session continuity and, for a retry the gateway DID
+	// process, fork the conversation.
+	reqHeaders := map[string]string{"Content-Type": "application/json"}
 	for k, v := range spec.Headers {
-		httpReq.Header.Set(k, v)
+		reqHeaders[k] = v
 	}
 	// HEADER_<name> env -> request headers (auth: HEADER_Authorization).
 	for k, v := range env {
 		if name, ok := strings.CutPrefix(k, "HEADER_"); ok && v != "" {
-			httpReq.Header.Set(name, v)
+			reqHeaders[name] = v
 		}
 	}
 	// Hermes's /v1/chat/completions is NOT stateless. When no X-Hermes-Session-Id
@@ -123,46 +122,43 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	case v1.SessionPersistent:
 		// Carry Hermes memory/skills across runs via a caller-stable id.
 		if sid := env["HERMES_SESSION_ID"]; sid != "" {
-			httpReq.Header.Set("X-Hermes-Session-Id", sid)
+			reqHeaders["X-Hermes-Session-Id"] = sid
 		}
 		if skey := env["HERMES_SESSION_KEY"]; skey != "" {
-			httpReq.Header.Set("X-Hermes-Session-Key", skey)
+			reqHeaders["X-Hermes-Session-Key"] = skey
 		}
 	default:
 		// Ephemeral (the default): a unique id per run gives each run its own
 		// fresh, empty session — making "ephemeral" actually ephemeral.
-		httpReq.Header.Set("X-Hermes-Session-Id", newEphemeralSessionID())
+		reqHeaders["X-Hermes-Session-Id"] = newEphemeralSessionID()
 	}
 
-	startedAt := time.Now()
-	resp, err := client.Do(httpReq)
-	dur := time.Since(startedAt).Milliseconds()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return Response{DurationMs: dur}, ErrTimeout
+	newReq := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, spec.URL, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
 		}
-		return Response{DurationMs: dur}, fmt.Errorf("harness: http: %w", err)
+		for k, v := range reqHeaders {
+			r.Header.Set(k, v)
+		}
+		return r, nil
 	}
-	defer resp.Body.Close()
 
-	rb, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
+	res, err := doWithRetry(ctx, client, newReq, spec.Retry)
 	if err != nil {
-		return Response{DurationMs: dur}, fmt.Errorf("harness: read response: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		return Response{DurationMs: dur}, fmt.Errorf("harness: http %d: %s", resp.StatusCode, string(rb))
+		return Response{DurationMs: res.DurationMs}, err
 	}
 
 	respField := spec.ResponseField
 	if respField == "" {
 		respField = "choices.0.message.content"
 	}
-	in, out := parseUsage(rb)
+	in, out := parseUsage(res.Body)
 	return Response{
-		Output:     []byte(extractField(rb, respField)),
+		Output:     []byte(extractField(res.Body, respField)),
 		TokensIn:   in,
 		TokensOut:  out,
-		DurationMs: dur,
+		DurationMs: res.DurationMs,
 	}, nil
 }
 

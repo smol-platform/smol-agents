@@ -99,6 +99,12 @@ spec:
                         auth:
                           type: object
                           properties: { secretName: { type: string } }
+                        retry:
+                          type: object
+                          properties:
+                            maxAttempts: { type: integer }
+                            backoffBaseMs: { type: integer }
+                            maxBackoffMs: { type: integer }
                 storage:
                   type: object
                   properties:

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // AgentMode discriminates how the runtime executes an Agent.
@@ -167,6 +168,64 @@ type HarnessHTTPSpec struct {
 	// the response body (e.g. "choices.0.message.content").
 	// +optional
 	ResponseField string `json:"responseField,omitempty"`
+
+	// Retry configures transient-failure retries (network errors, HTTP 429,
+	// 5xx). Unset means a single attempt — no retry — preserving prior behavior.
+	// +optional
+	Retry *RetrySpec `json:"retry,omitempty"`
+}
+
+// RetrySpec configures transient-failure retries for HTTP-based harnesses
+// (kind=hermes|pi|generic-http). Retryable failures are network errors, HTTP
+// 429, and 5xx; 4xx client errors (auth, bad request) are never retried — a
+// retry can't fix them. The zero value (MaxAttempts 0 or 1) is a single
+// attempt, so existing agents are unaffected.
+//
+// Retries always run inside the run's wallclock budget: an admitted Budget has
+// MaxWallClockSeconds > 0, so the ctx deadline bounds the whole retry loop.
+type RetrySpec struct {
+	// MaxAttempts is the TOTAL attempt count (not extra retries): 0 or 1 means
+	// one attempt. Clamped to [1,5] at runtime.
+	// +optional
+	MaxAttempts int32 `json:"maxAttempts,omitempty"`
+
+	// BackoffBaseMs is the base for exponential backoff between attempts
+	// (base, 2*base, 4*base, ...). Default 250.
+	// +optional
+	BackoffBaseMs int32 `json:"backoffBaseMs,omitempty"`
+
+	// MaxBackoffMs caps any single backoff wait, including a server Retry-After.
+	// Default 5000.
+	// +optional
+	MaxBackoffMs int32 `json:"maxBackoffMs,omitempty"`
+}
+
+// Attempts returns the total attempt count, clamped to [1,5]. A nil RetrySpec
+// (and the zero value) yields 1 — a single attempt, no retry.
+func (r *RetrySpec) Attempts() int {
+	if r == nil || r.MaxAttempts <= 1 {
+		return 1
+	}
+	if r.MaxAttempts > 5 {
+		return 5
+	}
+	return int(r.MaxAttempts)
+}
+
+// BackoffBase is the exponential-backoff base (default 250ms).
+func (r *RetrySpec) BackoffBase() time.Duration {
+	if r == nil || r.BackoffBaseMs <= 0 {
+		return 250 * time.Millisecond
+	}
+	return time.Duration(r.BackoffBaseMs) * time.Millisecond
+}
+
+// MaxBackoff caps a single backoff wait (default 5s).
+func (r *RetrySpec) MaxBackoff() time.Duration {
+	if r == nil || r.MaxBackoffMs <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(r.MaxBackoffMs) * time.Millisecond
 }
 
 // WorkingDirOrEmpty returns the CLI working directory if specified,
@@ -216,6 +275,12 @@ func ValidateHarness(h HarnessSpec) error {
 	case HarnessGenericHTTP, HarnessPi, HarnessHermes:
 		if h.HTTP == nil || strings.TrimSpace(h.HTTP.URL) == "" {
 			errs = append(errs, errors.New("harness.http.url is required for kind="+string(h.Kind)))
+		}
+		if h.HTTP != nil && h.HTTP.Retry != nil {
+			r := h.HTTP.Retry
+			if r.MaxAttempts < 0 || r.BackoffBaseMs < 0 || r.MaxBackoffMs < 0 {
+				errs = append(errs, errors.New("harness.http.retry values must be ≥ 0"))
+			}
 		}
 	case HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI:
 		// CLI block is optional — defaults wired by the runtime — but if

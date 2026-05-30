@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
@@ -93,41 +91,37 @@ func doHTTP(ctx context.Context, client HTTPClient, req Request, url, promptFiel
 	ctx, cancel := budgetTimeout(ctx, req.Budget)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(raw))
-	if err != nil {
-		return Response{}, fmt.Errorf("harness: request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	reqHeaders := map[string]string{"Content-Type": "application/json"}
 	for k, v := range headers {
-		httpReq.Header.Set(k, v)
+		reqHeaders[k] = v
 	}
 	for _, e := range req.Spec.Env {
 		// Pass-through Authorization-style headers if env name starts with HEADER_.
 		if strings.HasPrefix(e.Name, "HEADER_") && e.Value != "" {
-			httpReq.Header.Set(strings.TrimPrefix(e.Name, "HEADER_"), e.Value)
+			reqHeaders[strings.TrimPrefix(e.Name, "HEADER_")] = e.Value
 		}
 	}
 
-	startedAt := time.Now()
-	resp, err := client.Do(httpReq)
-	dur := time.Since(startedAt).Milliseconds()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return Response{DurationMs: dur}, ErrTimeout
+	newReq := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
 		}
-		return Response{DurationMs: dur}, fmt.Errorf("harness: http: %w", err)
+		for k, v := range reqHeaders {
+			r.Header.Set(k, v)
+		}
+		return r, nil
 	}
-	defer resp.Body.Close()
 
-	rb, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
+	var retry *v1.RetrySpec
+	if req.Spec.HTTP != nil {
+		retry = req.Spec.HTTP.Retry
+	}
+	res, err := doWithRetry(ctx, client, newReq, retry)
 	if err != nil {
-		return Response{DurationMs: dur}, fmt.Errorf("harness: read response: %w", err)
+		return Response{DurationMs: res.DurationMs}, err
 	}
-	if resp.StatusCode >= 400 {
-		return Response{DurationMs: dur}, fmt.Errorf("harness: http %d: %s", resp.StatusCode, string(rb))
-	}
-	answer := extractField(rb, responseField)
-	return Response{Output: []byte(answer), DurationMs: dur}, nil
+	return Response{Output: []byte(extractField(res.Body, responseField)), DurationMs: res.DurationMs}, nil
 }
 
 // extractField walks a dotted path through a JSON document and returns
