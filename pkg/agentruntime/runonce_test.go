@@ -1,13 +1,16 @@
 package agentruntime
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
@@ -82,5 +85,65 @@ func TestResultToWire(t *testing.T) {
 	we := ResultToWire(Result{}, errors.New("boom"))
 	if we.Error != "boom" || we.Phase != v1.PhaseFailed {
 		t.Errorf("error wire = %+v", we)
+	}
+}
+
+func TestMaterializeInputs(t *testing.T) {
+	ws := t.TempDir()
+	leaser := fakeLeaser{vals: map[string]string{"creds": "SECRET-BYTES"}}
+	inputs := []v1.RunInputFile{
+		{Path: "prompt.txt", Inline: "hello"},
+		{Path: "data/blob.bin", InlineBase64: base64.StdEncoding.EncodeToString([]byte{0x00, 0x01, 0x02})},
+		{Path: "key.pem", SecretRef: &v1.AuthRef{SecretName: "creds"}},
+	}
+	if err := MaterializeInputs(context.Background(), ws, inputs, leaser); err != nil {
+		t.Fatalf("MaterializeInputs: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "prompt.txt")); string(b) != "hello" {
+		t.Errorf("prompt.txt = %q, want hello", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "data/blob.bin")); !bytes.Equal(b, []byte{0, 1, 2}) {
+		t.Errorf("blob.bin = %v, want [0 1 2] (base64-decoded, nested dir created)", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(ws, "key.pem")); string(b) != "SECRET-BYTES" {
+		t.Errorf("key.pem = %q, want the leased secret", b)
+	}
+	if fi, _ := os.Stat(filepath.Join(ws, "prompt.txt")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("perms = %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestMaterializeInputs_NoInputsNoOp(t *testing.T) {
+	// No inputs is a no-op even with an empty workspace.
+	if err := MaterializeInputs(context.Background(), "", nil, nil); err != nil {
+		t.Errorf("no inputs should be a no-op, got %v", err)
+	}
+}
+
+func TestMaterializeInputs_NoWorkspaceErrors(t *testing.T) {
+	err := MaterializeInputs(context.Background(), "  ", []v1.RunInputFile{{Path: "x", Inline: "y"}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("err = %v, want a no-workspace error", err)
+	}
+}
+
+func TestMaterializeInputs_SecretRefWithoutBrokerErrors(t *testing.T) {
+	ws := t.TempDir()
+	err := MaterializeInputs(context.Background(), ws,
+		[]v1.RunInputFile{{Path: "k", SecretRef: &v1.AuthRef{SecretName: "x"}}}, nil)
+	if err == nil {
+		t.Fatal("secretRef with no broker must fail loud, not write an empty file")
+	}
+}
+
+func TestMaterializeInputs_TraversalRejected(t *testing.T) {
+	ws := t.TempDir()
+	err := MaterializeInputs(context.Background(), ws,
+		[]v1.RunInputFile{{Path: "../escape.txt", Inline: "x"}}, nil)
+	if err == nil {
+		t.Fatal("expected traversal to be rejected at write time")
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(ws), "escape.txt")); statErr == nil {
+		t.Error("traversal wrote outside the workspace")
 	}
 }

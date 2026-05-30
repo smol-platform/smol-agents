@@ -99,6 +99,32 @@ func TestValidateAgentRun(t *testing.T) {
 	}
 }
 
+func TestValidateAgentRun_Inputs(t *testing.T) {
+	withInput := func(in RunInputFile) AgentRun {
+		return AgentRun{Spec: AgentRunSpec{AgentRef: "a", Input: json.RawMessage(`{"q":"hi"}`), Inputs: []RunInputFile{in}}}
+	}
+	// Valid: exactly one source, relative path.
+	if err := ValidateAgentRun(withInput(RunInputFile{Path: "a/b.txt", Inline: "x"})); err != nil {
+		t.Errorf("valid inline input rejected: %v", err)
+	}
+	if err := ValidateAgentRun(withInput(RunInputFile{Path: "k", SecretRef: &AuthRef{SecretName: "s"}})); err != nil {
+		t.Errorf("valid secretRef input rejected: %v", err)
+	}
+	// Invalid paths (empty, absolute, traversal).
+	for _, p := range []string{"", "/abs.txt", "../escape", "a/../../b"} {
+		if err := ValidateAgentRun(withInput(RunInputFile{Path: p, Inline: "x"})); err == nil {
+			t.Errorf("path %q should be rejected", p)
+		}
+	}
+	// Zero sources / two sources.
+	if err := ValidateAgentRun(withInput(RunInputFile{Path: "a"})); err == nil {
+		t.Error("input with no source should be rejected")
+	}
+	if err := ValidateAgentRun(withInput(RunInputFile{Path: "a", Inline: "x", InlineBase64: "eA=="})); err == nil {
+		t.Error("input with two sources should be rejected")
+	}
+}
+
 func TestValidateAgentPolicy(t *testing.T) {
 	if err := ValidateAgentPolicy(AgentPolicy{Name: "p"}); err != nil {
 		t.Errorf("minimal policy rejected: %v", err)

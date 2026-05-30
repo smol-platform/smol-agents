@@ -135,7 +135,43 @@ func ValidateAgentRun(r AgentRun) error {
 			errs = append(errs, fmt.Errorf("spec.budgetOverride: %w", err))
 		}
 	}
+	for i, in := range r.Spec.Inputs {
+		errs = append(errs, validateRunInput(i, in)...)
+	}
 	return errors.Join(errs...)
+}
+
+// validateRunInput checks one run input file: a relative, traversal-free path
+// and exactly one content source.
+func validateRunInput(i int, in RunInputFile) []error {
+	var errs []error
+	switch {
+	case in.Path == "":
+		errs = append(errs, fmt.Errorf("spec.inputs[%d].path is required", i))
+	case strings.HasPrefix(in.Path, "/"):
+		errs = append(errs, fmt.Errorf("spec.inputs[%d].path must be relative", i))
+	default:
+		for _, seg := range strings.Split(in.Path, "/") {
+			if seg == ".." {
+				errs = append(errs, fmt.Errorf("spec.inputs[%d].path must not contain a %q segment", i, ".."))
+				break
+			}
+		}
+	}
+	sources := 0
+	if in.Inline != "" {
+		sources++
+	}
+	if in.InlineBase64 != "" {
+		sources++
+	}
+	if in.SecretRef != nil && in.SecretRef.SecretName != "" {
+		sources++
+	}
+	if sources != 1 {
+		errs = append(errs, fmt.Errorf("spec.inputs[%d]: exactly one of inline, inlineBase64, secretRef is required", i))
+	}
+	return errs
 }
 
 // ValidateAgentPolicy — R-AM-API-6.

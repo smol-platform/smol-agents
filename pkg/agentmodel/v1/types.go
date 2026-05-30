@@ -195,6 +195,37 @@ type AgentRunSpec struct {
 	// Empty means no memory filesystem is mounted.
 	// +optional
 	MemoryRetrieverRef string `json:"memoryRetrieverRef,omitempty"`
+
+	// Inputs are files materialized into the agent's workspace before the run
+	// executes, so a harness/loop can work on "the files I gave you". Requires a
+	// workspace (the Agent's storage.agentfs mount or harness.cli.workingDir);
+	// a run with inputs but no workspace fails loud. Large or secret payloads
+	// should use secretRef rather than inline (inputs ride the run spec, which
+	// the operator marshals into a ~1 MiB ConfigMap).
+	// +optional
+	Inputs []RunInputFile `json:"inputs,omitempty"`
+}
+
+// RunInputFile is a single file seeded into the run workspace. Exactly one
+// source must be set: Inline (UTF-8 text), InlineBase64 (binary), or SecretRef
+// (leased from the broker at runtime, never written into the AgentRun spec).
+type RunInputFile struct {
+	// Path is the destination relative to the workspace root. Must be relative
+	// with no ".." segment.
+	Path string `json:"path"`
+
+	// Inline is literal UTF-8 file content.
+	// +optional
+	Inline string `json:"inline,omitempty"`
+
+	// InlineBase64 is base64-encoded file content (for binary payloads).
+	// +optional
+	InlineBase64 string `json:"inlineBase64,omitempty"`
+
+	// SecretRef leases the file content from the broker at runtime, so the value
+	// never sits in the AgentRun spec.
+	// +optional
+	SecretRef *AuthRef `json:"secretRef,omitempty"`
 }
 
 // Step is a single plan-act-observe iteration.

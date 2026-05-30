@@ -129,7 +129,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// Resolve the loop-mode ModelProvider + gather every secret the broker
 		// must serve (harness env secretRef + the provider API key). A missing
 		// source Secret / ModelProvider keeps the run Pending and retries.
-		provider, brokerValues, prepErr := r.prepareRun(ctx, agent)
+		provider, brokerValues, prepErr := r.prepareRun(ctx, run, agent)
 		if prepErr != nil {
 			r.markPending(run, "RunPrepPending", prepErr.Error())
 			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
@@ -275,8 +275,21 @@ func terminationReason(pod *corev1.Pod) string {
 // value plus the provider API key. Values are keyed by lease name (the
 // SecretRef.SecretName the runtime leases by). Harness mode returns a nil
 // provider; agents with no secrets return an empty map.
-func (r *AgentRunReconciler) prepareRun(ctx context.Context, agent *amv1.Agent) (*builders.RunProvider, map[string][]byte, error) {
+func (r *AgentRunReconciler) prepareRun(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) (*builders.RunProvider, map[string][]byte, error) {
 	values := map[string][]byte{}
+
+	// Run input files may reference broker secrets; the runtime leases them by
+	// SecretName when materializing inputs into the workspace.
+	for _, in := range run.Spec.Inputs {
+		if in.SecretRef == nil || in.SecretRef.SecretName == "" {
+			continue
+		}
+		val, err := r.readSecret(ctx, run.Namespace, in.SecretRef.SecretName, in.SecretRef.Key)
+		if err != nil {
+			return nil, nil, err
+		}
+		values[in.SecretRef.SecretName] = val
+	}
 
 	if agent.Spec.Harness != nil {
 		for _, e := range agent.Spec.Harness.Env {

@@ -55,6 +55,17 @@ spec:
                     maxWallClockSeconds: { type: integer, minimum: 1 }
                     maxToolCalls: { type: integer, minimum: 0 }
                 cancel: { type: boolean }
+                inputs:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path: { type: string }
+                      inline: { type: string }
+                      inlineBase64: { type: string }
+                      secretRef:
+                        type: object
+                        properties: { secretName: { type: string }, key: { type: string } }
             status:
               type: object
               properties:
