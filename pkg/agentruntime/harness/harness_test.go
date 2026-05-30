@@ -60,6 +60,28 @@ func TestPromptFromInput(t *testing.T) {
 	}
 }
 
+func TestImagesFromInput(t *testing.T) {
+	// URL passthrough, b64 -> data URL, default mime; order preserved.
+	got := imagesFromInput(json.RawMessage(
+		`{"prompt":"hi","images":[{"url":"https://x/a.png"},{"b64":"AAAA","mime":"image/jpeg"},{"b64":"BBBB"}]}`))
+	want := []string{"https://x/a.png", "data:image/jpeg;base64,AAAA", "data:image/png;base64,BBBB"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d images, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("image[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// No images / non-object input -> nil (text-only path unaffected).
+	if imagesFromInput(json.RawMessage(`{"prompt":"hi"}`)) != nil {
+		t.Error("absent images key should yield nil")
+	}
+	if imagesFromInput(json.RawMessage(`"plain"`)) != nil {
+		t.Error("non-object input should yield nil")
+	}
+}
+
 func TestCapWriter(t *testing.T) {
 	w := &capWriter{limit: 5}
 	n, _ := w.Write([]byte("hello world"))
@@ -292,6 +314,67 @@ func TestHermesHarness_RequiresURL(t *testing.T) {
 	h := &HermesHarness{}
 	if _, err := h.Run(context.Background(), Request{Spec: v1.HarnessSpec{Kind: v1.HarnessHermes}}); err == nil {
 		t.Error("expected error when http.url is missing")
+	}
+}
+
+// H3: an "images" array in the Run input becomes OpenAI multimodal content parts
+// (text + image_url) on the user message; text-only inputs stay a plain string.
+func TestHermesHarness_MultimodalImage(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"saw it"}}]}`))
+	}))
+	defer srv.Close()
+
+	h := &HermesHarness{Client: srv.Client()}
+	_, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Input: json.RawMessage(`{"prompt":"what is this?","images":[{"url":"https://x/a.png"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	user, _ := msgs[len(msgs)-1].(map[string]any)
+	parts, ok := user["content"].([]any)
+	if !ok {
+		t.Fatalf("user content should be an array of parts, got %T: %v", user["content"], user["content"])
+	}
+	if len(parts) != 2 {
+		t.Fatalf("want 2 parts (text+image), got %d: %v", len(parts), parts)
+	}
+	if p0, _ := parts[0].(map[string]any); p0["type"] != "text" || p0["text"] != "what is this?" {
+		t.Errorf("text part = %v", parts[0])
+	}
+	p1, _ := parts[1].(map[string]any)
+	iu, _ := p1["image_url"].(map[string]any)
+	if p1["type"] != "image_url" || iu["url"] != "https://x/a.png" {
+		t.Errorf("image part = %v", p1)
+	}
+}
+
+// O2(A): the Run's seed is forwarded as the OpenAI `seed` request field.
+func TestHermesHarness_Seed(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	h := &HermesHarness{Client: srv.Client()}
+	if _, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Input: json.RawMessage(`{"prompt":"hi"}`),
+		Seed:  7,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotBody["seed"] != float64(7) {
+		t.Errorf("seed = %v, want 7", gotBody["seed"])
 	}
 }
 

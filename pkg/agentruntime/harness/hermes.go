@@ -27,7 +27,14 @@ import (
 //     per run — omitting the header is NOT stateless (see Run for why).
 //   - extra request fields — any env named BODY_<field> is merged into the
 //     request body, JSON-typed when parseable (e.g. BODY_temperature=0.7,
-//     BODY_reasoning_effort=high). Covers OpenAI knobs + Hermes extra_body.
+//     BODY_top_p=0.9), reaching the gateway as OpenAI request fields / Hermes
+//     extra_body. Knobs the stock gateway treats as server-side config (e.g.
+//     reasoning_effort, tool/skill enablement) live in the gateway's own
+//     config.yaml and may be ignored when sent as request fields.
+//   - multimodal input — an "images" array in the Run input (url or b64) is
+//     forwarded as OpenAI image_url content parts (see imagesFromInput).
+//   - seed — the Run's seed is forwarded as the OpenAI `seed` field when set;
+//     determinism is best-effort (a hint the backend may ignore).
 //   - model selection — HERMES_MODEL env overrides the gateway default
 //     ("hermes-agent").
 //   - real token accounting — the OpenAI usage block is parsed back into
@@ -67,11 +74,14 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 
 	// Build the OpenAI chat-completions body: instructions -> system message,
 	// the Run input -> user message.
-	messages := make([]map[string]string, 0, 2)
+	messages := make([]map[string]any, 0, 2)
 	if strings.TrimSpace(req.Instructions) != "" {
-		messages = append(messages, map[string]string{"role": "system", "content": req.Instructions})
+		messages = append(messages, map[string]any{"role": "system", "content": req.Instructions})
 	}
-	messages = append(messages, map[string]string{"role": "user", "content": promptFromInput(req.Input)})
+	messages = append(messages, map[string]any{
+		"role":    "user",
+		"content": userContent(promptFromInput(req.Input), imagesFromInput(req.Input)),
+	})
 
 	body := map[string]any{
 		"model":    hermesModel(env),
@@ -81,8 +91,14 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	if req.Budget.MaxTokens > 0 {
 		body["max_tokens"] = req.Budget.MaxTokens
 	}
+	// Forward the run's seed when set so a backend that honors it can be
+	// deterministic — a hint, not a guarantee (many gateways ignore it). A
+	// BODY_seed env (below) overrides this.
+	if req.Seed != 0 {
+		body["seed"] = req.Seed
+	}
 	// BODY_<field> env entries become extra request fields (e.g. temperature,
-	// top_p, reasoning_effort). Applied last so they can override the defaults.
+	// top_p). Applied last so they can override the defaults.
 	for k, v := range env {
 		if field, ok := strings.CutPrefix(k, "BODY_"); ok && field != "" {
 			body[field] = jsonOrString(v)
@@ -160,6 +176,26 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 		TokensOut:  out,
 		DurationMs: res.DurationMs,
 	}, nil
+}
+
+// userContent builds the OpenAI "content" for the user message. With no images
+// it returns the plain prompt string (the common path — content stays a string,
+// byte-identical to before). With images it returns OpenAI multimodal content
+// parts: one text part plus an image_url part per image, the standard shape the
+// Hermes gateway accepts.
+func userContent(text string, images []string) any {
+	if len(images) == 0 {
+		return text
+	}
+	parts := make([]map[string]any, 0, 1+len(images))
+	parts = append(parts, map[string]any{"type": "text", "text": text})
+	for _, url := range images {
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": url},
+		})
+	}
+	return parts
 }
 
 // effectiveEnv merges the harness spec's literal env (HarnessEnvVar.Value) with

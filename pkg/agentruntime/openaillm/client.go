@@ -61,6 +61,11 @@ func (c *Client) Chat(ctx context.Context, req agentruntime.ChatRequest) (rt.LLM
 	if req.Model.MaxOutputTokens != nil {
 		body["max_tokens"] = *req.Model.MaxOutputTokens
 	}
+	// Forward the seed so a backend that honors it can be deterministic — a
+	// hint, not a guarantee (many providers ignore it).
+	if req.Seed != 0 {
+		body["seed"] = req.Seed
+	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {

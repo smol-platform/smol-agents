@@ -46,6 +46,8 @@ spec:
       - name: HERMES_SESSION_ID
         value: tenant-a-hermes
       # Optional: pick the gateway model + sampling knobs (BODY_ -> request body).
+      # Sampling knobs (temperature, top_p) work as request fields; gateway-side
+      # settings like reasoning_effort live in the gateway's config.yaml, not here.
       - name: HERMES_MODEL
         value: hermes-agent
       - name: BODY_temperature

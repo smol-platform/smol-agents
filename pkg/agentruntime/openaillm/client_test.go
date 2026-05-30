@@ -75,6 +75,7 @@ func TestClient_RequestShape(t *testing.T) {
 		Model:        v1.ModelRef{Name: "m1", Temperature: &temp},
 		Instructions: "sys",
 		Input:        json.RawMessage(`{"question":"q?"}`),
+		Seed:         42,
 		Tools:        []v1.Tool{{Name: "search", Spec: v1.ToolSpec{Description: "web", InputSchema: json.RawMessage(`{"type":"object"}`)}}},
 		History: []v1.Step{{Index: 0, ToolCalls: []v1.ToolCallRecord{
 			{Tool: "search", Arguments: json.RawMessage(`{"q":"x"}`), Result: json.RawMessage(`{"r":1}`)},
@@ -85,6 +86,9 @@ func TestClient_RequestShape(t *testing.T) {
 	}
 	if got["model"] != "m1" || got["temperature"] != 0.3 {
 		t.Errorf("model/temp = %v/%v", got["model"], got["temperature"])
+	}
+	if got["seed"] != float64(42) {
+		t.Errorf("seed = %v, want 42", got["seed"])
 	}
 	// system, user, assistant(tool_call), tool(result).
 	msgs, _ := got["messages"].([]any)
