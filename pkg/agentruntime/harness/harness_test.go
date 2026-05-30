@@ -82,6 +82,50 @@ func TestImagesFromInput(t *testing.T) {
 	}
 }
 
+func TestScreenImages(t *testing.T) {
+	dataURI := "data:image/png;base64,AAAA"
+	allow := &v1.ImagePolicy{AllowURLs: true}
+	cases := []struct {
+		name    string
+		images  []string
+		policy  *v1.ImagePolicy
+		wantErr string // substring; "" means no error
+		wantLen int
+	}{
+		{"data uri always allowed (nil policy)", []string{dataURI}, nil, "", 1},
+		{"http denied by default (nil policy)", []string{"https://x/a.png"}, nil, "disabled", 0},
+		{"http denied when AllowURLs false", []string{"https://x/a.png"}, &v1.ImagePolicy{}, "disabled", 0},
+		{"http allowed when opted in", []string{"https://cdn.example.com/a.png"}, allow, "", 1},
+		{"cloud metadata ip blocked even when allowed", []string{"http://169.254.169.254/latest/meta-data/"}, allow, "private/internal", 0},
+		{"loopback blocked", []string{"http://127.0.0.1/x"}, allow, "private/internal", 0},
+		{"ipv6 loopback blocked", []string{"http://[::1]/x"}, allow, "private/internal", 0},
+		{"private range blocked", []string{"http://10.0.0.5/x"}, allow, "private/internal", 0},
+		{"localhost blocked", []string{"http://localhost/x"}, allow, "private/internal", 0},
+		{"internal name blocked", []string{"http://metadata.google.internal/x"}, allow, "private/internal", 0},
+		{"host allow-list permits listed", []string{"https://cdn.example.com/a.png"}, &v1.ImagePolicy{AllowURLs: true, AllowedURLHosts: []string{"cdn.example.com"}}, "", 1},
+		{"host allow-list rejects unlisted", []string{"https://evil.com/a.png"}, &v1.ImagePolicy{AllowURLs: true, AllowedURLHosts: []string{"cdn.example.com"}}, "allowedURLHosts", 0},
+		{"non-http scheme rejected", []string{"file:///etc/passwd"}, allow, "scheme", 0},
+		{"denied http fails loud even beside an allowed data uri", []string{dataURI, "https://x/a.png"}, nil, "disabled", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := screenImages(tc.images, tc.policy)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if len(got) != tc.wantLen {
+				t.Errorf("got %d images, want %d", len(got), tc.wantLen)
+			}
+		})
+	}
+}
+
 func TestCapWriter(t *testing.T) {
 	w := &capWriter{limit: 5}
 	n, _ := w.Write([]byte("hello world"))
@@ -330,7 +374,7 @@ func TestHermesHarness_MultimodalImage(t *testing.T) {
 
 	h := &HermesHarness{Client: srv.Client()}
 	_, err := h.Run(context.Background(), Request{
-		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL, ImagePolicy: &v1.ImagePolicy{AllowURLs: true}}},
 		Input: json.RawMessage(`{"prompt":"what is this?","images":[{"url":"https://x/a.png"}]}`),
 	})
 	if err != nil {
@@ -352,6 +396,30 @@ func TestHermesHarness_MultimodalImage(t *testing.T) {
 	iu, _ := p1["image_url"].(map[string]any)
 	if p1["type"] != "image_url" || iu["url"] != "https://x/a.png" {
 		t.Errorf("image part = %v", p1)
+	}
+}
+
+// H3 SSRF gating: an http(s) image URL is denied by default (no imagePolicy) and
+// the run fails BEFORE the gateway is called — the gateway must never be asked
+// to fetch an unvetted URL.
+func TestHermesHarness_ImageURLDeniedByDefault(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	h := &HermesHarness{Client: srv.Client()}
+	_, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Input: json.RawMessage(`{"prompt":"hi","images":[{"url":"https://x/a.png"}]}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("err = %v, want http(s) image denied by default", err)
+	}
+	if called {
+		t.Error("gateway must NOT be called when an image url is rejected")
 	}
 }
 

@@ -105,6 +105,13 @@ spec:
                             maxAttempts: { type: integer }
                             backoffBaseMs: { type: integer }
                             maxBackoffMs: { type: integer }
+                        imagePolicy:
+                          type: object
+                          properties:
+                            allowURLs: { type: boolean }
+                            allowedURLHosts:
+                              type: array
+                              items: { type: string }
                 storage:
                   type: object
                   properties:

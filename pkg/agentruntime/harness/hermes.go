@@ -31,8 +31,12 @@ import (
 //     extra_body. Knobs the stock gateway treats as server-side config (e.g.
 //     reasoning_effort, tool/skill enablement) live in the gateway's own
 //     config.yaml and may be ignored when sent as request fields.
-//   - multimodal input — an "images" array in the Run input (url or b64) is
-//     forwarded as OpenAI image_url content parts (see imagesFromInput).
+//   - multimodal input — an "images" array in the Run input is forwarded as
+//     OpenAI image_url content parts: a self-contained data: URI (from a b64
+//     entry or a data: url), or an http(s) url ONLY when http.imagePolicy
+//     permits it. http(s) URLs are screened because the GATEWAY (not the
+//     sandboxed agent) fetches them — an SSRF surface; default-denied, internal
+//     targets always blocked (see imagesFromInput + screenImages).
 //   - seed — the Run's seed is forwarded as the OpenAI `seed` field when set;
 //     determinism is best-effort (a hint the backend may ignore).
 //   - model selection — HERMES_MODEL env overrides the gateway default
@@ -74,13 +78,20 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 
 	// Build the OpenAI chat-completions body: instructions -> system message,
 	// the Run input -> user message.
+	// Screen any image references against the agent's policy BEFORE building the
+	// request: an http(s) image URL is fetched by the gateway (an SSRF surface),
+	// so it is denied unless explicitly opted in. A violation fails the run.
+	images, err := screenImages(imagesFromInput(req.Input), spec.ImagePolicy)
+	if err != nil {
+		return Response{}, err
+	}
 	messages := make([]map[string]any, 0, 2)
 	if strings.TrimSpace(req.Instructions) != "" {
 		messages = append(messages, map[string]any{"role": "system", "content": req.Instructions})
 	}
 	messages = append(messages, map[string]any{
 		"role":    "user",
-		"content": userContent(promptFromInput(req.Input), imagesFromInput(req.Input)),
+		"content": userContent(promptFromInput(req.Input), images),
 	})
 
 	body := map[string]any{

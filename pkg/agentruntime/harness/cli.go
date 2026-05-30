@@ -134,44 +134,6 @@ func promptFromInput(in json.RawMessage) string {
 	return s
 }
 
-// imagesFromInput extracts image references from the JSON input's optional
-// "images" array. Each entry is {"url":"..."} (an http(s) or data: URL passed
-// through) or {"b64":"...","mime":"image/png"} (assembled into a data: URL).
-// Returns nil when there are no images, so the text-only path is unaffected.
-//
-// Delivery note: images ride inside AgentRun.Input, which the operator marshals
-// into a ~1 MiB ConfigMap — so a large inline b64 image overflows that cap
-// before the pod starts. Prefer a URL for real images; keep inline b64 small.
-func imagesFromInput(in json.RawMessage) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	var m struct {
-		Images []struct {
-			URL  string `json:"url"`
-			B64  string `json:"b64"`
-			Mime string `json:"mime"`
-		} `json:"images"`
-	}
-	if err := json.Unmarshal(in, &m); err != nil {
-		return nil
-	}
-	var out []string
-	for _, img := range m.Images {
-		switch {
-		case img.URL != "":
-			out = append(out, img.URL)
-		case img.B64 != "":
-			mime := img.Mime
-			if mime == "" {
-				mime = "image/png"
-			}
-			out = append(out, "data:"+mime+";base64,"+img.B64)
-		}
-	}
-	return out
-}
-
 // ClaudeCodeHarness invokes `claude --print "<prompt>"`.
 type ClaudeCodeHarness struct {
 	Cmd commandFunc // nil → exec.CommandContext

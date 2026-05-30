@@ -173,6 +173,29 @@ type HarnessHTTPSpec struct {
 	// 5xx). Unset means a single attempt — no retry — preserving prior behavior.
 	// +optional
 	Retry *RetrySpec `json:"retry,omitempty"`
+
+	// ImagePolicy governs http(s) image URLs in multimodal Run input. Unset =
+	// the secure default (data: URIs only; http(s) URLs rejected).
+	// +optional
+	ImagePolicy *ImagePolicy `json:"imagePolicy,omitempty"`
+}
+
+// ImagePolicy governs http(s) image URLs found in multimodal Run input. An
+// http(s) image URL is fetched by the GATEWAY (a separate Service), not the
+// sandboxed agent pod — so it is an SSRF/exfil surface AgentNet cannot see. The
+// secure default forwards only self-contained data: URIs and rejects http(s)
+// URLs; set AllowURLs to opt in, optionally narrowing to AllowedURLHosts.
+// Internal/loopback/link-local/metadata targets are always blocked.
+type ImagePolicy struct {
+	// AllowURLs permits http(s) image URLs. Default false: only inline data:
+	// URIs are forwarded; an http(s) URL fails the run with a clear error.
+	// +optional
+	AllowURLs bool `json:"allowURLs,omitempty"`
+
+	// AllowedURLHosts, when set (and AllowURLs is true), restricts http(s) image
+	// URLs to these hostnames (exact, case-insensitive). Empty = any public host.
+	// +optional
+	AllowedURLHosts []string `json:"allowedURLHosts,omitempty"`
 }
 
 // RetrySpec configures transient-failure retries for HTTP-based harnesses
