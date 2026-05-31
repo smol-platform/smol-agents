@@ -51,10 +51,12 @@ jobs:
           fi
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
 
-      # ebpf-loader.Dockerfile COPYs bpf/build/*.bpf.o; compile them (CO-RE
-      # bpfel objects are arch-portable) before building that image.
+      # Several images COPY bpf/build/*.bpf.o (agent, ebpf-loader, ebpf-probe),
+      # so compile them up front for every job — harmless for images that don't
+      # use them, and avoids an allowlist that silently breaks when a new image
+      # starts embedding the objects. They're CO-RE bpfel and arch-portable, so
+      # one native build serves both platforms.
       - name: Compile BPF objects
-        if: matrix.image == 'ebpf-loader'
         run: |
           mkdir -p bpf/build
           docker buildx build --file deploy/docker/bpf-builder.Dockerfile \
