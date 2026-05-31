@@ -7,6 +7,7 @@
 package agentfs
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -94,15 +95,24 @@ func (k *KopiaStore) defaultRun(ctx context.Context, args ...string) ([]byte, er
 		env = append(env, "AWS_SESSION_TOKEN="+k.SessionToken)
 	}
 	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	if err != nil {
+	// kopia writes the --json manifest to stdout and progress/log lines to
+	// stderr. Capture them separately: merging (CombinedOutput) interleaves the
+	// log lines into the JSON and breaks parseManifests ("no manifest in output").
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
 		verb := ""
 		if len(args) > 0 {
 			verb = args[0]
 		}
-		return out, fmt.Errorf("kopia %s: %w: %s", verb, err, strings.TrimSpace(string(out)))
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		return stdout.Bytes(), fmt.Errorf("kopia %s: %w: %s", verb, err, detail)
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
 // repoPrefix is where the kopia repo lives within the bucket: "<prefix>/kopia/".

@@ -1,14 +1,15 @@
-// PROTOTYPE / WIP — tests for the VersionedStore seam.
-//
-// Verifies the interface is satisfiable and exercises a dependency-free fake
-// that models the restore->checkpoint->history->diff lifecycle, plus the
-// DB-exclusion contract. No kopia/S3/network involved. ErrNoVersion and
+// Tests for the VersionedStore seam and the kopia-backed store. The
+// fakeVersionedStore exercises the restore->checkpoint->history->diff lifecycle
+// and the DB-exclusion contract with no kopia/S3/network; the KopiaStore tests
+// inject `run` (or a fake kopia script) so they stay hermetic. ErrNoVersion and
 // ErrRestoreNotFound are reused from the in-package types.go.
 package agentfs
 
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -254,5 +255,35 @@ func TestManager_BackendRoutes(t *testing.T) {
 	}
 	if _, err := m.EnforceRetention(); err != nil {
 		t.Fatalf("EnforceRetention: %v", err)
+	}
+}
+
+// TestKopiaStore_DefaultRunStdoutOnly is a regression guard for the live bug
+// where defaultRun used CombinedOutput: kopia writes the --json manifest to
+// stdout and progress lines to stderr, so merging them broke parseManifests
+// ("no manifest in output"). defaultRun must return stdout only. Uses a fake
+// kopia shell script to stay hermetic; skipped where /bin/sh is unavailable.
+func TestKopiaStore_DefaultRunStdoutOnly(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("needs /bin/sh for the fake kopia")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "kopia")
+	script := "#!/bin/sh\n" +
+		`printf '%s' '{"id":"deadbeef","startTime":"2026-01-01T00:00:00Z","stats":{"totalSize":42}}'` + "\n" +
+		`echo 'Snapshotting nonroot@host:/var/agentfs ...' 1>&2` + "\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	k := &KopiaStore{Binary: fake, ConfigDir: dir, Password: "x"}
+	out, err := k.exec(context.Background(), "snapshot", "create", "--json", "/var/agentfs")
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if strings.Contains(string(out), "Snapshotting") {
+		t.Fatalf("stderr leaked into stdout: %q", out)
+	}
+	if cps := parseManifests(out); len(cps) != 1 || cps[0].ID != "deadbeef" || cps[0].SizeBytes != 42 {
+		t.Fatalf("parseManifests(%q) = %+v, want one cp id=deadbeef size=42", out, cps)
 	}
 }
