@@ -52,6 +52,15 @@ type AgentFSSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
 
+	// Backend selects the durability engine. "" / "tar" = the legacy
+	// full-snapshot gzip-tar to one S3 key (back-compat default). "kopia" =
+	// content-addressed snapshots (dedup, incremental/streaming, history, diff,
+	// rollback) — see docs/design/agentfs-fuse-plugin.md. kopia takes periodic
+	// snapshots automatically on the Backup schedule plus on shutdown.
+	// +kubebuilder:validation:Enum="";tar;kopia
+	// +optional
+	Backend string `json:"backend,omitempty"`
+
 	// Backup configures S3 backups + WAL snapshotting + retention.
 	// +optional
 	Backup *BackupPolicy `json:"backup,omitempty"`
@@ -199,6 +208,14 @@ func validateAgentFS(a AgentFSSpec) error {
 	}
 	if a.MountPath != "" && !strings.HasPrefix(a.MountPath, "/") {
 		errs = append(errs, errors.New("agentfs.mountPath must be absolute"))
+	}
+	switch a.Backend {
+	case "", "tar", "kopia":
+	default:
+		errs = append(errs, fmt.Errorf("agentfs.backend=%q is invalid (want tar|kopia)", a.Backend))
+	}
+	if a.Backend == "kopia" && (a.Backup == nil || a.Backup.S3 == nil) {
+		errs = append(errs, errors.New("agentfs.backend=kopia requires backup.s3 (the repo destination)"))
 	}
 	if a.Backup != nil {
 		errs = append(errs, validateBackup(*a.Backup)...)

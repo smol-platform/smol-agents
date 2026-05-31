@@ -1,6 +1,7 @@
 package agentfs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +11,9 @@ import (
 // Restore reads a full snapshot from S3 (per the spec's RestorePolicy)
 // and writes it back to the storage driver. R-AFS-4.
 func (m *Manager) Restore() (Version, error) {
+	if m.Backend != nil {
+		return m.backendRestore()
+	}
 	if m.Spec.Restore == nil {
 		// No restore policy → nothing to do.
 		return Version{}, nil
@@ -35,6 +39,60 @@ func (m *Manager) Restore() (Version, error) {
 		return Version{}, fmt.Errorf("agentfs: restore: %w", err)
 	}
 	return picked, nil
+}
+
+// backendRestore drives the VersionedStore backend (kopia) for the init verb:
+// Connect, resolve the ref from RestorePolicy, then materialize into the mount.
+// A missing checkpoint honors RestorePolicy.IfMissing (fresh|fail) like the tar
+// path's handleMissing.
+func (m *Manager) backendRestore() (Version, error) {
+	ctx := context.Background()
+	if err := m.Backend.Connect(ctx); err != nil {
+		return Version{}, fmt.Errorf("agentfs: backend connect: %w", err)
+	}
+	ref, err := m.backendRef(ctx)
+	if err != nil {
+		return Version{}, err
+	}
+	cp, err := m.Backend.Restore(ctx, ref, m.Spec.MountPath)
+	if errors.Is(err, ErrNoVersion) || errors.Is(err, ErrRestoreNotFound) {
+		return Version{}, m.handleMissing()
+	}
+	if err != nil {
+		return Version{}, fmt.Errorf("agentfs: backend restore: %w", err)
+	}
+	return Version{ID: cp.ID, Key: "kopia", CreatedAt: cp.CreatedAt, SizeBytes: cp.SizeBytes, Kind: string(SnapshotFull)}, nil
+}
+
+// backendRef maps RestorePolicy.Mode to a VersionedStore ref ("latest", a
+// checkpoint ID, or the newest checkpoint at/under a pointInTime).
+func (m *Manager) backendRef(ctx context.Context) (string, error) {
+	if m.Spec.Restore == nil {
+		return "latest", nil
+	}
+	switch m.Spec.Restore.Mode {
+	case "", "latest":
+		return "latest", nil
+	case "versionID":
+		return m.Spec.Restore.VersionID, nil
+	case "pointInTime":
+		t, err := time.Parse(time.RFC3339, m.Spec.Restore.PointInTime)
+		if err != nil {
+			return "", fmt.Errorf("agentfs: parse pointInTime: %w", err)
+		}
+		hist, err := m.Backend.History(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, c := range hist { // newest-first
+			if !c.CreatedAt.After(t) {
+				return c.ID, nil
+			}
+		}
+		return "", fmt.Errorf("%w: no checkpoint <= %s", ErrRestoreNotFound, m.Spec.Restore.PointInTime)
+	default:
+		return "", fmt.Errorf("agentfs: unknown restore mode %q", m.Spec.Restore.Mode)
+	}
 }
 
 // pickRestoreTarget selects a Version per RestorePolicy.Mode.

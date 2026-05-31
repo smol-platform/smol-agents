@@ -176,13 +176,17 @@ func agentFSBackupEnv(a *pure.AgentFSSpec) []corev1.EnvVar {
 	if b.Retention.MaxVersions > 0 {
 		env = append(env, corev1.EnvVar{Name: "AGENTFS_RETENTION_MAX_VERSIONS", Value: itoa(b.Retention.MaxVersions)})
 	}
-	// AWS credentials from the referenced k8s Secret (never inlined in the spec).
+	// Durability backend: "" / tar (legacy) or kopia (content-addressed).
+	env = appendIf(env, "AGENTFS_BACKEND", a.Backend)
+	// AWS credentials (+ the kopia repo password for backend=kopia) from the
+	// referenced k8s Secret (never inlined in the spec).
 	if s3.CredentialsRef != nil && s3.CredentialsRef.SecretName != "" {
 		sn := s3.CredentialsRef.SecretName
 		env = append(env,
 			awsCredEnv("AWS_ACCESS_KEY_ID", sn, "access-key-id", false),
 			awsCredEnv("AWS_SECRET_ACCESS_KEY", sn, "secret-access-key", false),
 			awsCredEnv("AWS_SESSION_TOKEN", sn, "session-token", true),
+			awsCredEnv("AGENTFS_KOPIA_PASSWORD", sn, "kopia-password", true),
 		)
 	}
 	return env

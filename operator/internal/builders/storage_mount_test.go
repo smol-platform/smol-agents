@@ -127,6 +127,10 @@ func TestBuildAgentRunPod_StorageAgentFS(t *testing.T) {
 	if s, key, ok := secretEnvRef(sc, "AWS_ACCESS_KEY_ID"); !ok || s != "aws-creds" || key != "access-key-id" {
 		t.Errorf("AWS_ACCESS_KEY_ID secretKeyRef = (%q,%q,%v), want (aws-creds,access-key-id,true)", s, key, ok)
 	}
+	// Default (unset) backend = legacy tar path: no AGENTFS_BACKEND env emitted.
+	if got := envVal(sc, "AGENTFS_BACKEND"); got != "" {
+		t.Errorf("default backend should emit no AGENTFS_BACKEND, got %q", got)
+	}
 
 	// Restore policy reaches only the init container.
 	ic := findCtr(pod, storageFSInitName)
@@ -138,6 +142,35 @@ func TestBuildAgentRunPod_StorageAgentFS(t *testing.T) {
 	}
 	if envVal(sc, "AGENTFS_RESTORE_MODE") != "" {
 		t.Error("restore env leaked onto the serving sidecar")
+	}
+}
+
+// Backend=kopia surfaces AGENTFS_BACKEND on both the init (restore) and serving
+// containers, and projects the kopia repo password from the same credentials
+// secret as an optional key — never inlined.
+func TestBuildAgentRunPod_StorageKopiaBackend(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+
+	agent := storageAgent()
+	agent.Spec.Storage.AgentFS.Backend = "kopia"
+
+	pod := BuildAgentRunPod(run, agent)
+
+	sc := findCtr(pod, storageFSSidecarName)
+	if sc == nil {
+		t.Fatal("agentfs-sidecar missing")
+	}
+	if got := envVal(sc, "AGENTFS_BACKEND"); got != "kopia" {
+		t.Errorf("sidecar AGENTFS_BACKEND = %q, want kopia", got)
+	}
+	if s, key, ok := secretEnvRef(sc, "AGENTFS_KOPIA_PASSWORD"); !ok || s != "aws-creds" || key != "kopia-password" {
+		t.Errorf("AGENTFS_KOPIA_PASSWORD secretKeyRef = (%q,%q,%v), want (aws-creds,kopia-password,true)", s, key, ok)
+	}
+	// The init container restores via the same backend, so it needs the selector too.
+	if ic := findCtr(pod, storageFSInitName); envVal(ic, "AGENTFS_BACKEND") != "kopia" {
+		t.Error("init container missing AGENTFS_BACKEND=kopia for backend-aware restore")
 	}
 }
 

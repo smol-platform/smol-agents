@@ -95,4 +95,10 @@ type Manager struct {
 	Storage Storage
 	S3      S3
 	Now     func() time.Time
+
+	// Backend, when set, supersedes the legacy tar Storage+S3 path: Backup ->
+	// Checkpoint, Restore -> Restore, EnforceRetention -> GC. It is the
+	// content-addressed (kopia) engine that gives history/diff/rollback. When
+	// nil, the original single-key gzip-tar path is used (back-compat).
+	Backend VersionedStore
 }

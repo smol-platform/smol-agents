@@ -129,12 +129,30 @@ func buildManager(ctx context.Context, mount string) (*agentfs.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &agentfs.Manager{
+	mgr := &agentfs.Manager{
 		Spec:    spec,
 		Storage: agentfs.FilesystemStorage{Root: mount},
 		S3:      s3,
 		Now:     time.Now,
-	}, nil
+	}
+	// kopia backend: content-addressed snapshots (dedup, history, diff, rollback)
+	// supersede the tar path. AWS creds + the repo password come from env the
+	// operator projects from the CredentialsRef secret (never inlined). The
+	// existing Scheduler then drives periodic snapshots (AGENTFS_BACKUP_SCHEDULE)
+	// plus the final one on SIGTERM.
+	if os.Getenv("AGENTFS_BACKEND") == "kopia" {
+		mgr.Backend = &agentfs.KopiaStore{
+			Bucket:          bucket,
+			Prefix:          spec.Backup.S3.Prefix,
+			Region:          spec.Backup.S3.Region,
+			Endpoint:        spec.Backup.S3.EndpointURL,
+			AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+			SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+			SessionToken:    os.Getenv("AWS_SESSION_TOKEN"),
+			Password:        os.Getenv("AGENTFS_KOPIA_PASSWORD"),
+		}
+	}
+	return mgr, nil
 }
 
 // scheduleInterval maps a backup schedule string to a poll interval. Accepts

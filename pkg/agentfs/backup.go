@@ -2,6 +2,7 @@ package agentfs
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -34,6 +35,9 @@ func (m *Manager) keyForWAL() string {
 // Backup takes a full SQLite snapshot and uploads it. Returns the
 // newly-created Version. R-AFS-1.
 func (m *Manager) Backup() (Version, error) {
+	if m.Backend != nil {
+		return m.backendCheckpoint()
+	}
 	if err := m.checkPolicy(); err != nil {
 		return Version{}, err
 	}
@@ -48,6 +52,22 @@ func (m *Manager) Backup() (Version, error) {
 	}
 	v.Kind = string(SnapshotFull)
 	return v, nil
+}
+
+// backendCheckpoint drives the VersionedStore backend (kopia): Connect
+// (idempotent) then Checkpoint the mount. Replaces the tar Backup when
+// Manager.Backend is set — kopia streams + dedupes, so there is no in-memory
+// tree buffer (retires the bytes.Buffer OOM of the tar path).
+func (m *Manager) backendCheckpoint() (Version, error) {
+	ctx := context.Background()
+	if err := m.Backend.Connect(ctx); err != nil {
+		return Version{}, fmt.Errorf("agentfs: backend connect: %w", err)
+	}
+	cp, err := m.Backend.Checkpoint(ctx, m.Spec.MountPath, "")
+	if err != nil {
+		return Version{}, fmt.Errorf("agentfs: backend checkpoint: %w", err)
+	}
+	return Version{ID: cp.ID, Key: "kopia", CreatedAt: cp.CreatedAt, SizeBytes: cp.SizeBytes, Kind: string(SnapshotFull)}, nil
 }
 
 // SnapshotWAL uploads a WAL-frame batch if the storage driver has new
@@ -71,6 +91,18 @@ func (m *Manager) SnapshotWAL() (Version, bool, error) {
 // EnforceRetention deletes versions beyond the policy bound. It never
 // deletes the most recent version. R-AFS-3.
 func (m *Manager) EnforceRetention() (deleted int, err error) {
+	if m.Backend != nil {
+		var ret RetentionSpec
+		if m.Spec.Backup != nil {
+			ret.MaxVersions = int(m.Spec.Backup.Retention.MaxVersions)
+			if m.Spec.Backup.Retention.MinAge != "" {
+				if d, e := time.ParseDuration(m.Spec.Backup.Retention.MinAge); e == nil {
+					ret.MinAge = d
+				}
+			}
+		}
+		return 0, m.Backend.GC(context.Background(), ret)
+	}
 	if m.Spec.Backup == nil {
 		return 0, nil
 	}

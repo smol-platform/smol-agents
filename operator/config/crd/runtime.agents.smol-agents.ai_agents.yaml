@@ -124,6 +124,7 @@ spec:
                         sizeGiB: { type: integer, minimum: 1 }
                         mountPath: { type: string }
                         image: { type: string }
+                        backend: { type: string, enum: ["", tar, kopia] }
                         backup:
                           type: object
                           properties:
