@@ -7,6 +7,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,6 +23,7 @@ import (
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	pkgsandbox "github.com/smol-platform/smol-agents/pkg/sandbox"
 )
 
 // memoryFSRetriever resolves a MemoryRetriever by name in the same namespace as
@@ -83,14 +86,25 @@ func memoryFSRetriever(
 type AgentRunReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// DefaultRunRuntimeClass is the sandbox RuntimeClass applied to run pods when
+	// the Agent does not override it. Empty falls back to kata-fc. Set from
+	// --default-run-runtime-class.
+	DefaultRunRuntimeClass string
+	// AllowHostRuntime permits runc (shared host kernel) on run pods; otherwise
+	// a runc selection is a fail-closed R-SBX-1 policy violation. Set from
+	// --allow-host-runtime (dev/CI clusters without a sandbox runtime).
+	AllowHostRuntime bool
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
-// status changes immediately.
+// status changes immediately. Owns the egress NetworkPolicy so it is GC'd
+// with the run.
 func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.AgentRun{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Pod{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
 }
 
@@ -126,6 +140,20 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	pod := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod)
 	if apierrors.IsNotFound(err) {
+		// Resolve run-pod isolation fail-closed before any prep work: a policy
+		// violation (runc without operator opt-in) fails the run; a not-yet-
+		// registered hardened RuntimeClass holds it Pending rather than
+		// scheduling an unisolated pod (R-SBX-1 on the run datapath).
+		sbClass, sbPending, sbFailed := r.resolveRunSandbox(ctx, agent)
+		if sbFailed != "" {
+			r.markTerminal(run, pure.PhaseFailed, "sandbox:"+sbFailed)
+			return r.updateRunStatus(ctx, run, ctrl.Result{})
+		}
+		if sbPending != "" {
+			r.markPending(run, "SandboxNotReady", sbPending)
+			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 15 * time.Second})
+		}
+
 		// Resolve the loop-mode ModelProvider + gather every secret the broker
 		// must serve (harness env secretRef + the provider API key). A missing
 		// source Secret / ModelProvider keeps the run Pending and retries.
@@ -150,6 +178,9 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 
 		desired := builders.BuildAgentRunPod(run, agent)
+		// Pin the resolved sandbox RuntimeClass so the run executes under a real
+		// isolation boundary (default kata-fc), not the cluster-default runtime.
+		builders.ApplyRunSandbox(desired, sbClass)
 
 		// Attach filesystem MemoryRetriever mount if referenced (R-MEM-FS-2).
 		mountInput, mountEnabled, mountErr := memoryFSRetriever(ctx, r.Client, run)
@@ -170,6 +201,12 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// (harness env secretRef and/or the loop provider key).
 		if len(brokerValues) > 0 {
 			builders.AttachSecretBroker(desired, run.Name)
+		}
+
+		// Cage egress: a default-deny NetworkPolicy (blocks instance-metadata /
+		// arbitrary outbound) must exist before the pod schedules.
+		if err := r.ensureRunEgressPolicy(ctx, run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure egress policy: %w", err)
 		}
 
 		if err := ctrl.SetControllerReference(run, desired, r.Scheme); err != nil {
@@ -324,6 +361,52 @@ func (r *AgentRunReconciler) prepareRun(ctx context.Context, run *amv1.AgentRun,
 		}
 	}
 	return provider, values, nil
+}
+
+// resolveRunSandbox picks the run pod's RuntimeClass, fail-closed. At most one
+// of (class, pending, failed) is non-empty: failed is a hard R-SBX-1 violation
+// (runc without operator opt-in); pending means the chosen hardened RuntimeClass
+// is not registered yet, so we refuse to schedule an unisolated pod and wait. An
+// empty Agent override falls back to --default-run-runtime-class, then kata-fc.
+func (r *AgentRunReconciler) resolveRunSandbox(ctx context.Context, agent *amv1.Agent) (class, pending, failed string) {
+	class = agent.Spec.Sandbox.RuntimeClass
+	if class == "" {
+		class = r.DefaultRunRuntimeClass
+	}
+	if class == "" {
+		class = string(pkgsandbox.KindKataFC)
+	}
+	if pkgsandbox.ParseKind(class) == pkgsandbox.KindRunc {
+		if r.AllowHostRuntime {
+			return class, "", "" // deliberately permitted (dev/CI cluster)
+		}
+		return "", "", "runc-requires-allow-host-runtime"
+	}
+	// Hardened class: require the RuntimeClass object to exist; otherwise hold
+	// Pending rather than schedule a pod that fails admission or runs unisolated.
+	var rc nodev1.RuntimeClass
+	if err := r.Get(ctx, types.NamespacedName{Name: class}, &rc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", fmt.Sprintf("RuntimeClass %q not registered; refusing to run unisolated", class), ""
+		}
+		return "", fmt.Sprintf("checking RuntimeClass %q: %v", class, err), ""
+	}
+	return class, "", ""
+}
+
+// ensureRunEgressPolicy creates the run pod's default-deny egress NetworkPolicy
+// (idempotent), owned by the run so it is GC'd with it.
+func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv1.AgentRun) error {
+	np := builders.BuildAgentRunEgressPolicy(run)
+	if err := ctrl.SetControllerReference(run, np, r.Scheme); err != nil {
+		return err
+	}
+	var existing networkingv1.NetworkPolicy
+	err := r.Get(ctx, types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, &existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, np)
+	}
+	return err
 }
 
 // readSecret fetches one key from a k8s Secret (the sole key when key is empty).

@@ -62,6 +62,11 @@ rules:
     resources: [runtimeclasses]
     verbs: [get, list, watch, create, update, patch, delete]
 
+  # AgentRun egress cage: per-run default-deny NetworkPolicy.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+
   # Workload feature (Deployment, StatefulSet, Knative Service)
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets]

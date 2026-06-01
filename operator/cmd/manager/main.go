@@ -35,9 +35,15 @@ func init() {
 func main() {
 	var metricsAddr, probeAddr string
 	var enableLeaderElection bool
+	var defaultRunRuntimeClass string
+	var allowHostRuntime bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
+	flag.StringVar(&defaultRunRuntimeClass, "default-run-runtime-class", "kata-fc",
+		"sandbox RuntimeClass applied to AgentRun pods when the Agent doesn't override it (empty = kata-fc)")
+	flag.BoolVar(&allowHostRuntime, "allow-host-runtime", false,
+		"permit runc (shared host kernel) for AgentRun pods on clusters with no sandbox runtime; otherwise runc is a fail-closed R-SBX-1 violation")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -89,6 +95,8 @@ func main() {
 	}
 	if err := (&agentmodel.AgentRunReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		DefaultRunRuntimeClass: defaultRunRuntimeClass,
+		AllowHostRuntime:       allowHostRuntime,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)
