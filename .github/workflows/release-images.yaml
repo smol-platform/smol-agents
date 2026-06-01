@@ -31,7 +31,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [operator, agent, agentfs-sidecar, secret-proxy, ebpf-loader, agentctl]
+        image: [operator, agent, agentfs-sidecar, secret-proxy, ebpf-loader, agentctl,
+                harness-claude-code, harness-codex, harness-aider, harness-goose]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3

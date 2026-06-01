@@ -52,6 +52,21 @@ func Image(component string) string {
 	return imageRegistry() + "/" + component + ":" + imageTag(suffix)
 }
 
+// ImageVersioned is Image but pins the tag to version when non-empty (used for
+// HarnessSpec.Version). A full-ref per-component override still wins outright so
+// forks/private registries can repoint; otherwise the registry resolves
+// normally and version replaces the tag.
+func ImageVersioned(component, version string) string {
+	if version == "" {
+		return Image(component)
+	}
+	suffix := componentEnvSuffix(component)
+	if v := os.Getenv(envImagePrefix + suffix); v != "" {
+		return v
+	}
+	return imageRegistry() + "/" + component + ":" + version
+}
+
 // componentEnvSuffix maps a kebab-case component name to an UPPER_SNAKE_CASE
 // env-var suffix. "secret-proxy" -> "SECRET_PROXY".
 func componentEnvSuffix(component string) string {

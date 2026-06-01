@@ -474,3 +474,22 @@ func TestRunCLI_BudgetTimeout(t *testing.T) {
 		t.Fatal("expected timeout")
 	}
 }
+
+// TestRunCLI_StderrSurfacedOnError verifies a failing CLI's stderr is captured
+// and surfaced in the error (previously discarded, leaving failures opaque).
+func TestRunCLI_StderrSurfacedOnError(t *testing.T) {
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", "echo CLI-BOOM >&2; exit 3")
+	}}
+	_, err := h.Run(context.Background(), Request{
+		Instructions: "x",
+		Input:        json.RawMessage(`"hi"`),
+		Budget:       v1.Budget{MaxWallClockSeconds: 30},
+	})
+	if err == nil {
+		t.Fatal("expected error from non-zero exit")
+	}
+	if !strings.Contains(err.Error(), "CLI-BOOM") {
+		t.Errorf("stderr must be surfaced in the error, got: %v", err)
+	}
+}

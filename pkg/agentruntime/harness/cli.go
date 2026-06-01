@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -52,8 +51,12 @@ func runCLI(ctx context.Context, req Request, name string, args []string, cmd co
 	}
 
 	out := &capWriter{limit: maxBytes}
+	// Capture stderr (bounded) for diagnostics: a failing CLI (bad flag, missing
+	// auth, crash, OOM) writes the reason there — discarding it (the old
+	// behavior) left run failures undiagnosable.
+	errOut := &capWriter{limit: 8 << 10}
 	c.Stdout = out
-	c.Stderr = io.Discard
+	c.Stderr = errOut
 
 	startedAt := time.Now()
 	err := c.Run()
@@ -66,6 +69,9 @@ func runCLI(ctx context.Context, req Request, name string, args []string, cmd co
 		return Response{Output: out.Bytes(), DurationMs: dur}, ErrCancelled
 	}
 	if err != nil {
+		if msg := strings.TrimSpace(string(errOut.Bytes())); msg != "" {
+			return Response{Output: out.Bytes(), DurationMs: dur}, fmt.Errorf("harness: %w: %s", err, msg)
+		}
 		return Response{Output: out.Bytes(), DurationMs: dur}, fmt.Errorf("harness: %w", err)
 	}
 	return Response{Output: out.Bytes(), DurationMs: dur}, nil

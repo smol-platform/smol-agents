@@ -82,12 +82,10 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 }
 
 func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Container {
-	// The harness driver lives in the agent image; harness.image overrides it
-	// (e.g. an image that bundles a CLI tool + /agent).
-	image := Image("agent")
-	if agent.Spec.Harness != nil && agent.Spec.Harness.Image != "" {
-		image = agent.Spec.Harness.Image
-	}
+	// The harness driver lives in the image (a per-kind bundle for CLI agents,
+	// else the base agent image); harness.image overrides it. All must carry
+	// /agent — see HarnessImage.
+	image := HarnessImage(agent)
 	env := []corev1.EnvVar{}
 	if agent.Spec.Harness != nil {
 		for _, e := range agent.Spec.Harness.Env {

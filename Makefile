@@ -10,7 +10,8 @@ LDFLAGS ?= -s -w \
 
 BIN_DIR := bin
 CMDS := agent secret-proxy agentctl ebpf-loader
-DOCKER_IMAGES := agent secret-proxy agentctl ebpf-loader operator agentfs-sidecar
+DOCKER_IMAGES := agent secret-proxy agentctl ebpf-loader operator agentfs-sidecar \
+	harness-claude-code harness-codex harness-aider harness-goose
 
 .PHONY: all
 all: tidy fmt vet lint build test
