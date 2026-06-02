@@ -37,6 +37,8 @@ func main() {
 	var enableLeaderElection bool
 	var defaultRunRuntimeClass string
 	var allowHostRuntime bool
+	var sessionNATSURL string
+	var maxConcurrentReconciles int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -44,6 +46,10 @@ func main() {
 		"sandbox RuntimeClass applied to AgentRun pods when the Agent doesn't override it (empty = kata-fc)")
 	flag.BoolVar(&allowHostRuntime, "allow-host-runtime", false,
 		"permit runc (shared host kernel) for AgentRun pods on clusters with no sandbox runtime; otherwise runc is a fail-closed R-SBX-1 violation")
+	flag.StringVar(&sessionNATSURL, "session-nats-url", os.Getenv("SESSION_NATS_URL"),
+		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
+		"max parallel reconciles per agent-model controller (AgentRun/AgentSession)")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -95,16 +101,19 @@ func main() {
 	}
 	if err := (&agentmodel.AgentRunReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-		DefaultRunRuntimeClass: defaultRunRuntimeClass,
-		AllowHostRuntime:       allowHostRuntime,
+		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
+		AllowHostRuntime:        allowHostRuntime,
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)
 	}
 	if err := (&agentmodel.AgentSessionReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-		DefaultRunRuntimeClass: defaultRunRuntimeClass,
-		AllowHostRuntime:       allowHostRuntime,
+		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
+		AllowHostRuntime:        allowHostRuntime,
+		NATSURL:                 sessionNATSURL,
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentSession controller")
 		os.Exit(1)

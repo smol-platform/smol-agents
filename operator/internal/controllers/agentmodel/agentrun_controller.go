@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -93,16 +94,23 @@ type AgentRunReconciler struct {
 	// a runc selection is a fail-closed R-SBX-1 policy violation. Set from
 	// --allow-host-runtime (dev/CI clusters without a sandbox runtime).
 	AllowHostRuntime bool
+	// MaxConcurrentReconciles bounds parallel run reconciles (default 1).
+	MaxConcurrentReconciles int
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
 // status changes immediately. Owns the egress NetworkPolicy so it is GC'd
 // with the run.
 func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mc := r.MaxConcurrentReconciles
+	if mc < 1 {
+		mc = 1
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.AgentRun{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Pod{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: mc}).
 		Complete(r)
 }
 

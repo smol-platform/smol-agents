@@ -1,0 +1,42 @@
+# AgentSession gateway — deployed as a Knative Service so it autoscales on HTTP
+# concurrency and scales to zero when idle (NATS JetStream is the durable buffer
+# between it and the long-running session workers).
+#
+# Prerequisites:
+#   - NATS JetStream reachable at AGENTSESSION_NATS_URL (below).
+#   - The operator started with --session-nats-url=<same URL> so AgentSession
+#     workers consume from NATS (see operator/cmd/manager).
+#   - Knative Serving installed.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: agentgateway
+  namespace: smol-agents-system
+  labels:
+    app.kubernetes.io/name: smol-agents
+    app.kubernetes.io/component: agentgateway
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "20"
+        autoscaling.knative.dev/target: "50"
+    spec:
+      containerConcurrency: 50
+      containers:
+        - name: agentgateway
+          image: ghcr.io/smol-platform/smol-agents/agentgateway:0.1.0
+          args: ["--addr=:8080"]
+          env:
+            - name: AGENTSESSION_NATS_URL
+              value: "nats://nats.smol-agents-system.svc.cluster.local:4222"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

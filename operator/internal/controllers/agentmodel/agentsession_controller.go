@@ -16,12 +16,14 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
 )
 
 const sessionSuffix = "-session"
@@ -38,14 +40,26 @@ type AgentSessionReconciler struct {
 	Scheme                 *runtime.Scheme
 	DefaultRunRuntimeClass string
 	AllowHostRuntime       bool
+
+	// NATSURL, when set, routes a session's turns through NATS (the gateway
+	// path) by injecting AGENTSESSION_NATS_URL/_KEY into the worker; empty
+	// leaves the worker on its on-disk inbox.
+	NATSURL string
+	// MaxConcurrentReconciles bounds parallel session reconciles (default 1).
+	MaxConcurrentReconciles int
 }
 
 func (r *AgentSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mc := r.MaxConcurrentReconciles
+	if mc < 1 {
+		mc = 1
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.AgentSession{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: mc}).
 		Complete(r)
 }
 
@@ -125,6 +139,14 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		cmd = append(cmd, fmt.Sprintf("--idle-timeout=%ds", session.Spec.IdleTimeoutSeconds))
 	}
 	pod.Spec.Containers[0].Command = cmd
+	// NATS turn transport (gateway path); without it the worker uses its on-disk
+	// inbox. AGENTSESSION_KEY mirrors sessionqueue.SessionKey(ns, name).
+	if r.NATSURL != "" {
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
+			corev1.EnvVar{Name: "AGENTSESSION_NATS_URL", Value: r.NATSURL},
+			corev1.EnvVar{Name: "AGENTSESSION_KEY", Value: sessionqueue.SessionKey(session.Namespace, session.Name)},
+		)
+	}
 	pod.Spec.RestartPolicy = corev1.RestartPolicyAlways // required for a Deployment template
 
 	deploy := sessionDeployment(session, synthetic.Name, pod)
