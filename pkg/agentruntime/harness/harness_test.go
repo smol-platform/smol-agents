@@ -493,3 +493,30 @@ func TestRunCLI_StderrSurfacedOnError(t *testing.T) {
 		t.Errorf("stderr must be surfaced in the error, got: %v", err)
 	}
 }
+
+// TestMergeEnv_InheritsParentEnv guards the fix for CLI harnesses crashing on a
+// missing HOME/PATH: the subprocess env must inherit the parent process env
+// (image HOME/PATH) with harness vars overriding on duplicate keys.
+func TestMergeEnv_InheritsParentEnv(t *testing.T) {
+	t.Setenv("HOME", "/tmp")
+	t.Setenv("SMOL_TEST_INHERIT", "parent")
+	env := mergeEnv(Request{Spec: v1.HarnessSpec{}, Env: map[string]string{"SMOL_TEST_INHERIT": "override", "ANTHROPIC_BASE_URL": "https://x"}})
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "HOME=/tmp") {
+		t.Errorf("merged env must inherit HOME from the parent: %q", joined)
+	}
+	if !strings.Contains(joined, "ANTHROPIC_BASE_URL=https://x") {
+		t.Error("merged env must include harness vars")
+	}
+	// Duplicate key: exec uses the last value, so the harness override must come
+	// after the inherited one.
+	last := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "SMOL_TEST_INHERIT=") {
+			last = kv
+		}
+	}
+	if last != "SMOL_TEST_INHERIT=override" {
+		t.Errorf("harness env must override inherited (last wins), got %q", last)
+	}
+}

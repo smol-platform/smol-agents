@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -99,10 +100,13 @@ func (c *capWriter) Write(p []byte) (int, error) {
 
 func (c *capWriter) Bytes() []byte { return c.buf.Bytes() }
 
-// mergeEnv combines the spec's static env, secret-fetched values, and
-// the executor's resolved Env into the slice form exec.Cmd expects.
+// mergeEnv combines the parent process environment (the image's HOME, PATH,
+// etc. — without which CLIs like claude-code crash on uv_os_homedir / can't find
+// their binaries) with the spec's static env and secret-fetched values, in the
+// slice form exec.Cmd expects. Later entries win on duplicate keys, so the
+// harness/secret env overrides the inherited env.
 func mergeEnv(req Request) []string {
-	out := []string{}
+	out := append([]string{}, os.Environ()...)
 	for k, v := range req.Env {
 		out = append(out, k+"="+v)
 	}
