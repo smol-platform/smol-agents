@@ -9,6 +9,12 @@
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+> ⚠️ **Alpha — interfaces will change.** This is pre-1.0 software under active
+> development. CRD schemas, APIs, command-line flags, image tags, and on-disk /
+> wire formats **may change without notice or a migration path** between
+> releases. It is **not yet recommended for production**. Pin to a released tag
+> and expect breaking changes between them.
+
 smol-agents runs LLM agents, tools, and background workers as Kubernetes-native
 workloads where **every safety property is checkable** — not asserted in a
 comment. Each agent gets a hardware-isolated sandbox, a cryptographic identity,
@@ -137,7 +143,7 @@ run; the runtime group describes *what* runs.
 | `Tool` | MCP-typed tool with input/output JSON Schema; malformed calls rejected before dispatch. |
 | `ModelProvider` | LLM / embedding provider + broker-resolved credentials. |
 | `AgentRun` | A single invocation (states aligned with OpenAI Assistants API) with a replayable step log. |
-| `AgentSession` | Durable multi-run session state. |
+| `AgentSession` | Durable, long-running session: a checkpointed `serve-session` worker that resumes its turn log on restart and consumes turns from NATS via the gateway. |
 | `AgentPolicy` | Guardrails: tool allow-lists, budget ceilings, identity constraints. |
 | `AgentNetwork` | Egress: identity proxy / WireGuard mesh + eBPF allow-list (+ TraT / secretless). |
 | `MemoryStore` | A backend (vector / graph / KV / eventlog / filesystem) + tenancy + broker creds. |
@@ -215,8 +221,9 @@ the gVisor preset — see [docs/INSTALL.md §4.2](docs/INSTALL.md).
 ## Repository layout
 
 ```
-cmd/            6 production binaries + e2e test doubles (fake-*, probes)
-  agent/          the agent runtime entrypoint
+cmd/            7 production binaries + e2e test doubles (fake-*, probes)
+  agent/          the agent runtime entrypoint (run · serve-session)
+  agentgateway/   stateless HTTP front door → NATS turn queue (Knative Service)
   secret-proxy/   kloak-style broker sidecar (SO_PEERCRED + SPIFFE)
   ebpf-loader/    privileged per-node DaemonSet that pins CO-RE maps
   memory-mcp/     MCP gateway for the memory subsystem (thin)
@@ -257,12 +264,29 @@ secretless egress, and memory access + merge.
 
 ## Status
 
-Alpha. The platform runtime, operator, agent model, agentnet, TraT &
-secretless egress, the memory subsystem (P1 + P2), and node provisioning (P1)
-are implemented and exercised end-to-end at L1, with secretless verified on a
-real multi-tenant SPIRE. Remaining work is tracked in each subsystem's
-`tasks.md` (notably live-infra integration tests and serverless cold-start
-hardening).
+**Alpha — interfaces will change** (see the warning at the top). The platform
+runtime, operator, agent model, agentnet, TraT & secretless egress, the memory
+subsystem, and node provisioning are implemented and exercised end-to-end at L1.
+
+Recent hardening (the [agent-runtime fit analysis](docs/research/agent-runtime-fit-analysis.md)
+P0–P2 path), live-verified on a single-node cluster:
+
+- **Run-datapath containment** — AgentRun pods pin a sandbox `RuntimeClass`
+  (fail-closed: a run holds `Pending` rather than execute unisolated) and get a
+  default-deny egress `NetworkPolicy` (DNS + in-cluster + public 80/443; cloud
+  metadata + link-local blocked).
+- **No per-kind custom image** — claude-code / codex / aider / goose ship
+  ready-to-run bundle images; `harness.image` is optional and `harness.version`
+  pins the tag.
+- **Durable sessions** — `AgentSession` runs a long-running `agent serve-session`
+  worker that checkpoints its turn log to AgentFS (kopia/S3) and **resumes on
+  restart**, parking in `RequiresAction` when idle.
+- **Gateway + queue + autoscaling** — a stateless `agentgateway` (Knative
+  Service, scale-to-zero) publishes turns to **NATS JetStream**; session workers
+  consume them durably.
+
+Remaining work is tracked per subsystem (`tasks.md`): multi-tenant hardening,
+serverless cold-start, and broader live-infra coverage.
 
 ---
 
