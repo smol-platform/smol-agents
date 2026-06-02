@@ -50,10 +50,18 @@ func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM) (Res
 	if err := readJSONFile(filepath.Join(dir, RunSpecFile), &run); err != nil {
 		return Result{}, fmt.Errorf("load run spec: %w", err)
 	}
+	return RunTurn(ctx, agent, run, leaser, llm)
+}
+
+// RunTurn executes one turn of an in-memory agent against a run/turn spec. It is
+// the shared core of RunOnce (single-shot, spec-from-disk) and the session
+// worker (many turns against one long-lived agent + workspace): budget override,
+// input materialization into the agent's workspace (so files persist across a
+// session's turns), then one bounded executor run.
+func RunTurn(ctx context.Context, agent v1.Agent, run v1.AgentRunSpec, leaser SecretLeaser, llm LLM) (Result, error) {
 	if run.BudgetOverride != nil {
 		agent.Spec.Budget = *run.BudgetOverride
 	}
-
 	exec := New()
 	exec.Harness = NewRegistryRunner(harness.Default())
 	exec.Secrets = leaser

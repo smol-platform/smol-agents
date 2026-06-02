@@ -30,9 +30,14 @@ import (
 
 func main() {
 	// `agent run ...` executes a single AgentRun (inside an AgentRun pod) and
-	// exits; bare `agent` boots the long-lived agent services.
+	// exits; `agent serve-session ...` is the long-running AgentSession worker
+	// (durable, checkpointed, multi-turn); bare `agent` boots the long-lived
+	// agent services.
 	if len(os.Args) > 1 && os.Args[1] == "run" {
 		os.Exit(runAgentRun(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "serve-session" {
+		os.Exit(runServeSession(os.Args[2:]))
 	}
 
 	configPath := flag.String("config", "", "path to agent.yaml")
