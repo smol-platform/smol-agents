@@ -204,6 +204,9 @@ func (w *SessionWorker) handleTurn(ctx context.Context, state *SessionState, t I
 			st.Phase = v1.PhaseFailed
 		}
 	}
+	// Stamp the index before appending + publishing: Append sets it on the
+	// stored copy, but the published result (gateway response) must carry it too.
+	st.Index = len(state.Turns)
 	state.Append(st, w.now())
 	if err := w.sink().Publish(ctx, t.ID, st); err != nil {
 		w.log("publish result", "turn", t.ID, "err", err)
