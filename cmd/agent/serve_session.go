@@ -15,6 +15,7 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 	"github.com/smol-platform/smol-agents/pkg/observability"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
 )
 
 // runServeSession is the `agent serve-session` subcommand: the long-running
@@ -29,8 +30,10 @@ func runServeSession(args []string) int {
 	workspace := fs.String("workspace", "", "session workspace (AgentFS mount); default = agent working dir")
 	agentRef := fs.String("agent-ref", "", "AgentSession's agentRef (recorded in checkpoint metadata)")
 	socket := fs.String("secret-socket", "/run/secret-broker/secret-broker.sock", "secret broker UDS")
-	poll := fs.Duration("poll", 2*time.Second, "inbox poll interval")
+	poll := fs.Duration("poll", 2*time.Second, "turn poll interval")
 	idle := fs.Duration("idle-timeout", 0, "exit (scale-to-zero) after this idle; 0 = never")
+	natsURL := fs.String("nats-url", os.Getenv("AGENTSESSION_NATS_URL"), "NATS JetStream URL for turn delivery; empty uses the on-disk inbox")
+	sessionKey := fs.String("session-key", os.Getenv("AGENTSESSION_KEY"), "session queue key (namespace.name); required with --nats-url")
 	_ = fs.Parse(args)
 
 	logger := observability.MustLogger(slog.LevelInfo)
@@ -68,6 +71,20 @@ func runServeSession(args []string) int {
 		IdleTimeout:  *idle,
 		Logger:       logger,
 	}
+
+	// NATS turn transport (gateway path); default is the on-disk inbox.
+	if *natsURL != "" && *sessionKey != "" {
+		q, qerr := sessionqueue.NewNATSQueue(*natsURL)
+		if qerr != nil {
+			logger.Error("serve-session: connect NATS", "err", qerr)
+			return 1
+		}
+		defer q.Close()
+		w.Source = &agentruntime.QueueSource{Queue: q, SessionKey: *sessionKey, Max: 16}
+		w.Sink = &agentruntime.QueueSink{Queue: q, SessionKey: *sessionKey}
+		logger.Info("turn transport: NATS", "sessionKey", *sessionKey)
+	}
+
 	logger.Info("serving AgentSession", "workspace", ws, "poll", poll.String(), "idleTimeout", idle.String())
 	if err := w.Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("session worker", "err", err)

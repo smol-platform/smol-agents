@@ -3,7 +3,6 @@ package agentruntime
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -33,8 +32,33 @@ type SessionWorker struct {
 	Now          func() time.Time
 	Logger       *slog.Logger
 
+	// Source/Sink select the turn transport. Default: an on-disk inbox/outbox
+	// under Workspace (Phase 3). The queue-backed impls (QueueSource/QueueSink)
+	// deliver turns + results over NATS for the gateway path (Phase 4).
+	Source TurnSource
+	Sink   ResultSink
+
 	// run executes one turn; nil defaults to RunTurn. Injected by tests.
 	run func(context.Context, v1.Agent, v1.AgentRunSpec) (Result, error)
+}
+
+// InboundTurn is one pending turn yielded by a TurnSource. Ack marks it durably
+// processed (remove the inbox file / ack the NATS message); nil is a no-op.
+type InboundTurn struct {
+	ID   string
+	Spec v1.AgentRunSpec
+	Ack  func() error
+}
+
+// TurnSource yields pending turns for the worker. Poll returns promptly with
+// whatever is ready (empty when idle).
+type TurnSource interface {
+	Poll(ctx context.Context) ([]InboundTurn, error)
+}
+
+// ResultSink records a processed turn's folded result.
+type ResultSink interface {
+	Publish(ctx context.Context, turnID string, st SessionTurn) error
 }
 
 func (w *SessionWorker) now() time.Time {
@@ -100,9 +124,9 @@ func (w *SessionWorker) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		n, perr := w.processInbox(ctx, state)
+		n, perr := w.processTurns(ctx, state)
 		if perr != nil {
-			w.log("session inbox error", "err", perr)
+			w.log("session turn-source error", "err", perr)
 		}
 		if err := store.Save(state); err != nil {
 			w.log("checkpoint error", "err", err)
@@ -128,53 +152,45 @@ func (w *SessionWorker) Run(ctx context.Context) error {
 	}
 }
 
-// processInbox runs every pending turn file (oldest first by name), appending
-// each result to state and writing it to the outbox. Returns the count handled.
-func (w *SessionWorker) processInbox(ctx context.Context, state *SessionState) (int, error) {
-	entries, err := os.ReadDir(w.inboxDir())
-	if os.IsNotExist(err) {
-		return 0, nil
+func (w *SessionWorker) source() TurnSource {
+	if w.Source != nil {
+		return w.Source
 	}
+	return &inboxSource{dir: w.inboxDir()}
+}
+
+func (w *SessionWorker) sink() ResultSink {
+	if w.Sink != nil {
+		return w.Sink
+	}
+	return &outboxSink{dir: w.outboxDir()}
+}
+
+// processTurns runs every pending turn from the source (oldest first),
+// appending each result to state, publishing it to the sink, and acking it.
+// Returns the count handled.
+func (w *SessionWorker) processTurns(ctx context.Context, state *SessionState) (int, error) {
+	turns, err := w.source().Poll(ctx)
 	if err != nil {
 		return 0, err
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names) // lexical; callers timestamp-prefix turn files for FIFO
 	handled := 0
-	for _, name := range names {
+	for _, t := range turns {
 		if ctx.Err() != nil {
 			return handled, ctx.Err()
 		}
-		if err := w.handleTurnFile(ctx, state, name); err != nil {
-			w.log("turn error", "file", name, "err", err)
-		}
+		w.handleTurn(ctx, state, t)
 		handled++
 	}
 	return handled, nil
 }
 
-func (w *SessionWorker) handleTurnFile(ctx context.Context, state *SessionState, name string) error {
-	path := filepath.Join(w.inboxDir(), name)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var turn v1.AgentRunSpec
-	if err := json.Unmarshal(b, &turn); err != nil {
-		_ = os.Remove(path) // bad turn: ack so it can't wedge the queue
-		return fmt.Errorf("decode turn %q: %w", name, err)
-	}
-
+func (w *SessionWorker) handleTurn(ctx context.Context, state *SessionState, t InboundTurn) {
 	state.Phase = v1.PhaseRunning
 	started := w.now()
-	res, runErr := w.runTurn(ctx, turn)
+	res, runErr := w.runTurn(ctx, t.Spec)
 	st := SessionTurn{
-		Input:             turn.Input,
+		Input:             t.Spec.Input,
 		Output:            res.Output,
 		Phase:             res.Phase,
 		Usage:             res.Usage,
@@ -189,19 +205,64 @@ func (w *SessionWorker) handleTurnFile(ctx context.Context, state *SessionState,
 		}
 	}
 	state.Append(st, w.now())
-
-	w.writeOutbox(name, st) // best-effort result for the caller/gateway
-	return os.Remove(path)  // ack: processed exactly once
+	if err := w.sink().Publish(ctx, t.ID, st); err != nil {
+		w.log("publish result", "turn", t.ID, "err", err)
+	}
+	if t.Ack != nil {
+		if err := t.Ack(); err != nil {
+			w.log("ack turn", "turn", t.ID, "err", err)
+		}
+	}
 }
 
-func (w *SessionWorker) writeOutbox(name string, st SessionTurn) {
-	if err := os.MkdirAll(w.outboxDir(), 0o700); err != nil {
-		w.log("outbox mkdir", "err", err)
-		return
+// inboxSource is the default on-disk TurnSource: turn files (*.json, lexical
+// order) under <workspace>/.smol-session/inbox; Ack removes the file.
+type inboxSource struct{ dir string }
+
+func (s *inboxSource) Poll(_ context.Context) ([]InboundTurn, error) {
+	entries, err := os.ReadDir(s.dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names) // lexical; callers timestamp-prefix turn files for FIFO
+	out := make([]InboundTurn, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(s.dir, name)
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var spec v1.AgentRunSpec
+		if err := json.Unmarshal(b, &spec); err != nil {
+			_ = os.Remove(path) // drop a malformed turn so it can't wedge the queue
+			continue
+		}
+		p := path
+		out = append(out, InboundTurn{ID: name, Spec: spec, Ack: func() error { return os.Remove(p) }})
+	}
+	return out, nil
+}
+
+// outboxSink is the default on-disk ResultSink: the folded turn result lands at
+// <workspace>/.smol-session/outbox/<turnID>.
+type outboxSink struct{ dir string }
+
+func (s *outboxSink) Publish(_ context.Context, turnID string, st SessionTurn) error {
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return err
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	_ = os.WriteFile(filepath.Join(w.outboxDir(), name), b, 0o600)
+	return os.WriteFile(filepath.Join(s.dir, turnID), b, 0o600)
 }

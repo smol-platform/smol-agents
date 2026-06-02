@@ -41,7 +41,7 @@ func TestSessionWorker_ProcessInbox(t *testing.T) {
 	dropTurn(t, ws, "0002.json", `{"prompt":"two"}`)
 
 	state := &SessionState{}
-	n, err := w.processInbox(context.Background(), state)
+	n, err := w.processTurns(context.Background(), state)
 	if err != nil || n != 2 {
 		t.Fatalf("processInbox = (%d,%v), want (2,nil)", n, err)
 	}
@@ -67,7 +67,7 @@ func TestSessionWorker_ResumeFromCheckpoint(t *testing.T) {
 	// Turn 1, then checkpoint.
 	dropTurn(t, ws, "0001.json", `{"prompt":"one"}`)
 	state, _ := store.Load()
-	if _, err := w.processInbox(context.Background(), state); err != nil {
+	if _, err := w.processTurns(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Save(state); err != nil {
@@ -82,7 +82,7 @@ func TestSessionWorker_ResumeFromCheckpoint(t *testing.T) {
 	}
 	// A second turn continues the same session.
 	dropTurn(t, ws, "0002.json", `{"prompt":"two"}`)
-	if _, err := w2.processInbox(context.Background(), resumed); err != nil {
+	if _, err := w2.processTurns(context.Background(), resumed); err != nil {
 		t.Fatal(err)
 	}
 	if len(resumed.Turns) != 2 || resumed.Turns[1].Index != 1 {
