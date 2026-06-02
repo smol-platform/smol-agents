@@ -1,0 +1,216 @@
+package agentmodel
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+)
+
+const sessionSuffix = "-session"
+
+// AgentSessionReconciler turns an AgentSession into a long-running, durable
+// session worker: a 1-replica Deployment running `agent serve-session` over the
+// agent's AgentFS workspace. It survives restarts with resume (a fresh pod's
+// AgentFS init container restores the kopia-checkpointed state, and the worker
+// reloads its turn log) and carries the same containment as a run pod (sandbox
+// RuntimeClass + egress cage + secret broker). Turn delivery is Phase 4
+// (gateway/NATS writes the worker's inbox); this stands up the durable session.
+type AgentSessionReconciler struct {
+	client.Client
+	Scheme                 *runtime.Scheme
+	DefaultRunRuntimeClass string
+	AllowHostRuntime       bool
+}
+
+func (r *AgentSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&amv1.AgentSession{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Complete(r)
+}
+
+func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithValues("agentsession", req.NamespacedName)
+
+	session := &amv1.AgentSession{}
+	if err := r.Get(ctx, req.NamespacedName, session); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	agent := &amv1.Agent{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.AgentRef}, agent); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Fail-closed sandbox resolution (same policy as runs).
+	sbClass, sbPending, sbFailed := resolveSandbox(ctx, r.Client, agent.Spec.Sandbox.RuntimeClass, r.DefaultRunRuntimeClass, r.AllowHostRuntime)
+	if sbFailed != "" {
+		return r.writeStatus(ctx, session, pure.PhaseFailed, 0)
+	}
+	if sbPending != "" {
+		return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
+	}
+
+	// A synthetic AgentRun (name+namespace carrier) drives the shared run-pod /
+	// run-spec / broker builders; ownership is the SESSION's, set via ensureOwned.
+	synthetic := &amv1.AgentRun{
+		ObjectMeta: metav1.ObjectMeta{Name: session.Name + sessionSuffix, Namespace: session.Namespace},
+		Spec:       pure.AgentRunSpec{AgentRef: session.Spec.AgentRef},
+	}
+
+	provider, brokerValues, err := gatherRunSecrets(ctx, r.Client, agent, session.Namespace, nil)
+	if err != nil {
+		return r.writeStatus(ctx, session, pure.PhasePending, 10*time.Second)
+	}
+
+	// Run-spec ConfigMap (agent.json + provider.json) the worker reads.
+	cm, err := builders.BuildRunSpecConfigMap(synthetic, agent, provider)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.ensureOwned(ctx, session, cm); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure session spec: %w", err)
+	}
+
+	// Broker config secret (only when there are secrets to serve).
+	if len(brokerValues) > 0 {
+		sec, err := builders.BuildBrokerConfigSecret(synthetic, brokerValues)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.ensureOwned(ctx, session, sec); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure session broker config: %w", err)
+		}
+	}
+
+	// Egress cage selecting the worker pods.
+	np := builders.BuildAgentSessionEgressPolicy(synthetic.Name, session.Namespace,
+		map[string]string{"agents.smol-agents.ai/run": synthetic.Name})
+	if err := r.ensureOwned(ctx, session, np); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure session egress: %w", err)
+	}
+
+	// Build the run pod (security + AgentFS + run-spec volume), then turn it into
+	// a long-running session worker: serve-session command, microVM class, broker.
+	pod := builders.BuildAgentRunPod(synthetic, agent)
+	builders.ApplyRunSandbox(pod, sbClass)
+	if len(brokerValues) > 0 {
+		builders.AttachSecretBroker(pod, synthetic.Name)
+	}
+	cmd := []string{"/agent", "serve-session", "--dir=" + builders.RunSpecMountPath, "--agent-ref=" + session.Spec.AgentRef}
+	if session.Spec.IdleTimeoutSeconds > 0 {
+		cmd = append(cmd, fmt.Sprintf("--idle-timeout=%ds", session.Spec.IdleTimeoutSeconds))
+	}
+	pod.Spec.Containers[0].Command = cmd
+	pod.Spec.RestartPolicy = corev1.RestartPolicyAlways // required for a Deployment template
+
+	deploy := sessionDeployment(session, synthetic.Name, pod)
+	if err := r.ensureDeployment(ctx, session, deploy); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure session deployment: %w", err)
+	}
+
+	phase := pure.PhasePending
+	if r.deployAvailable(ctx, deploy.Namespace, deploy.Name) {
+		phase = pure.PhaseRunning
+	}
+	logger.Info("reconciled session", "phase", phase)
+	// Requeue while not yet available so phase advances even without a Deployment
+	// status event reaching us.
+	requeue := time.Duration(0)
+	if phase == pure.PhasePending {
+		requeue = 15 * time.Second
+	}
+	return r.writeStatus(ctx, session, phase, requeue)
+}
+
+// ensureOwned sets the session as controller-owner and creates obj if absent
+// (idempotent — the run-spec/broker/egress objects are stable for a session).
+func (r *AgentSessionReconciler) ensureOwned(ctx context.Context, session *amv1.AgentSession, obj client.Object) error {
+	if err := ctrl.SetControllerReference(session, obj, r.Scheme); err != nil {
+		return err
+	}
+	existing := obj.DeepCopyObject().(client.Object)
+	err := r.Get(ctx, client.ObjectKeyFromObject(obj), existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, obj)
+	}
+	return err
+}
+
+// ensureDeployment creates or updates the session worker Deployment.
+func (r *AgentSessionReconciler) ensureDeployment(ctx context.Context, session *amv1.AgentSession, deploy *appsv1.Deployment) error {
+	if err := ctrl.SetControllerReference(session, deploy, r.Scheme); err != nil {
+		return err
+	}
+	existing := &appsv1.Deployment{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(deploy), existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, deploy)
+	}
+	if err != nil {
+		return err
+	}
+	existing.Spec = deploy.Spec
+	return r.Update(ctx, existing)
+}
+
+func (r *AgentSessionReconciler) deployAvailable(ctx context.Context, ns, name string) bool {
+	cur := &appsv1.Deployment{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, cur); err != nil {
+		return false
+	}
+	return cur.Status.AvailableReplicas > 0
+}
+
+func (r *AgentSessionReconciler) writeStatus(ctx context.Context, session *amv1.AgentSession, phase pure.Phase, requeue time.Duration) (ctrl.Result, error) {
+	session.Status.Phase = phase
+	session.Status.ObservedGeneration = session.Generation
+	if err := r.Status().Update(ctx, session); err != nil {
+		// A conflict means the object advanced; requeue and re-read rather than
+		// surfacing a noisy error.
+		return ctrl.Result{RequeueAfter: time.Second}, client.IgnoreNotFound(err)
+	}
+	return ctrl.Result{RequeueAfter: requeue}, nil
+}
+
+// sessionDeployment wraps the worker pod into a 1-replica Deployment so the
+// session survives node loss / crash (the new pod resumes from the AgentFS
+// checkpoint). Phase 4 swaps this for a Knative Service for scale-to-zero.
+func sessionDeployment(session *amv1.AgentSession, name string, pod *corev1.Pod) *appsv1.Deployment {
+	selector := map[string]string{"agents.smol-agents.ai/run": name}
+	return &appsv1.Deployment{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: session.Namespace, Labels: pod.Labels},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: ptr.To(int32(1)),
+			Selector: &metav1.LabelSelector{MatchLabels: selector},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: pod.Labels},
+				Spec:       pod.Spec,
+			},
+		},
+	}
+}

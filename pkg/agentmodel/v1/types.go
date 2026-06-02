@@ -281,10 +281,26 @@ type AgentSession struct {
 
 type AgentSessionSpec struct {
 	AgentRef string `json:"agentRef"`
+
+	// IdleTimeoutSeconds parks then exits the session worker after this idle
+	// period so it can scale to zero; 0 (default) keeps it resident.
+	// +optional
+	IdleTimeoutSeconds int32 `json:"idleTimeoutSeconds,omitempty"`
 }
 
 type AgentSessionStatus struct {
-	Runs []string `json:"runs,omitempty"` // names of completed AgentRuns
+	// Phase mirrors the session worker's lifecycle as observed by the operator
+	// (Pending until the worker is available, then Running).
+	// +optional
+	Phase Phase `json:"phase,omitempty"`
+
+	// ObservedGeneration is the spec generation the controller last reconciled.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Runs are the names of AgentRuns this session aggregated (legacy field).
+	// +optional
+	Runs []string `json:"runs,omitempty"`
 }
 
 // AgentPolicy — guardrails. R-AM-API-6.

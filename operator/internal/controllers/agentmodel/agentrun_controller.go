@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -23,7 +22,6 @@ import (
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
-	pkgsandbox "github.com/smol-platform/smol-agents/pkg/sandbox"
 )
 
 // memoryFSRetriever resolves a MemoryRetriever by name in the same namespace as
@@ -313,54 +311,7 @@ func terminationReason(pod *corev1.Pod) string {
 // SecretRef.SecretName the runtime leases by). Harness mode returns a nil
 // provider; agents with no secrets return an empty map.
 func (r *AgentRunReconciler) prepareRun(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) (*builders.RunProvider, map[string][]byte, error) {
-	values := map[string][]byte{}
-
-	// Run input files may reference broker secrets; the runtime leases them by
-	// SecretName when materializing inputs into the workspace.
-	for _, in := range run.Spec.Inputs {
-		if in.SecretRef == nil || in.SecretRef.SecretName == "" {
-			continue
-		}
-		val, err := r.readSecret(ctx, run.Namespace, in.SecretRef.SecretName, in.SecretRef.Key)
-		if err != nil {
-			return nil, nil, err
-		}
-		values[in.SecretRef.SecretName] = val
-	}
-
-	if agent.Spec.Harness != nil {
-		for _, e := range agent.Spec.Harness.Env {
-			if e.SecretRef == nil || e.SecretRef.SecretName == "" {
-				continue
-			}
-			val, err := r.readSecret(ctx, agent.Namespace, e.SecretRef.SecretName, e.SecretRef.Key)
-			if err != nil {
-				return nil, nil, err
-			}
-			values[e.SecretRef.SecretName] = val
-		}
-	}
-
-	var provider *builders.RunProvider
-	if agent.Spec.Mode != pure.ModeHarness && agent.Spec.Model.ProviderRef != "" {
-		mp := &amv1.ModelProvider{}
-		if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: agent.Spec.Model.ProviderRef}, mp); err != nil {
-			return nil, nil, fmt.Errorf("get ModelProvider %q: %w", agent.Spec.Model.ProviderRef, err)
-		}
-		provider = &builders.RunProvider{
-			Kind:       mp.Spec.Kind,
-			Endpoint:   mp.Spec.Endpoint,
-			SecretName: mp.Spec.SecretRef.SecretName,
-		}
-		if mp.Spec.SecretRef.SecretName != "" {
-			val, err := r.readSecret(ctx, agent.Namespace, mp.Spec.SecretRef.SecretName, mp.Spec.SecretRef.Key)
-			if err != nil {
-				return nil, nil, err
-			}
-			values[mp.Spec.SecretRef.SecretName] = val
-		}
-	}
-	return provider, values, nil
+	return gatherRunSecrets(ctx, r.Client, agent, run.Namespace, run.Spec.Inputs)
 }
 
 // resolveRunSandbox picks the run pod's RuntimeClass, fail-closed. At most one
@@ -369,29 +320,7 @@ func (r *AgentRunReconciler) prepareRun(ctx context.Context, run *amv1.AgentRun,
 // is not registered yet, so we refuse to schedule an unisolated pod and wait. An
 // empty Agent override falls back to --default-run-runtime-class, then kata-fc.
 func (r *AgentRunReconciler) resolveRunSandbox(ctx context.Context, agent *amv1.Agent) (class, pending, failed string) {
-	class = agent.Spec.Sandbox.RuntimeClass
-	if class == "" {
-		class = r.DefaultRunRuntimeClass
-	}
-	if class == "" {
-		class = string(pkgsandbox.KindKataFC)
-	}
-	if pkgsandbox.ParseKind(class) == pkgsandbox.KindRunc {
-		if r.AllowHostRuntime {
-			return class, "", "" // deliberately permitted (dev/CI cluster)
-		}
-		return "", "", "runc-requires-allow-host-runtime"
-	}
-	// Hardened class: require the RuntimeClass object to exist; otherwise hold
-	// Pending rather than schedule a pod that fails admission or runs unisolated.
-	var rc nodev1.RuntimeClass
-	if err := r.Get(ctx, types.NamespacedName{Name: class}, &rc); err != nil {
-		if apierrors.IsNotFound(err) {
-			return "", fmt.Sprintf("RuntimeClass %q not registered; refusing to run unisolated", class), ""
-		}
-		return "", fmt.Sprintf("checking RuntimeClass %q: %v", class, err), ""
-	}
-	return class, "", ""
+	return resolveSandbox(ctx, r.Client, agent.Spec.Sandbox.RuntimeClass, r.DefaultRunRuntimeClass, r.AllowHostRuntime)
 }
 
 // ensureRunEgressPolicy creates the run pod's default-deny egress NetworkPolicy
@@ -411,23 +340,7 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 
 // readSecret fetches one key from a k8s Secret (the sole key when key is empty).
 func (r *AgentRunReconciler) readSecret(ctx context.Context, ns, name, key string) ([]byte, error) {
-	sec := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, sec); err != nil {
-		return nil, fmt.Errorf("get secret %q: %w", name, err)
-	}
-	if key != "" {
-		v, ok := sec.Data[key]
-		if !ok {
-			return nil, fmt.Errorf("secret %q: key %q not present", name, key)
-		}
-		return v, nil
-	}
-	if len(sec.Data) == 1 {
-		for _, v := range sec.Data {
-			return v, nil
-		}
-	}
-	return nil, fmt.Errorf("secret %q: key required (has %d keys)", name, len(sec.Data))
+	return readSecretKey(ctx, r.Client, ns, name, key)
 }
 
 // ensureBrokerConfig creates (once) the run-owned Secret holding the

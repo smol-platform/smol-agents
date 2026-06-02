@@ -16,6 +16,10 @@ spec:
       storage: true
       subresources:
         status: {}
+      additionalPrinterColumns:
+        - { name: Agent, type: string, jsonPath: .spec.agentRef }
+        - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
       schema:
         openAPIV3Schema:
           type: object
@@ -26,9 +30,12 @@ spec:
               required: [agentRef]
               properties:
                 agentRef: { type: string, minLength: 1 }
+                idleTimeoutSeconds: { type: integer, minimum: 0 }
             status:
               type: object
               properties:
+                phase: { type: string }
+                observedGeneration: { type: integer }
                 runs:
                   type: array
                   items: { type: string }

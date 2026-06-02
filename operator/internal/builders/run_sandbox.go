@@ -58,6 +58,19 @@ func ApplyRunSandbox(pod *corev1.Pod, class string) {
 // link-local / instance-metadata range blocked everywhere. A tighter per-Agent
 // allow-list (AgentNetwork CIDRs) can layer on top later.
 func BuildAgentRunEgressPolicy(run *amv1.AgentRun) *networkingv1.NetworkPolicy {
+	return buildEgressPolicy(run.Name+"-egress", run.Namespace, "agent-run",
+		map[string]string{"agents.smol-agents.ai/run": run.Name})
+}
+
+// BuildAgentSessionEgressPolicy is the same default-deny egress cage for a
+// long-running AgentSession worker pod.
+func BuildAgentSessionEgressPolicy(name, namespace string, podSelector map[string]string) *networkingv1.NetworkPolicy {
+	return buildEgressPolicy(name+"-egress", namespace, "agent-session", podSelector)
+}
+
+// buildEgressPolicy renders the shared default-deny-egress NetworkPolicy: DNS +
+// in-cluster (any port) + public 80/443, with metadata/link-local blocked.
+func buildEgressPolicy(name, namespace, component string, podSelector map[string]string) *networkingv1.NetworkPolicy {
 	tcp := corev1.ProtocolTCP
 	udp := corev1.ProtocolUDP
 	p53 := intstr.FromInt32(53)
@@ -76,18 +89,15 @@ func BuildAgentRunEgressPolicy(run *amv1.AgentRun) *networkingv1.NetworkPolicy {
 	return &networkingv1.NetworkPolicy{
 		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      run.Name + "-egress",
-			Namespace: run.Namespace,
+			Name:      name,
+			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/name":      "smol-agents",
-				"app.kubernetes.io/component": "agent-run",
-				"agents.smol-agents.ai/run":   run.Name,
+				"app.kubernetes.io/component": component,
 			},
 		},
 		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{
-				MatchLabels: map[string]string{"agents.smol-agents.ai/run": run.Name},
-			},
+			PodSelector: metav1.LabelSelector{MatchLabels: podSelector},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				// DNS resolution (cluster + upstream).

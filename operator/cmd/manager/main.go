@@ -101,6 +101,14 @@ func main() {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)
 	}
+	if err := (&agentmodel.AgentSessionReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		DefaultRunRuntimeClass: defaultRunRuntimeClass,
+		AllowHostRuntime:       allowHostRuntime,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register AgentSession controller")
+		os.Exit(1)
+	}
 	if err := (&agentmodel.AgentNetworkReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
