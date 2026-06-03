@@ -1,0 +1,17 @@
+# RUNS TODAY. Harness happy-path + REAL token accounting (Hermes-only signal).
+apiVersion: agentbench/v1
+kind: BenchCase
+metadata: { name: hermes-output }
+tier: correctness
+agentRef: bench-hermes
+driver: run
+samples: 5
+seed: 42
+requiredCaps: [hermes]
+input:
+  prompt: "Compute fib(12). Reply with ONLY the integer on the final line."
+oracle: { kind: output_jsonpath, path: "$", contains: "144" }
+gates:
+  - { metric: oracle.pass, op: eq, want: true }
+  - { metric: tokens.total, op: gte, want: 1 }      # proves real usage parsed (Hermes)
+  - { metric: latency.p95.ms, op: lte, want: 8000 }

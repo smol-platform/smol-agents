@@ -1,0 +1,14 @@
+# RUNS TODAY. Budget axis: maxTokens below need -> run terminates Expired with a
+# budget: terminationReason (executor budget enforcement).
+apiVersion: agentbench/v1
+kind: BenchCase
+metadata: { name: budget-tokens }
+tier: correctness
+agentRef: bench-hermes
+driver: run
+samples: 1
+requiredCaps: [hermes]
+budgetOverride: { maxSteps: 1, maxTokens: 8, maxWallClockSeconds: 60, maxToolCalls: 0 }
+input: { prompt: "Write a 500-word essay about distributed systems." }
+oracle: { kind: budget_terminated, reasonPrefix: "budget:" }
+gates: [{ metric: oracle.pass, op: eq, want: true }]

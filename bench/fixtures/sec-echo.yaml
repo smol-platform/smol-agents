@@ -1,0 +1,50 @@
+# Auth-gated target: 401 without `Authorization: Bearer $SEC_ECHO_TOKEN`, 200 + echoes
+# the path otherwise. log_message suppressed so the bearer never lands in logs (keeps
+# the non-leak grep clean). Backs secret_reach (200) + its negative control (401).
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: sec-echo-src }
+data:
+  server.py: |
+    import os, http.server
+    TOKEN = os.environ.get("SEC_ECHO_TOKEN", "")
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a): pass  # never log headers/bearer
+        def do_GET(self):
+            auth = self.headers.get("Authorization", "")
+            if auth != "Bearer " + TOKEN:
+                self.send_response(401); self.end_headers(); self.wfile.write(b"unauthorized\n"); return
+            self.send_response(200); self.end_headers()
+            self.wfile.write(("SEC-OK " + self.path + "\n").encode())
+    http.server.HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: sec-echo-token }
+stringData: { SEC_ECHO_TOKEN: "bench-sec-token-PLACEHOLDER" }  # throwaway; runner overrides per-run
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sec-echo, labels: { app: sec-echo } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: sec-echo } }
+  template:
+    metadata: { labels: { app: sec-echo } }
+    spec:
+      containers:
+        - name: sec-echo
+          image: python:3.12-alpine
+          command: ["python", "/src/server.py"]
+          env:
+            - { name: SEC_ECHO_TOKEN, valueFrom: { secretKeyRef: { name: sec-echo-token, key: SEC_ECHO_TOKEN } } }
+          ports: [{ containerPort: 8080 }]
+          volumeMounts: [{ name: src, mountPath: /src }]
+      volumes: [{ name: src, configMap: { name: sec-echo-src } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: sec-echo }
+spec:
+  selector: { app: sec-echo }
+  ports: [{ port: 80, targetPort: 8080 }]

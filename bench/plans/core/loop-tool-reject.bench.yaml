@@ -1,0 +1,18 @@
+# RUNS TODAY (negative oracle / documented gap). Loop-mode tool calls are rejected —
+# proves the unwired seam. Flips to FAIL (forcing promotion to a positive
+# tool_observed case) the day loop-mode-tools-and-invokers.md lands.
+apiVersion: agentbench/v1
+kind: BenchCase
+metadata: { name: loop-tool-reject }
+tier: future
+agentRef: bench-loop-http
+driver: run
+samples: 1
+requiredCaps: []
+input: { prompt: "Fetch the marker using the echo-http tool and return it." }
+oracle:
+  kind: tool_rejected       # Step Kind=StepToolCallRejected, Error contains: no invoker for kind
+  errorContains: 'no invoker for kind "http"'
+blocked:
+  reason: "loop-mode tools unwired: runspec.go ships no tools.json; executor Invokers empty (executor.go:257)"
+  unblockSpec: docs/specs/loop-mode-tools-and-invokers.md

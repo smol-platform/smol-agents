@@ -1,0 +1,21 @@
+# Core bench plan — runs TODAY on cftest (runc, no kata). Real backend: z.ai glm-4.6
+# via the deployed hermes-gateway + z.ai Anthropic endpoint for claude-code.
+#
+# PREREQ (runbook, not committed — never put keys on disk): the run namespace must
+# have secrets hermes-gw-auth, zai-anthropic, minio-creds, zai-openai. The runner
+# copies them from --secret-source-ns (default hermes-e2e). sec-echo-token is
+# generated fresh per run.
+apiVersion: agentbench/v1
+kind: BenchPlan
+metadata: { name: core }
+fleet:
+  secretSourceNamespace: hermes-e2e
+  copySecrets: [hermes-gw-auth, zai-anthropic, minio-creds, zai-openai]
+  manifests:
+    - ../../fixtures/echo-server.yaml
+    - ../../fixtures/sec-echo.yaml
+    - ../../fixtures/agents/bench-hermes.yaml
+    - ../../fixtures/agents/bench-claude-fs.yaml
+    - ../../fixtures/agents/bench-loop-http.yaml
+  awaitReady: [deploy/echo-server, deploy/sec-echo]
+caseFiles: ["*.bench.yaml"]

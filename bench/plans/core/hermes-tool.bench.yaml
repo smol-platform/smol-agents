@@ -1,0 +1,21 @@
+# RUNS TODAY. Canonical "tools work" witness: Hermes executes a tool (its embedded
+# shell/calc) and the answer is impossible without the tool actually running.
+apiVersion: agentbench/v1
+kind: BenchCase
+metadata: { name: hermes-tool }
+tier: correctness
+agentRef: bench-hermes
+driver: run
+samples: 5
+seed: 42
+requiredCaps: [hermes]
+input:
+  nonce: true
+  prompt: "Use your shell tool to run exactly: echo {{nonce}} | rev . Return ONLY the tool's stdout as the final line."
+oracle:
+  kind: tool_observed       # a Step of Kind=Observation whose Result != Arguments AND output contains the reversed nonce
+  outputContainsReversed: "{{nonce}}"
+gates:
+  - { metric: oracle.pass, op: eq, want: true }
+  - { metric: latency.p95.ms, op: lte, want: 8000 }
+  - { metric: tokens.total, op: lte, want: 1500 }   # Hermes-real

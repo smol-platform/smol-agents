@@ -199,3 +199,18 @@ clean:
 .PHONY: help
 help: ## list documented targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# --- agentbench: benchmarking + verification platform (operator module) ---
+.PHONY: bench-lint
+bench-lint: ## validate the bench plans offline (hermetic, no cluster)
+	cd operator && $(GO) run ./cmd/agentbench lint --plan $(CURDIR)/bench/plans/core
+
+.PHONY: bench-l1
+bench-l1: ## run correctness+scale bench tiers on cftest (runc); needs KUBECONFIG
+	@: $${KUBECONFIG:?set KUBECONFIG to the cftest cluster}
+	cd operator && $(GO) run ./cmd/agentbench run --plan $(CURDIR)/bench/plans/core --tier correctness --kubeconfig $(KUBECONFIG) --out $(CURDIR)/bench/results
+
+.PHONY: bench-l2
+bench-l2: ## run the kata isolation bench tier; needs KUBECONFIG to a KVM-capable (AWS Graviton metal) cluster
+	@: $${KUBECONFIG:?set KUBECONFIG to a kata-capable cluster}
+	cd operator && $(GO) run ./cmd/agentbench run --plan $(CURDIR)/bench/plans/isolation --tier isolation --kubeconfig $(KUBECONFIG) --out $(CURDIR)/bench/results

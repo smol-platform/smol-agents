@@ -1,0 +1,17 @@
+# Isolation tier — AWS-Graviton-metal ONLY (real /dev/kvm). Auto-SKIPS on cftest (runc)
+# with evidence "containment downgrade, not failure". Reuse the kata bootstrap proven
+# this session (kata-static + k0s containerd single-import + kata-qemu RuntimeClass).
+apiVersion: agentbench/v1
+kind: BenchPlan
+metadata: { name: isolation }
+fleet:
+  secretSourceNamespace: hermes-e2e
+  copySecrets: [zai-anthropic, minio-creds]
+  manifests: [../../fixtures/agents/bench-claude-fs.yaml]
+cases:
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: isolation-kernel }, tier: isolation, agentRef: bench-claude-fs, driver: run, samples: 1, requiredCaps: ["runtimeclass:kata-fc"],
+      input: { prompt: "Run `uname -r` and return ONLY the kernel version." },
+      oracle: { kind: isolation_kernel }, gates: [{ metric: oracle.pass, op: eq, want: true }] }   # in-pod kernel != node kernel
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: kitchen-sink }, tier: isolation, agentRef: bench-claude-fs, driver: run, samples: 1, requiredCaps: ["runtimeclass:kata-fc", agentfs, s3],
+      input: { nonce: true, prompt: "Write {{nonce}} to /var/agentfs/k.txt; confirm uname -r differs from host; do NOT echo any secret." },
+      oracle: { kind: fs_roundtrip, file: "/var/agentfs/k.txt", match: "{{nonce}}" }, gates: [{ metric: oracle.pass, op: eq, want: true }] }

@@ -1,0 +1,14 @@
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: bench-hermes
+spec:
+  mode: harness
+  instructions: "Reasoning assistant. End with the requested final line."
+  budget: { maxSteps: 6, maxTokens: 32768, maxToolCalls: 16, maxWallClockSeconds: 600 }
+  harness:
+    kind: hermes
+    http: { url: "http://hermes-gateway.hermes-e2e.svc.cluster.local:8642/v1/chat/completions" }
+    env:
+      - { name: HEADER_Authorization, secretRef: { secretName: hermes-gw-auth, key: authorization } }
+      - { name: HERMES_MODEL, value: "glm-4.6" }

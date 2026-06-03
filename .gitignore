@@ -60,3 +60,6 @@ Thumbs.db
 
 # L2 e2e debug artifacts (logs + ephemeral debug SSH keys) — never commit
 .l2-runs/
+
+# agentbench results
+bench/results/

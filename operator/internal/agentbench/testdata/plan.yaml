@@ -1,0 +1,44 @@
+apiVersion: agentbench/v1
+kind: BenchPlan
+metadata:
+  name: testdata-core
+fleet:
+  secrets:
+    - name: hermes-gw-auth
+      stringData:
+        authorization: "Bearer test-{{NONCE}}"
+  manifests:
+    - fixtures/agent.yaml
+  awaitReady:
+    - Agent/bench-hermes
+caseFiles:
+  - "*.bench.yaml"
+cases:
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata:
+      name: inline-output-match
+    tier: correctness
+    agentRef: bench-hermes
+    driver: run
+    samples: 1
+    seed: 7
+    input:
+      prompt: "Echo back exactly: {{NONCE}}"
+      nonce: true
+    oracle:
+      kind: output_match
+      want: "{{NONCE}}"
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata:
+      name: budget-tokens
+    tier: correctness
+    agentRef: bench-hermes
+    driver: run
+    samples: 1
+    input:
+      prompt: "Write an essay (this will exceed the token budget)."
+    oracle:
+      kind: budget_terminated
+      want: "budget:tokens"

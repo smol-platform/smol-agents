@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agentbench/v1/results.json",
+  "title": "agentbench results",
+  "description": "Durable result artifact produced by `agentbench run`. report.md is rendered from this.",
+  "type": "object",
+  "required": ["$schema", "runId", "planDigest", "plan", "cluster", "startedAt", "finishedAt", "cases", "summary", "verdict"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "agentbench/v1" },
+    "runId": { "type": "string" },
+    "planDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "plan": { "type": "string" },
+    "tier": { "type": "string", "enum": ["correctness", "perf", "scale", "isolation", "future", ""] },
+    "cluster": {
+      "type": "object",
+      "required": ["runtime", "caps"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "runtime": { "type": "string" },
+        "caps": { "type": "array", "items": { "type": "string" } },
+        "node": { "type": "string" }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "model": { "type": "string" },
+        "endpoint": { "type": "string" }
+      }
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "cases": { "type": "array", "items": { "$ref": "#/$defs/caseResult" } },
+    "summary": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "skipped", "blocked", "gateFailures"],
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "blocked": { "type": "integer", "minimum": 0 },
+        "gateFailures": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "verdict": { "type": "string", "enum": ["PASS", "FAIL"] }
+  },
+  "$defs": {
+    "caseResult": {
+      "type": "object",
+      "required": ["id", "agentRef", "tier", "samples", "oracle", "metrics", "gates", "pass"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "agentRef": { "type": "string" },
+        "tier": { "type": "string", "enum": ["correctness", "perf", "scale", "isolation", "future"] },
+        "harnessKind": { "type": "string" },
+        "samples": { "type": "integer", "minimum": 0 },
+        "seed": { "type": "integer" },
+        "nonce": { "type": "string" },
+        "oracle": {
+          "type": "object",
+          "required": ["kind", "verdict", "evidence"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "type": "string" },
+            "verdict": { "type": "string", "enum": ["pass", "fail", "skip", "blocked"] },
+            "evidence": { "type": "string" }
+          }
+        },
+        "blocked": {
+          "type": "object",
+          "required": ["reason"],
+          "additionalProperties": false,
+          "properties": {
+            "reason": { "type": "string" },
+            "unblockSpec": { "type": "string" }
+          }
+        },
+        "metrics": { "$ref": "#/$defs/aggregate" },
+        "gates": { "type": "array", "items": { "$ref": "#/$defs/gateResult" } },
+        "pass": { "type": "boolean" },
+        "skipped": { "type": "boolean" },
+        "skipReason": { "type": "string" },
+        "statuses": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "required": ["samples", "latencyMs", "tokens", "errorRatePct"],
+      "additionalProperties": false,
+      "properties": {
+        "samples": { "type": "integer", "minimum": 0 },
+        "latencyMs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "p50": { "type": "integer" },
+            "p95": { "type": "integer" },
+            "p99": { "type": "integer" },
+            "min": { "type": "integer" },
+            "max": { "type": "integer" },
+            "mean": { "type": "integer" }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "total": { "type": "integer" },
+            "mean": { "type": "integer" },
+            "max": { "type": "integer" },
+            "real": { "type": "boolean" }
+          }
+        },
+        "costUSD": { "type": ["number", "null"] },
+        "coldStartMs": { "type": ["integer", "null"] },
+        "errorRatePct": { "type": "number" },
+        "throughputRunsPerMin": { "type": "number" }
+      }
+    },
+    "gateResult": {
+      "type": "object",
+      "required": ["name", "op", "want", "got", "pass"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "op": { "type": "string", "enum": ["lte", "gte", "eq"] },
+        "want": {},
+        "got": {},
+        "pass": { "type": "boolean" },
+        "na": { "type": "boolean" },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

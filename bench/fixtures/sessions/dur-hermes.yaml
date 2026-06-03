@@ -1,0 +1,31 @@
+# Durable AgentSession (Hermes, persistent) for the scale tier: multi-turn memory,
+# worker-crash recovery, scale-to-zero. Driven via the agentgateway. Requires the
+# operator started with --session-nats-url.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: dur-hermes-agent }
+spec:
+  mode: harness
+  instructions: "You are a conversational assistant with memory across turns."
+  budget: { maxSteps: 1, maxTokens: 100000, maxWallClockSeconds: 300, maxToolCalls: 16 }
+  storage:
+    kind: agentfs
+    agentfs:
+      mountPath: /var/agentfs
+      backend: kopia
+      backup:
+        s3: { bucket: agentfs, endpointURL: http://minio.hermes-e2e.svc.cluster.local:9000, credentialsRef: { secretName: minio-creds } }
+  harness:
+    kind: hermes
+    sessionPolicy: persistent
+    http: { url: http://hermes-gateway.hermes-e2e.svc.cluster.local:8642/v1/chat/completions }
+    env:
+      - { name: HEADER_Authorization, secretRef: { secretName: hermes-gw-auth } }
+      - { name: HERMES_MODEL, value: glm-4.6 }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: { name: dur-hermes }
+spec:
+  agentRef: dur-hermes-agent
+  idleTimeoutSeconds: 60

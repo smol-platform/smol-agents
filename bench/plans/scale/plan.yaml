@@ -1,0 +1,20 @@
+# Scale tier — RUNS TODAY on cftest (no kata). Durable sessions + concurrency over the
+# agentgateway/NATS. Drive via driver=gateway. Operator must run with --session-nats-url.
+apiVersion: agentbench/v1
+kind: BenchPlan
+metadata: { name: scale }
+fleet:
+  secretSourceNamespace: hermes-e2e
+  copySecrets: [hermes-gw-auth, minio-creds]
+  manifests: [../../fixtures/sessions/dur-hermes.yaml]
+  awaitReady: [agentsession/dur-hermes]
+cases:
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: durable-memory }, tier: scale, agentRef: dur-hermes, driver: gateway, samples: 1, requiredCaps: [gateway, hermes, agentfs],
+      input: { prompt: "Turn 1: remember the codeword 'sequoia'. Turn 3: what was the codeword?" },
+      oracle: { kind: output_match, contains: "sequoia" }, gates: [{ metric: oracle.pass, op: eq, want: true }] }
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: worker-crash-recovery }, tier: scale, agentRef: dur-hermes, driver: gateway, samples: 1, requiredCaps: [gateway, hermes, agentfs],
+      input: { prompt: "multi-turn; runner deletes the worker pod between turns; turn after must recall turn-1 fact via NATS-buffered turn + AgentFS checkpoint" },
+      oracle: { kind: output_match, contains: "sequoia" }, gates: [{ metric: oracle.pass, op: eq, want: true }] }
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: concurrency-throughput }, tier: perf, agentRef: dur-hermes, driver: gateway, samples: 20, requiredCaps: [gateway, hermes],
+      input: { prompt: "Reply with OK." },
+      oracle: { kind: output_match, contains: "OK" }, gates: [{ metric: latency.p95.ms, op: lte, want: 15000 }, { metric: errorRate.pct, op: lte, want: 5 }] }

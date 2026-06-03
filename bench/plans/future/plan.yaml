@@ -1,0 +1,15 @@
+# Future/BLOCKED tier — only with --allow-blocked. Designed-but-gated cases ship as
+# negative-oracle tripwires: each FAILS the day its unblockSpec lands (forcing the
+# case to be promoted to a positive oracle). Run regularly to detect "a gap got fixed".
+apiVersion: agentbench/v1
+kind: BenchPlan
+metadata: { name: future }
+cases:
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: artifact-egress-rejected }, tier: future, agentRef: bench-claude-fs, driver: run, samples: 1,
+      input: { prompt: "n/a — admission-time check" },
+      oracle: { kind: tool_rejected, errorContains: "unknown field" },
+      blocked: { reason: "AgentSpec.artifacts.outputs[] not in CRD; files-OUT manifest unbuilt", unblockSpec: docs/specs/artifact-egress.md } }
+  - { apiVersion: agentbench/v1, kind: BenchCase, metadata: { name: loop-tool-http-success }, tier: future, agentRef: bench-loop-http, driver: run, samples: 1,
+      input: { prompt: "Fetch the marker via echo-http and return it." },
+      oracle: { kind: tool_rejected, errorContains: 'no invoker for kind "http"' },
+      blocked: { reason: "loop-mode HTTP invoker unwired", unblockSpec: docs/specs/loop-mode-tools-and-invokers.md } }

@@ -1,0 +1,17 @@
+# Proven-live path: Hermes harness -> z.ai glm-4.6 via the deployed hermes-gateway.
+# Backs the tool / output / token-accounting / secret-reach correctness cases.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: bench-hermes }
+spec:
+  mode: harness
+  instructions: "You are a precise assistant. Use tools when needed. End with the requested final line."
+  budget: { maxSteps: 1, maxTokens: 100000, maxWallClockSeconds: 300, maxToolCalls: 16 }
+  harness:
+    kind: hermes
+    sessionPolicy: ephemeral
+    http:
+      url: http://hermes-gateway.hermes-e2e.svc.cluster.local:8642/v1/chat/completions
+    env:
+      - { name: HEADER_Authorization, secretRef: { secretName: hermes-gw-auth } }
+      - { name: HERMES_MODEL, value: glm-4.6 }

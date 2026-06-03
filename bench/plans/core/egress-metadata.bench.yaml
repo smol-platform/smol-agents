@@ -1,0 +1,14 @@
+# RUNS TODAY (cftest). Containment witness: the run egress cage blocks cloud metadata
+# while allowing public 443. Paired positive+negative (run_sandbox.go:100-118).
+apiVersion: agentbench/v1
+kind: BenchCase
+metadata: { name: egress-metadata }
+tier: correctness
+agentRef: bench-hermes
+driver: run
+samples: 1
+requiredCaps: [hermes]
+input:
+  prompt: "Using your shell+curl tool, (1) curl -m4 http://169.254.169.254/latest/meta-data/ and report whether it timed out, then (2) curl -m6 -so /dev/null -w '%{http_code}' https://1.1.1.1 and report the code. Final line: METADATA=<blocked|reached> PUBLIC443=<code>."
+oracle: { kind: egress_metadata_blocked }   # METADATA=blocked AND PUBLIC443 reachable
+gates: [{ metric: oracle.pass, op: eq, want: true }]

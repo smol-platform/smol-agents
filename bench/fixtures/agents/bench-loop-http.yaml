@@ -1,0 +1,22 @@
+# Loop-mode agent referencing an HTTP Tool. Drives the loop-mode-tools NEGATIVE oracle
+# today (the call is rejected — "no invoker for kind http"); becomes the positive
+# tool_observed case the day docs/specs/loop-mode-tools-and-invokers.md lands.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: { name: echo-http }
+spec:
+  kind: http
+  description: "GET the in-cluster echo-server and return its body."
+  inputSchema: { type: object, properties: { path: { type: string } } }
+  outputSchema: { type: object }
+  http: { url: "http://echo-server.AGENTBENCH_NS.svc.cluster.local/", method: GET }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: bench-loop-http }
+spec:
+  mode: loop
+  instructions: "Use the echo-http tool to fetch the marker, then return it verbatim."
+  model: { providerRef: zai-openai, name: glm-4.6 }
+  tools: [{ name: echo-http }]
+  budget: { maxSteps: 4, maxTokens: 50000, maxWallClockSeconds: 120, maxToolCalls: 4 }

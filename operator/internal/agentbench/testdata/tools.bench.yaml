@@ -1,0 +1,39 @@
+# A *.bench.yaml file with a list of cases under "cases:".
+cases:
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata:
+      name: hermes-tool-observed
+    tier: correctness
+    agentRef: bench-hermes
+    driver: run
+    samples: 3
+    seed: 42
+    requiredCaps: ["hermes", "gateway"]
+    input:
+      prompt: "Compute 982451653 * 49979687 exactly. End with PRODUCT=<n>"
+    oracle:
+      kind: tool_observed
+      want: "PRODUCT=49096740249106611"
+    gates:
+      - { metric: oracle.pass, op: eq, want: true }
+      - { metric: latency.p95.ms, op: lte, want: 5000 }
+      - { metric: tokens.total, op: lte, want: 800 }
+
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata:
+      name: loop-tool-reject
+    tier: future
+    agentRef: bench-loop-http
+    driver: run
+    samples: 1
+    input:
+      prompt: "Call the http tool."
+    oracle:
+      kind: tool_rejected
+    blocked:
+      reason: "loop-mode tools unwired"
+      unblockSpec: docs/specs/loop-mode-tools-and-invokers.md
+    gates:
+      - { metric: oracle.pass, op: eq, want: true }
