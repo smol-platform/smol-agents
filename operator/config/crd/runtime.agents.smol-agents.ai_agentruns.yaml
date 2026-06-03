@@ -35,73 +35,114 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
+          description: |-
+            AgentRun is a single bounded execution of an Agent. The operator
+            renders a pod from the referenced Agent and this run's input; the
+            sandbox and egress posture are inherited from the Agent (there is no
+            per-run override). Progress and the final answer are folded back into
+            status.
           required: [spec]
           properties:
             spec:
               type: object
+              description: AgentRunSpec is the desired state of a run.
               required: [agentRef, input]
               properties:
-                agentRef: { type: string, minLength: 1 }
-                sessionRef: { type: string }
+                agentRef: { type: string, minLength: 1, description: 'Name of the Agent in this namespace to execute.' }
+                sessionRef: { type: string, description: 'Optionally associates the run with an AgentSession (for grouping/checkpointing).' }
                 input:
                   type: object
+                  description: |-
+                    JSON payload handed to the agent for this run; rides the run
+                    spec into a ~1MiB ConfigMap. Use spec.inputs[].secretRef for
+                    large or secret payloads.
                   x-kubernetes-preserve-unknown-fields: true
-                seed: { type: integer, format: int64 }
+                seed: { type: integer, format: int64, description: 'Optional determinism seed forwarded to the runtime/model where supported.' }
                 budgetOverride:
                   type: object
+                  description: |-
+                    Escalates the Agent budget for THIS run. In harness mode only
+                    maxTokens/maxWallClockSeconds bind at runtime; maxSteps and
+                    maxToolCalls are post-hoc accounting only.
                   properties:
-                    maxSteps: { type: integer, minimum: 1 }
-                    maxTokens: { type: integer, minimum: 1 }
-                    maxWallClockSeconds: { type: integer, minimum: 1 }
-                    maxToolCalls: { type: integer, minimum: 0 }
-                cancel: { type: boolean }
+                    maxSteps: { type: integer, minimum: 1, description: 'Override for maximum plan-act-observe steps.' }
+                    maxTokens: { type: integer, minimum: 1, description: 'Override for maximum total LLM tokens.' }
+                    maxWallClockSeconds: { type: integer, minimum: 1, description: 'Override for maximum run wall-clock duration in seconds.' }
+                    maxToolCalls: { type: integer, minimum: 0, description: 'Override for maximum total tool invocations.' }
+                cancel: { type: boolean, description: 'Set true to request cancellation; the controller deletes the run pod (immediate, no graceful drain).' }
+                memoryRetrieverRef:
+                  type: string
+                  description: |-
+                    Namespace-local MemoryRetriever whose filesystem store is
+                    mounted when its spec.mount.enabled is true (R-MEM-FS-2).
+                    Empty = no memory FS.
                 inputs:
                   type: array
+                  description: |-
+                    Files materialized into the agent's workspace before the run
+                    executes. Requires a workspace (the Agent's storage.agentfs
+                    mount or harness.cli.workingDir); a run with inputs but no
+                    workspace fails loud. Exactly one source per entry.
                   items:
                     type: object
                     properties:
-                      path: { type: string }
-                      inline: { type: string }
-                      inlineBase64: { type: string }
+                      path: { type: string, description: 'Destination relative to workspace root; must be relative, no "..". Validated in the builder; requires a workspace.' }
+                      inline: { type: string, description: 'Literal UTF-8 file content.' }
+                      inlineBase64: { type: string, description: 'Base64-encoded file content (binary payloads).' }
                       secretRef:
                         type: object
-                        properties: { secretName: { type: string }, key: { type: string } }
+                        description: Source file content from a Secret leased by the broker at runtime (never written into the AgentRun spec).
+                        properties:
+                          secretName: { type: string, description: 'Name of the Secret.' }
+                          key: { type: string, description: 'Key within the Secret''s data.' }
             status:
               type: object
+              description: RunStatus is the observed lifecycle and result of the run.
               properties:
                 state:
                   type: string
+                  description: |-
+                    Run lifecycle state: Pending (queued) | Running |
+                    RequiresAction (awaiting external input) | Completed |
+                    Failed | Cancelled | Expired (budget/wall-clock exhausted).
                   enum: [Pending, Running, RequiresAction, Completed, Failed, Cancelled, Expired]
-                startedAt: { type: string, format: date-time }
-                endedAt: { type: string, format: date-time }
-                terminationReason: { type: string }
+                startedAt: { type: string, format: date-time, description: 'When the run pod started executing.' }
+                endedAt: { type: string, format: date-time, description: 'When the run reached a terminal state.' }
+                terminationReason: { type: string, description: 'Machine-readable reason for a terminal state (e.g. budget exceeded, error).' }
                 output:
-                  # The run's answer is arbitrary JSON — a structured object for
-                  # schema-constrained agents, or a bare JSON string for a
-                  # harness that returns free-form text. Omitting `type` (with
-                  # preserve-unknown-fields) accepts any JSON value.
+                  description: |-
+                    The run's answer as arbitrary JSON — a structured object for
+                    schema-constrained agents, or a bare JSON string for a
+                    harness that returns free-form text. Omitting `type` (with
+                    preserve-unknown-fields) accepts any JSON value.
                   x-kubernetes-preserve-unknown-fields: true
                 usage:
                   type: object
+                  description: Resource accounting for the run, folded back from the pod.
                   properties:
-                    steps: { type: integer }
-                    tokens: { type: integer }
-                    toolCalls: { type: integer }
-                    wallClockUsed: { type: integer, format: int64 }
+                    steps: { type: integer, description: 'Plan-act-observe steps executed.' }
+                    tokens: { type: integer, description: 'Total LLM tokens consumed.' }
+                    toolCalls: { type: integer, description: 'Total tool invocations.' }
+                    wallClockUsed: { type: integer, format: int64, description: 'Wall-clock seconds consumed.' }
                 steps:
                   type: array
+                  description: |-
+                    Per-step plan-act-observe trace, folded into status from the
+                    run; large traces may be truncated by the ~4KiB pod
+                    termination-message cap.
                   items:
                     type: object
                     properties:
-                      index: { type: integer }
-                      kind: { type: string }
-                      startedAt: { type: string, format: date-time }
-                      endedAt: { type: string, format: date-time }
-                      tokensIn: { type: integer }
-                      tokensOut: { type: integer }
-                      error: { type: string }
+                      index: { type: integer, description: 'Zero-based step ordinal.' }
+                      kind: { type: string, description: 'Step kind (e.g. plan, act, observe).' }
+                      startedAt: { type: string, format: date-time, description: 'When the step started.' }
+                      endedAt: { type: string, format: date-time, description: 'When the step ended.' }
+                      tokensIn: { type: integer, description: 'Prompt tokens for this step.' }
+                      tokensOut: { type: integer, description: 'Completion tokens for this step.' }
+                      error: { type: string, description: 'Error message if the step failed.' }
                       toolCalls:
                         type: array
+                        description: Tool invocations made during this step (arbitrary JSON per call).
                         items:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true

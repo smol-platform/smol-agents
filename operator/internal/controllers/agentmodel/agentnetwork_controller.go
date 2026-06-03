@@ -25,9 +25,17 @@ import (
 // AgentNetworkReconciler validates an AgentNetwork CR, resolves the
 // secrets it references (so callers fail fast if a key is missing),
 // counts how many Agents in the namespace match the selector, and
-// reports Status.Phase. It does NOT inject sidecars itself — the
-// AgentRun reconciler reads bound AgentNetworks and renders them via
-// builders.BuildAgentRunPod (R-AN-PROXY-3).
+// reports Status.Phase. It does NOT inject sidecars or program egress.
+//
+// IMPORTANT (v0.2.0): AgentNetwork is NOT wired on any datapath. The AgentRun
+// reconciler does not read AgentNetworks (zero references in
+// agentrun_controller.go / builders/agentrun.go), so per-resource egress
+// allow-lists never reach run pods; run-pod egress is the static default-deny
+// NetworkPolicy in builders/run_sandbox.go, which ignores AgentNetwork. eBPF
+// maps are programmed only by cmd/ebpf-probe (e2e). The prior claim that "the
+// AgentRun reconciler reads bound AgentNetworks and renders them (R-AN-PROXY-3)"
+// was aspirational and is not implemented — see
+// docs/design/agentnetwork-agentpolicy-interaction.md.
 type AgentNetworkReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

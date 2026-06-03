@@ -24,49 +24,74 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
+          description: |-
+            Tool is a namespaced, reusable capability an agent can invoke,
+            described by its transport (kind) and JSON Schemas. Agents reference
+            Tools by name in spec.tools.
           required: [spec]
           properties:
             spec:
               type: object
+              description: ToolSpec describes one tool's transport and I/O schemas.
               required: [kind, inputSchema, outputSchema]
               properties:
-                kind: { type: string, enum: [mcp, http, agent, function] }
-                description: { type: string }
+                kind:
+                  type: string
+                  description: |-
+                    Tool transport: mcp (external MCP server) | http (HTTP+JSON)
+                    | agent (agent-to-agent, RESERVED, no invoker) | function
+                    (in-process, TEST-ONLY). WARNING: as of v0.2.0 loop-mode
+                    agents do NOT invoke tools (specs never reach the pod;
+                    executor invoker map empty); only harness-mode agents act on
+                    tools via embedded logic. See
+                    docs/design/tool-kinds-roadmap.md.
+                  enum: [mcp, http, agent, function]
+                description: { type: string, description: 'Human-readable description of what the tool does (surfaced to the model).' }
                 inputSchema:
                   type: object
+                  description: JSON Schema (2020-12) for the tool's arguments; calls are validated before dispatch.
                   x-kubernetes-preserve-unknown-fields: true
                 outputSchema:
                   type: object
+                  description: JSON Schema (2020-12) for the tool's result; calls are validated before dispatch.
                   x-kubernetes-preserve-unknown-fields: true
                 mcp:
                   type: object
+                  description: MCP transport settings; applies when kind=mcp.
                   properties:
-                    url: { type: string }
+                    url: { type: string, description: 'Base URL of the external MCP server.' }
                     auth:
                       type: object
+                      description: Credential leased by the broker for the MCP connection.
                       properties:
-                        secretName: { type: string }
+                        secretName: { type: string, description: 'Name of the Secret holding the credential.' }
                 http:
                   type: object
+                  description: HTTP+JSON transport settings; applies when kind=http.
                   properties:
-                    url: { type: string }
-                    method: { type: string }
+                    url: { type: string, description: 'Endpoint the tool call is sent to.' }
+                    method: { type: string, description: 'HTTP method; defaults to POST.' }
                     headers:
                       type: object
+                      description: Static request headers.
                       additionalProperties: { type: string }
                     auth:
                       type: object
+                      description: Credential leased by the broker for the HTTP call.
                       properties:
-                        secretName: { type: string }
+                        secretName: { type: string, description: 'Name of the Secret holding the credential.' }
                 agent:
                   type: object
+                  description: Agent-to-agent target; RESERVED — no invoker in v0.2.0.
                   properties:
                     ref:
                       type: object
+                      description: Reference to the callee Agent.
                       properties:
-                        name: { type: string }
-                        namespace: { type: string }
+                        name: { type: string, description: 'Name of the target Agent.' }
+                        namespace: { type: string, description: 'Namespace of the target Agent; defaults to this Tool''s namespace.' }
                 function:
                   type: object
+                  description: In-process function target; TEST-ONLY.
                   properties:
-                    name: { type: string }
+                    name: { type: string, description: 'Registered function name.' }

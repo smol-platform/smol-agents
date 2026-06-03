@@ -43,18 +43,25 @@ type Request struct {
 
 // Response is what a Harness returns. The executor folds it into
 // AgentRun.Status.
+//
+// RESPONSE RICHNESS CONTRACT (authoritative — see docs/design/harness-authoring.md):
+//   - Output is ALWAYS set.
+//   - TokensIn/TokensOut are best-effort and 0 for ALL CLI kinds
+//     (claude-code/codex/aider/goose/generic-cli) — only HTTP kinds with an
+//     OpenAI-style usage block (Hermes) populate them.
+//   - ToolCalls is populated by NO harness today (forward-compat field).
+//   - DurationMs is measured by the executor's clock.
+//
+// Callers needing token or tool-call accounting must use Hermes or loop mode.
 type Response struct {
-	// Output is the harness's final answer (raw bytes).
+	// Output is the harness's final answer (raw bytes). Always set.
 	Output []byte
 
-	// TokensIn / TokensOut are best-effort. Many CLI harnesses don't
-	// expose token counts; the field is then 0 and the executor
-	// records 0 in the Step.
+	// TokensIn / TokensOut: best-effort; 0 for all CLI kinds (see contract above).
 	TokensIn  int64
 	TokensOut int64
 
-	// ToolCalls is best-effort: harnesses that surface a structured
-	// call log fill this in; subprocess harnesses leave it empty.
+	// ToolCalls: forward-compat; populated by no harness today (see contract above).
 	ToolCalls []v1.ToolCallRecord
 
 	// DurationMs measured by the executor's clock.

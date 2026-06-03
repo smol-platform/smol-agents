@@ -24,16 +24,30 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
+          description: |-
+            ModelProvider supplies the credentials and endpoint defaults for an
+            LLM provider family, referenced by Agent.spec.model.providerRef. The
+            API key is brokered at runtime and never embedded in the pod spec.
           required: [spec]
           properties:
             spec:
               type: object
+              description: ModelProviderSpec configures one LLM provider.
               required: [kind, secretRef]
               properties:
-                kind: { type: string, enum: [openai, anthropic, bedrock, vertex, local] }
-                endpoint: { type: string }
+                kind:
+                  type: string
+                  description: |-
+                    LLM provider family: openai | anthropic | bedrock | vertex |
+                    local. Only openai-compatible (and local) have a working
+                    loop-mode client today (pkg/agentruntime/openaillm);
+                    bedrock/vertex are reserved (no client). Drives credential
+                    brokering + endpoint defaults.
+                  enum: [openai, anthropic, bedrock, vertex, local]
+                endpoint: { type: string, description: 'Override the kind default base URL; required for local.' }
                 secretRef:
                   type: object
+                  description: Reference to the Secret holding the provider API key.
                   required: [secretName]
                   properties:
-                    secretName: { type: string }
+                    secretName: { type: string, description: 'Secret holding the API key; leased by the broker at runtime, never embedded in the pod spec.' }

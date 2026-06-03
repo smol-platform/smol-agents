@@ -32,174 +32,293 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
+          description: |-
+            Agent is the reusable definition of an autonomous agent: its model
+            (or harness), system prompt, tool allow-list, budget caps, sandbox,
+            and durable storage. AgentRuns and AgentSessions reference an Agent
+            by name; the operator resolves and validates it, then renders the
+            per-run/per-session pod from this spec.
           required: [spec]
           properties:
             spec:
               type: object
+              description: AgentSpec is the desired state of an Agent.
               required: [instructions, budget]
               properties:
                 mode:
                   type: string
+                  description: |-
+                    Execution path. loop (default) runs the in-process
+                    plan-act-observe loop with spec.model+spec.tools; harness
+                    delegates one bounded call to spec.harness. Mutually
+                    exclusive: loop requires model and forbids harness; harness
+                    requires harness and ignores model (enforced by the
+                    validating webhook).
                   enum: [loop, harness]
                   default: loop
                 model:
                   type: object
+                  description: |-
+                    LLM configuration for loop mode. Required when mode=loop and
+                    forbidden when mode=harness.
                   properties:
-                    providerRef: { type: string }
-                    name: { type: string }
-                    temperature: { type: number }
-                    topP: { type: number }
-                    maxOutputTokens: { type: integer }
+                    providerRef:
+                      type: string
+                      description: Name of the namespace-local ModelProvider supplying credentials and endpoint defaults.
+                    name:
+                      type: string
+                      description: Provider-specific model identifier (e.g. gpt-4o, claude-3-5-sonnet, glm-4.6).
+                    temperature:
+                      type: number
+                      description: Sampling temperature; typically 0-2. Higher is more random. 0 omits the parameter.
+                    topP:
+                      type: number
+                      description: Nucleus-sampling probability mass; typically 0-1. 0 omits the parameter.
+                    maxOutputTokens:
+                      type: integer
+                      description: Upper bound on tokens generated per LLM call; typically >=1. 0 omits the parameter (provider default).
                 harness:
                   type: object
+                  description: |-
+                    Harness configuration for mode=harness: delegates a single
+                    bounded turn to an external CLI or HTTP agent (e.g.
+                    claude-code, codex, hermes) instead of the in-process loop.
+                    Required when mode=harness.
                   required: [kind]
                   properties:
                     kind:
                       type: string
+                      description: |-
+                        Harness flavour. CLI kinds (claude-code, codex, pi,
+                        aider, goose, generic-cli) exec a binary in the pod;
+                        generic-http and hermes call an HTTP endpoint. Selects
+                        the per-kind harness image and the cli/http sub-block
+                        that applies.
                       enum: [claude-code, codex, pi, aider, goose, generic-cli, generic-http, hermes]
-                    image: { type: string }
-                    version: { type: string }
+                    image:
+                      type: string
+                      description: OCI image override for the harness; empty uses the operator's per-kind default harness image.
+                    version:
+                      type: string
+                      description: Harness/tool version selector; advisory, surfaced to the harness image.
                     command:
                       type: array
+                      description: Entrypoint override (argv) for CLI harnesses; empty uses the image default.
                       items: { type: string }
                     sessionPolicy:
                       type: string
+                      description: |-
+                        ephemeral (default) starts each run with a clean
+                        workspace; persistent reuses the durable AgentFS volume
+                        across runs and REQUIRES spec.storage for CLI harnesses.
                       enum: [ephemeral, persistent]
                       default: ephemeral
                     env:
                       type: array
+                      description: Extra environment variables for the harness container; values may be inline or sourced from a broker-leased Secret.
                       items:
                         type: object
                         required: [name]
                         properties:
-                          name: { type: string }
-                          value: { type: string }
+                          name:
+                            type: string
+                            description: Environment variable name.
+                          value:
+                            type: string
+                            description: Literal value; mutually exclusive with secretRef.
                           secretRef:
                             type: object
-                            properties: { secretName: { type: string }, key: { type: string } }
+                            description: Source the value from a Secret leased by the broker at runtime instead of inlining it.
+                            properties:
+                              secretName: { type: string, description: 'Name of the Secret.' }
+                              key: { type: string, description: 'Key within the Secret''s data.' }
                     cli:
                       type: object
+                      description: CLI-harness transport settings (applies to claude-code/codex/pi/aider/goose/generic-cli).
                       properties:
-                        promptFlag: { type: string }
-                        workingDir: { type: string }
-                        maxOutputBytes: { type: integer }
+                        promptFlag:
+                          type: string
+                          description: Flag the prompt is passed under (e.g. "-p", "--prompt"); empty uses the kind default.
+                        workingDir:
+                          type: string
+                          description: Working directory the harness is invoked in; bound to the AgentFS workspace root when storage is attached.
+                        maxOutputBytes:
+                          type: integer
+                          description: Cap on captured harness stdout/stderr bytes before truncation.
                         passthroughEnv:
                           type: array
+                          description: Host/container env var names forwarded verbatim into the harness process.
                           items: { type: string }
                     http:
                       type: object
+                      description: HTTP-harness transport settings (applies to generic-http/hermes).
                       properties:
-                        url: { type: string }
-                        method: { type: string }
+                        url:
+                          type: string
+                          description: Endpoint the harness turn is POSTed to.
+                        method:
+                          type: string
+                          description: HTTP method; defaults to POST.
                         headers:
                           type: object
+                          description: Static request headers.
                           additionalProperties: { type: string }
-                        promptField: { type: string }
-                        responseField: { type: string }
+                        promptField:
+                          type: string
+                          description: JSON field in the request body carrying the prompt.
+                        responseField:
+                          type: string
+                          description: JSON field in the response body carrying the agent's answer.
                         auth:
                           type: object
-                          properties: { secretName: { type: string } }
+                          description: Bearer/credential Secret leased by the broker for the HTTP call.
+                          properties: { secretName: { type: string, description: 'Name of the Secret holding the credential.' } }
                         retry:
                           type: object
+                          description: Retry policy for transient HTTP failures (exponential backoff).
                           properties:
-                            maxAttempts: { type: integer }
-                            backoffBaseMs: { type: integer }
-                            maxBackoffMs: { type: integer }
+                            maxAttempts: { type: integer, description: 'Maximum total attempts including the first.' }
+                            backoffBaseMs: { type: integer, description: 'Initial backoff delay in milliseconds.' }
+                            maxBackoffMs: { type: integer, description: 'Ceiling on the backoff delay in milliseconds.' }
                         imagePolicy:
                           type: object
+                          description: Controls whether the harness may fetch remote image URLs and which hosts are allowed.
                           properties:
-                            allowURLs: { type: boolean }
+                            allowURLs: { type: boolean, description: 'When true, the harness may dereference image URLs in the request.' }
                             allowedURLHosts:
                               type: array
+                              description: Host allow-list for image URLs when allowURLs is true.
                               items: { type: string }
                 storage:
                   type: object
+                  description: |-
+                    Durable AgentFS volume for the agent's workspace. REQUIRED
+                    when harness.sessionPolicy=persistent for CLI harnesses;
+                    otherwise optional (runs get an ephemeral workspace).
                   properties:
                     kind:
                       type: string
+                      description: 'Storage driver: "" (none/ephemeral) or agentfs (durable, content-addressed volume).'
                       enum: ["", agentfs]
                     agentfs:
                       type: object
+                      description: AgentFS volume configuration; applies when kind=agentfs.
                       properties:
-                        sizeGiB: { type: integer, minimum: 1 }
-                        mountPath: { type: string }
-                        image: { type: string }
-                        backend: { type: string, enum: ["", tar, kopia] }
+                        sizeGiB: { type: integer, minimum: 1, description: 'Provisioned volume size in GiB.' }
+                        mountPath: { type: string, description: 'Path the AgentFS volume is mounted at inside the pod.' }
+                        image: { type: string, description: 'AgentFS sidecar image override; empty uses the operator default.' }
+                        backend: { type: string, enum: ["", tar, kopia], description: 'Snapshot backend: "" / tar (legacy tarball) or kopia (content-addressed snapshots).' }
                         backup:
                           type: object
+                          description: Periodic snapshot + offsite backup policy.
                           properties:
-                            schedule: { type: string }
-                            walSnapshotInterval: { type: string }
+                            schedule: { type: string, description: 'Cron expression for periodic snapshots.' }
+                            walSnapshotInterval: { type: string, description: 'Duration between write-ahead-log snapshots between full backups (e.g. "5m").' }
                             retention:
                               type: object
+                              description: Snapshot retention policy.
                               properties:
-                                maxVersions: { type: integer, minimum: 1 }
-                                minAge: { type: string }
+                                maxVersions: { type: integer, minimum: 1, description: 'Maximum number of snapshot versions to keep.' }
+                                minAge: { type: string, description: 'Minimum age before a snapshot becomes eligible for pruning (e.g. "24h").' }
                             s3:
                               type: object
+                              description: S3-compatible offsite backup target.
                               required: [bucket]
                               properties:
-                                bucket: { type: string }
-                                prefix: { type: string }
-                                region: { type: string }
-                                endpointURL: { type: string }
+                                bucket: { type: string, description: 'Destination bucket.' }
+                                prefix: { type: string, description: 'Key prefix within the bucket.' }
+                                region: { type: string, description: 'Bucket region.' }
+                                endpointURL: { type: string, description: 'Custom S3 endpoint (e.g. MinIO); empty uses AWS S3.' }
                                 sseAlgorithm:
                                   type: string
+                                  description: 'Server-side encryption: AES256, aws:kms, or "" (none).'
                                   enum: [AES256, "aws:kms", ""]
-                                kmsKeyARN: { type: string }
-                                versioning: { type: boolean }
+                                kmsKeyARN: { type: string, description: 'KMS key ARN when sseAlgorithm=aws:kms.' }
+                                versioning: { type: boolean, description: 'Whether the destination bucket has object versioning enabled.' }
                                 credentialsRef:
                                   type: object
-                                  properties: { secretName: { type: string }, key: { type: string } }
+                                  description: Secret holding S3 credentials, leased by the broker at runtime.
+                                  properties:
+                                    secretName: { type: string, description: 'Name of the Secret.' }
+                                    key: { type: string, description: 'Key within the Secret''s data.' }
                         restore:
                           type: object
+                          description: How the volume is hydrated on first attach.
                           properties:
                             mode:
                               type: string
+                              description: 'Restore selector: latest snapshot, a specific versionID, or pointInTime.'
                               enum: [latest, versionID, pointInTime]
-                            versionID: { type: string }
-                            pointInTime: { type: string }
+                            versionID: { type: string, description: 'Snapshot/version identifier when mode=versionID.' }
+                            pointInTime: { type: string, description: 'RFC3339 timestamp to restore to when mode=pointInTime.' }
                             ifMissing:
                               type: string
+                              description: 'Behaviour when no snapshot matches: fresh (start empty) or fail.'
                               enum: [fresh, fail]
-                instructions: { type: string, minLength: 1 }
+                instructions:
+                  type: string
+                  description: |-
+                    System prompt; required, non-empty. Avoid >100KiB — large
+                    prompts bloat the run ConfigMap (~1MiB cap).
+                  minLength: 1
                 tools:
                   type: array
+                  description: |-
+                    Allow-list of Tool references. NOTE: loop-mode tool
+                    invocation is NOT wired in v0.2.0 (names resolved but specs
+                    never reach the pod, executor has no invokers); only
+                    harness-mode agents act on tools. See
+                    docs/design/tool-kinds-roadmap.md.
                   items:
                     type: object
                     required: [name]
                     properties:
-                      name: { type: string }
-                      namespace: { type: string }
+                      name: { type: string, description: 'Name of the Tool resource to allow.' }
+                      namespace: { type: string, description: 'Namespace of the Tool; defaults to the Agent''s namespace.' }
                 memory:
                   type: object
+                  description: |-
+                    DEAD on the Agent in v0.2.0 — read by no controller. Per-run
+                    memory uses AgentRun.spec.memoryRetrieverRef; durable state
+                    uses spec.storage.
                   properties:
-                    name: { type: string }
+                    name: { type: string, description: 'MemoryRetriever name (currently unused on the Agent).' }
                 budget:
                   type: object
+                  description: |-
+                    Hard caps enforced before every step (fail-closed). All
+                    required >0 except maxToolCalls>=0.
                   required: [maxSteps, maxTokens, maxWallClockSeconds, maxToolCalls]
                   properties:
-                    maxSteps: { type: integer, minimum: 1 }
-                    maxTokens: { type: integer, minimum: 1 }
-                    maxWallClockSeconds: { type: integer, minimum: 1 }
-                    maxToolCalls: { type: integer, minimum: 0 }
+                    maxSteps: { type: integer, minimum: 1, description: 'Maximum plan-act-observe steps per run.' }
+                    maxTokens: { type: integer, minimum: 1, description: 'Maximum total LLM tokens per run.' }
+                    maxWallClockSeconds: { type: integer, minimum: 1, description: 'Maximum run wall-clock duration in seconds.' }
+                    maxToolCalls: { type: integer, minimum: 0, description: 'Maximum total tool invocations per run (0 forbids tool calls).' }
                 identity:
                   type: object
+                  description: SPIFFE workload-identity settings for run pods.
                   properties:
-                    spiffeIDPrefix: { type: string }
+                    spiffeIDPrefix: { type: string, description: 'SPIFFE ID sub-tree prefix; the platform appends /agent/<name>/run/<runid>.' }
                 sandbox:
                   type: object
+                  description: Pod isolation settings for runs of this Agent.
                   properties:
-                    runtimeClass: { type: string }
-                gracefulCancelTimeoutSeconds: { type: integer }
+                    runtimeClass: { type: string, description: 'Pod RuntimeClass override (R-AM-SEC-2). Empty inherits the operator --default-run-runtime-class (default kata-fc). runc is rejected fail-closed unless the operator runs with --allow-host-runtime.' }
+                gracefulCancelTimeoutSeconds:
+                  type: integer
+                  description: DEPRECATED/UNUSED in v0.2.0 — read by no controller; cancel deletes the pod immediately.
             status:
               type: object
+              description: AgentStatus is the observed reconcile state of the Agent (NOT the AgentRun lifecycle).
               properties:
-                phase: { type: string }
-                observedGeneration: { type: integer }
+                phase:
+                  type: string
+                  description: 'Agent reconcile phase: Pending | Ready | Failed (tool/provider resolution) — NOT the AgentRun lifecycle.'
+                observedGeneration: { type: integer, description: 'spec.metadata.generation last reconciled by the controller.' }
                 resolvedTools:
                   type: array
+                  description: Tool references that were successfully resolved during reconcile.
                   items: { type: string }
-                resolvedProvider: { type: string }
-                reason: { type: string }
-                message: { type: string }
+                resolvedProvider: { type: string, description: 'ModelProvider that was successfully resolved during reconcile (loop mode).' }
+                reason: { type: string, description: 'Machine-readable reason for the current phase.' }
+                message: { type: string, description: 'Human-readable detail for the current phase.' }

@@ -23,19 +23,30 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
+          description: |-
+            AgentSession runs a long-lived 1-replica worker pod that accepts
+            turns via NATS/gateway and checkpoints session state (turns+usage)
+            to AgentFS for crash recovery. See
+            docs/design/durable-session-architecture.md.
           required: [spec]
           properties:
             spec:
               type: object
-              required: [agentRef]
+              description: AgentSessionSpec is the desired state of a session.
               properties:
-                agentRef: { type: string, minLength: 1 }
-                idleTimeoutSeconds: { type: integer, minimum: 0 }
+                agentRef: { type: string, minLength: 1, description: 'Name of the Agent in this namespace the session worker runs.' }
+                idleTimeoutSeconds:
+                  type: integer
+                  minimum: 0
+                  description: Seconds idle before the worker parks and exits for scale-to-zero; 0 (default) keeps it resident.
+              required: [agentRef]
             status:
               type: object
+              description: AgentSessionStatus is the observed state of the session worker.
               properties:
-                phase: { type: string }
-                observedGeneration: { type: integer }
+                phase: { type: string, description: 'Worker lifecycle: Pending until available, then Running.' }
+                observedGeneration: { type: integer, description: 'spec.metadata.generation last reconciled by the controller.' }
                 runs:
                   type: array
+                  description: LEGACY/DEAD — never written by the reconciler; do not rely on it.
                   items: { type: string }

@@ -36,15 +36,26 @@ func (m AgentMode) Valid() bool {
 type HarnessKind string
 
 const (
-	HarnessClaudeCode  HarnessKind = "claude-code"
-	HarnessCodex       HarnessKind = "codex"
-	HarnessPi          HarnessKind = "pi"
-	HarnessAider       HarnessKind = "aider"
-	HarnessGoose       HarnessKind = "goose"
-	HarnessGenericCLI  HarnessKind = "generic-cli"
+	// HarnessClaudeCode runs Anthropic's `claude --print` CLI as a subprocess (CLI kind).
+	HarnessClaudeCode HarnessKind = "claude-code"
+	// HarnessCodex runs OpenAI's `codex exec` CLI as a subprocess (CLI kind).
+	HarnessCodex HarnessKind = "codex"
+	// HarnessPi is a FALSE FRIEND: it drives Inflection AI's hosted Pi inference
+	// HTTP API (default https://api.inflection.ai/external/api/inference), NOT
+	// Mario Zechner's pi-mono coding-agent CLI. For pi-mono use HarnessGenericCLI
+	// with a custom image — see docs/design/harness-authoring.md.
+	HarnessPi HarnessKind = "pi"
+	// HarnessAider runs the `aider` CLI as a subprocess (CLI kind).
+	HarnessAider HarnessKind = "aider"
+	// HarnessGoose runs Block's `goose run` CLI as a subprocess (CLI kind).
+	HarnessGoose HarnessKind = "goose"
+	// HarnessGenericCLI runs an arbitrary subprocess; spec.command is required (CLI kind).
+	HarnessGenericCLI HarnessKind = "generic-cli"
+	// HarnessGenericHTTP POSTs to an arbitrary HTTP+JSON endpoint (HTTP kind).
 	HarnessGenericHTTP HarnessKind = "generic-http"
 	// HarnessHermes drives NousResearch's Hermes Agent gateway via its
-	// OpenAI-compatible /v1/chat/completions API (HTTP, like pi/generic-http).
+	// OpenAI-compatible /v1/chat/completions API (HTTP kind). Only HTTP kinds
+	// (hermes/pi/generic-http) unpack multimodal input.images; CLI kinds drop them.
 	HarnessHermes HarnessKind = "hermes"
 )
 
@@ -59,12 +70,18 @@ func (k HarnessKind) Valid() bool {
 	return false
 }
 
-// SessionPolicy controls whether the harness reuses state across runs.
+// SessionPolicy controls whether a SINGLE harness AgentRun reuses state across
+// runs. It is NOT the AgentSession CRD: AgentSession is a separate long-lived
+// worker pod for multi-turn conversations over a NATS turn queue (see
+// docs/design/durable-session-architecture.md). For CLI kinds, persistent means
+// "reuse the Agent's durable AgentFS workspace"; for HTTP kinds (Hermes),
+// persistent additionally forwards a stable provider session id while ephemeral
+// mints a fresh one (ephemeral = a fresh server-side session, not stateless).
 type SessionPolicy string
 
 const (
-	SessionEphemeral  SessionPolicy = "ephemeral"  // fresh process / context per Run (default)
-	SessionPersistent SessionPolicy = "persistent" // share state via the Agent's Storage
+	SessionEphemeral  SessionPolicy = "ephemeral"  // fresh workspace / server-side session per Run (default)
+	SessionPersistent SessionPolicy = "persistent" // reuse AgentFS workspace (CLI) / stable provider session id (HTTP)
 )
 
 // HarnessSpec describes a harness invocation. Mutually exclusive with a
@@ -140,8 +157,10 @@ type HarnessCLISpec struct {
 	// +optional
 	MaxOutputBytes int32 `json:"maxOutputBytes,omitempty"`
 
-	// PassthroughEnv allows specific host env vars to flow into the
-	// harness (e.g. ANTHROPIC_API_KEY when set via the broker).
+	// PassthroughEnv is DEAD as of v0.2.0 — it has no reader: the CLI driver's
+	// mergeEnv (pkg/agentruntime/harness/cli.go) already inherits the full parent
+	// environment, so this allow-list is never consulted. Use Env (literal) or
+	// Env[].SecretRef (broker). Slated for removal or implementation.
 	// +optional
 	PassthroughEnv []string `json:"passthroughEnv,omitempty"`
 }

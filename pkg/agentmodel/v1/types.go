@@ -38,8 +38,12 @@ type IdentitySpec struct {
 	SPIFFEIDPrefix string `json:"spiffeIDPrefix,omitempty"`
 }
 
-// SandboxSpec inherits the platform default unless overridden. R-AM-SEC-2.
+// SandboxSpec configures the pod RuntimeClass (R-AM-SEC-2). Empty inherits the
+// operator's --default-run-runtime-class (default kata-fc); runc is rejected
+// fail-closed unless the operator runs with --allow-host-runtime. AgentRun has
+// no per-run override — it inherits the referenced Agent's sandbox.
 type SandboxSpec struct {
+	// RuntimeClass overrides the pod RuntimeClassName. Empty = operator default.
 	RuntimeClass string `json:"runtimeClass,omitempty"`
 }
 
@@ -56,19 +60,33 @@ type AgentSpec struct {
 	// +optional
 	Harness *HarnessSpec `json:"harness,omitempty"`
 
-	Instructions string     `json:"instructions"`
-	Tools        []ToolRef  `json:"tools,omitempty"`
-	Memory       *MemoryRef `json:"memory,omitempty"`
+	Instructions string `json:"instructions"`
+
+	// Tools is the Agent's allow-list of Tool references. NOTE: loop-mode tool
+	// invocation is NOT wired end-to-end as of v0.2.0 — the operator resolves
+	// these names but never ships the specs to the pod and the executor has no
+	// invokers, so a loop agent's tool call is rejected at runtime. Only
+	// harness-mode agents act on tools (via embedded harness logic). See
+	// docs/design/tool-kinds-roadmap.md.
+	Tools []ToolRef `json:"tools,omitempty"`
+
+	// Memory is DEAD on the Agent as of v0.2.0 — no controller reads spec.memory
+	// and no builder mounts it. Per-run memory is attached via
+	// AgentRunSpec.MemoryRetrieverRef; durable state via spec.storage.
+	Memory *MemoryRef `json:"memory,omitempty"`
 
 	// Storage attaches persistent state (AgentFS today). Required for
 	// SessionPersistent harnesses.
 	// +optional
 	Storage *StorageSpec `json:"storage,omitempty"`
 
-	Budget                       Budget       `json:"budget"`
-	Identity                     IdentitySpec `json:"identity,omitempty"`
-	Sandbox                      SandboxSpec  `json:"sandbox,omitempty"`
-	GracefulCancelTimeoutSeconds int32        `json:"gracefulCancelTimeoutSeconds,omitempty"`
+	Budget   Budget       `json:"budget"`
+	Identity IdentitySpec `json:"identity,omitempty"`
+	Sandbox  SandboxSpec  `json:"sandbox,omitempty"`
+
+	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
+	// controller; cancel deletes the pod immediately. Slated for removal.
+	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`
 }
 
 // AgentStatus is reported by the controller.
@@ -92,8 +110,11 @@ type Agent struct {
 type ToolKind string
 
 const (
-	ToolMCP      ToolKind = "mcp"
-	ToolHTTP     ToolKind = "http"
+	ToolMCP  ToolKind = "mcp"  // external MCP server (no production invoker yet)
+	ToolHTTP ToolKind = "http" // generic HTTP+JSON endpoint (no production invoker yet)
+	// ToolAgent (agent-to-agent) and ToolFunction (in-process) are RESERVED: no
+	// production invoker exists and loop-mode tool invocation is unimplemented as
+	// of v0.2.0 (ToolFunction is test-only). See docs/design/tool-kinds-roadmap.md.
 	ToolAgent    ToolKind = "agent"
 	ToolFunction ToolKind = "function"
 )
@@ -131,7 +152,9 @@ type FunctionSpec struct {
 	Name string `json:"name"`
 }
 
-// AuthRef points at a secret in the broker.
+// AuthRef points at a Kubernetes Secret resolved by the operator at pod-build
+// time — into the broker config (harness env) or a secretKeyRef (AgentFS backup
+// creds). The raw value is never written into the pod spec.
 type AuthRef struct {
 	SecretName string `json:"secretName"`
 
@@ -166,9 +189,20 @@ type ModelProvider struct {
 	Spec ModelProviderSpec `json:"spec"`
 }
 
+// ModelProviderSpec holds the provider family + brokered credential. Kind drives
+// credential brokering (operator/internal/controllers/agentmodel/secrets.go) and
+// endpoint defaults. As of v0.2.0 the only loop-mode LLM client is the
+// OpenAI-compatible one (pkg/agentruntime/openaillm); bedrock/vertex have no
+// dedicated client, and anthropic is reachable only via an OpenAI/Anthropic-
+// compatible endpoint or a harness (e.g. claude-code).
 type ModelProviderSpec struct {
-	Kind      string  `json:"kind"`               // openai | anthropic | bedrock | vertex | local
-	Endpoint  string  `json:"endpoint,omitempty"` // override default
+	// Kind: openai | anthropic | bedrock | vertex | local. Only openai-compatible
+	// (and "local") have a working loop-mode client today.
+	Kind string `json:"kind"`
+	// Endpoint overrides the kind's default base URL; required for local.
+	Endpoint string `json:"endpoint,omitempty"`
+	// SecretRef is the API-key Secret, leased by the broker at runtime — never
+	// embedded in the pod spec.
 	SecretRef AuthRef `json:"secretRef"`
 }
 
@@ -179,13 +213,28 @@ type AgentRun struct {
 	Status RunStatus    `json:"status,omitempty"`
 }
 
+// AgentRunSpec is a single bounded execution of the referenced Agent. The pod
+// sandbox (RuntimeClass) and egress policy are inherited from the Agent — there
+// is no per-run sandbox override.
 type AgentRunSpec struct {
-	AgentRef       string          `json:"agentRef"`
-	SessionRef     string          `json:"sessionRef,omitempty"`
-	Input          json.RawMessage `json:"input"`
-	Seed           int64           `json:"seed,omitempty"`
-	BudgetOverride *Budget         `json:"budgetOverride,omitempty"`
-	Cancel         bool            `json:"cancel,omitempty"`
+	AgentRef string `json:"agentRef"`
+
+	// SessionRef optionally associates this run with an AgentSession.
+	SessionRef string `json:"sessionRef,omitempty"`
+
+	// Input is the run's JSON payload. It rides the run spec, which the operator
+	// marshals into a ~1 MiB ConfigMap — use Inputs[].secretRef for large or
+	// secret payloads instead of inlining them here.
+	Input json.RawMessage `json:"input"`
+
+	Seed int64 `json:"seed,omitempty"`
+
+	// BudgetOverride escalates the Agent's budget for THIS run. In harness mode
+	// only maxTokens/maxWallClockSeconds bind at runtime; maxSteps and
+	// maxToolCalls are computed post-hoc from the harness result.
+	BudgetOverride *Budget `json:"budgetOverride,omitempty"`
+
+	Cancel bool `json:"cancel,omitempty"`
 
 	// MemoryRetrieverRef is the namespace-local name of a MemoryRetriever CR
 	// whose filesystem store should be mounted into the agent pod when

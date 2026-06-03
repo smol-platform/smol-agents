@@ -1,5 +1,12 @@
 # smol-agents as an Agent Runtime: Fit & Scoring Analysis
 
+> ⚠️ **SUPERSEDED (2026-06-02).** This analysis was scored **before** the v0.2.0 4-phase
+> hardening (run-pod kata-fc + egress cage, per-kind harness images, durable sessions,
+> gateway/queue). Its uniform **2/5 Safety/Shipping/Scale** baseline and several "absent"
+> claims (run-pod has no RuntimeClassName, no egress, no per-kind images, Steps dropped)
+> are **no longer accurate**. Read **[`agent-runtime-fit-analysis-v0.2.0.md`](./agent-runtime-fit-analysis-v0.2.0.md)**
+> for current scores. Retained for historical record only.
+
 *How well the platform hosts five real coding/agent harnesses — OpenClaw, Hermes, pi, Codex, Claude Code — and how it stacks up against managed and OSS competitors.*
 
 > **Scoring note:** All scores reflect **BUILT** capability verified against the code (per the reality-check), **not** roadmap or documented-but-unwired intent. Where the docs over-claim (eBPF egress cage, microVM-for-runs, agent-blind credentials for CLI harnesses), the scores follow the code, not the docs.

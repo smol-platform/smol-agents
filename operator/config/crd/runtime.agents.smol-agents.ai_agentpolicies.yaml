@@ -17,27 +17,39 @@ spec:
       schema:
         openAPIV3Schema:
           type: object
+          description: |-
+            AgentPolicy is a namespace-scoped guardrail (allow-lists + budget
+            cap + output redaction). WARNING: as of v0.2.0 NO controller
+            reconciles or enforces this CR — declaring one has NO runtime
+            effect. Tracked as a P1 gap
+            (docs/design/agentnetwork-agentpolicy-interaction.md).
           required: [spec]
           properties:
             spec:
               type: object
+              description: AgentPolicySpec declares the intended guardrails (currently unenforced).
               properties:
                 allowedProviders:
                   type: array
+                  description: ModelProvider allow-list for agents in this namespace — NOT enforced yet.
                   items: { type: string }
                 allowedTools:
                   type: array
+                  description: Tool allow-list for agents in this namespace — NOT enforced yet.
                   items: { type: string }
                 maxBudget:
                   type: object
+                  description: Per-run budget ceiling — NOT enforced yet.
                   properties:
-                    maxSteps: { type: integer, minimum: 1 }
-                    maxTokens: { type: integer, minimum: 1 }
-                    maxWallClockSeconds: { type: integer, minimum: 1 }
-                    maxToolCalls: { type: integer, minimum: 0 }
+                    maxSteps: { type: integer, minimum: 1, description: 'Ceiling on plan-act-observe steps per run.' }
+                    maxTokens: { type: integer, minimum: 1, description: 'Ceiling on total LLM tokens per run.' }
+                    maxWallClockSeconds: { type: integer, minimum: 1, description: 'Ceiling on run wall-clock duration in seconds.' }
+                    maxToolCalls: { type: integer, minimum: 0, description: 'Ceiling on total tool invocations per run.' }
                 redaction:
                   type: object
+                  description: Output/Steps redaction policy — NOT applied yet.
                   properties:
                     patterns:
                       type: array
+                      description: Regular expressions masked from Output/Steps — NOT applied yet.
                       items: { type: string }

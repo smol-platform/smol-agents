@@ -67,6 +67,14 @@ func RunTurn(ctx context.Context, agent v1.Agent, run v1.AgentRunSpec, leaser Se
 	exec.Secrets = leaser
 	exec.LLM = llm
 
+	// NOTE: exec.Tools and exec.Invokers are EMPTY in production. The operator
+	// resolves Agent.Spec.Tools refs by name but never materializes Tool specs
+	// into the run ConfigMap (operator/internal/builders/runspec.go), and no
+	// MCP/HTTP invoker is registered — so a loop agent's tool call is rejected at
+	// runtime. Loop-mode tool invocation is future work; see
+	// docs/design/tool-kinds-roadmap.md. (Harness-mode agents are unaffected:
+	// their tool loop runs inside the harness.)
+
 	// Seed declared input files into the workspace before execution, so a harness
 	// or loop can work on "the files I gave you".
 	if err := MaterializeInputs(ctx, agent.Spec.EffectiveWorkingDir(), run.Inputs, leaser); err != nil {
