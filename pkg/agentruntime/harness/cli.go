@@ -144,6 +144,16 @@ func promptFromInput(in json.RawMessage) string {
 	return s
 }
 
+// cliExtraFlags returns the tenant-specified extra CLI flags
+// (HarnessCLISpec.ExtraFlags) appended to a harness invocation — permission/
+// sandbox flags a CLI needs in headless mode (e.g. claude --dangerously-skip-permissions).
+func cliExtraFlags(req Request) []string {
+	if req.Spec.CLI != nil {
+		return req.Spec.CLI.ExtraFlags
+	}
+	return nil
+}
+
 // ClaudeCodeHarness invokes `claude --print "<prompt>"`.
 type ClaudeCodeHarness struct {
 	Cmd commandFunc // nil → exec.CommandContext
@@ -160,7 +170,8 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	if req.Instructions != "" {
 		prompt = req.Instructions + "\n\n" + prompt
 	}
-	args := []string{flag, prompt}
+	args := append([]string{flag}, cliExtraFlags(req)...)
+	args = append(args, prompt)
 	return runCLI(ctx, req, "claude", args, h.Cmd)
 }
 
@@ -176,7 +187,9 @@ func (h *CodexHarness) Run(ctx context.Context, req Request) (Response, error) {
 	if req.Instructions != "" {
 		prompt = req.Instructions + "\n\n" + prompt
 	}
-	return runCLI(ctx, req, "codex", []string{"exec", prompt}, h.Cmd)
+	args := append([]string{"exec"}, cliExtraFlags(req)...)
+	args = append(args, prompt)
+	return runCLI(ctx, req, "codex", args, h.Cmd)
 }
 
 // AiderHarness invokes `aider --message "<prompt>" --no-pretty --yes`.
@@ -188,6 +201,7 @@ func (h *AiderHarness) Kind() v1.HarnessKind { return v1.HarnessAider }
 
 func (h *AiderHarness) Run(ctx context.Context, req Request) (Response, error) {
 	args := []string{"--message", promptFromInput(req.Input), "--no-pretty", "--yes"}
+	args = append(args, cliExtraFlags(req)...)
 	return runCLI(ctx, req, "aider", args, h.Cmd)
 }
 
@@ -200,6 +214,7 @@ func (h *GooseHarness) Kind() v1.HarnessKind { return v1.HarnessGoose }
 
 func (h *GooseHarness) Run(ctx context.Context, req Request) (Response, error) {
 	args := []string{"run", "--instructions", promptFromInput(req.Input)}
+	args = append(args, cliExtraFlags(req)...)
 	return runCLI(ctx, req, "goose", args, h.Cmd)
 }
 
@@ -225,6 +240,7 @@ func (h *GenericCLIHarness) Run(ctx context.Context, req Request) (Response, err
 	} else {
 		args = append(args, promptFromInput(req.Input))
 	}
+	args = append(args, cliExtraFlags(req)...)
 	// runCLI already merges spec.Command — pass an empty name and let it
 	// take the override.
 	return runCLI(ctx, req, "", args, h.Cmd)

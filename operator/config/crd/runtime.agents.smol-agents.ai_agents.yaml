@@ -149,6 +149,10 @@ spec:
                           type: array
                           description: Host/container env var names forwarded verbatim into the harness process.
                           items: { type: string }
+                        extraFlags:
+                          type: array
+                          description: 'Flags appended to the CLI invocation (after the kind''s fixed flags, before the prompt) for permission/sandbox flags a CLI harness needs headless, e.g. claude-code ''--dangerously-skip-permissions'' (the kata + egress sandbox is the real boundary) or codex ''--ask-for-approval never''.'
+                          items: { type: string }
                     http:
                       type: object
                       description: HTTP-harness transport settings (applies to generic-http/hermes).

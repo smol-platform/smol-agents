@@ -157,6 +157,15 @@ type HarnessCLISpec struct {
 	// +optional
 	MaxOutputBytes int32 `json:"maxOutputBytes,omitempty"`
 
+	// ExtraFlags are appended to the harness CLI invocation (after the kind's
+	// fixed flags, before the prompt for prompt-flag kinds). Use for permission/
+	// sandbox flags a CLI harness needs in headless mode — e.g. claude-code's
+	// "--dangerously-skip-permissions" or "--permission-mode acceptEdits" (the
+	// platform's kata + default-deny egress sandbox is the real boundary), or
+	// codex's "--ask-for-approval never". Tenant-controlled; keep narrow.
+	// +optional
+	ExtraFlags []string `json:"extraFlags,omitempty"`
+
 	// PassthroughEnv is DEAD as of v0.2.0 — it has no reader: the CLI driver's
 	// mergeEnv (pkg/agentruntime/harness/cli.go) already inherits the full parent
 	// environment, so this allow-list is never consulted. Use Env (literal) or

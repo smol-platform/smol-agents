@@ -26,6 +26,8 @@ spec:
   harness:
     kind: claude-code
     version: "0.1.15-phases"
+    cli:
+      extraFlags: ["--dangerously-skip-permissions"]
     env:
       - { name: ANTHROPIC_BASE_URL, value: "https://api.z.ai/api/anthropic" }
       - { name: ANTHROPIC_MODEL, value: glm-4.6 }

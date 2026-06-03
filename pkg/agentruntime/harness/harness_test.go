@@ -520,3 +520,26 @@ func TestMergeEnv_InheritsParentEnv(t *testing.T) {
 		t.Errorf("harness env must override inherited (last wins), got %q", last)
 	}
 }
+
+func TestClaudeCodeHarness_ExtraFlags(t *testing.T) {
+	var gotArgs []string
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.CommandContext(ctx, "true")
+	}}
+	req := Request{
+		Spec:   v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{ExtraFlags: []string{"--dangerously-skip-permissions"}}},
+		Input:  json.RawMessage(`"hi"`),
+		Budget: v1.Budget{MaxWallClockSeconds: 10},
+	}
+	if _, err := h.Run(context.Background(), req); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Expect: --print --dangerously-skip-permissions <prompt> (extra flags before the prompt).
+	if len(gotArgs) != 3 || gotArgs[0] != "--print" || gotArgs[1] != "--dangerously-skip-permissions" {
+		t.Fatalf("ExtraFlags not inserted before prompt: %v", gotArgs)
+	}
+	if gotArgs[2] != "hi" {
+		t.Fatalf("prompt must be last arg, got %v", gotArgs)
+	}
+}
