@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultImageRegistry = "ghcr.io/smol-platform/smol-agents"
-	defaultImageTag      = "0.2.0"
+	defaultImageTag      = "0.2.1"
 
 	// EnvImageRegistry / EnvImageTag are the GLOBAL fallbacks: a single
 	// registry + tag applied to every spawned component unless a per-component

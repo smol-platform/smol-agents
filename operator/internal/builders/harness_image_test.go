@@ -21,14 +21,14 @@ func TestHarnessImage(t *testing.T) {
 		agent    *amv1.Agent
 		contains string // substring the resolved ref must contain
 	}{
-		{"claude-code default bundle", harnessAgent(pure.HarnessClaudeCode, "", ""), "/harness-claude-code:0.2.0"},
-		{"codex default bundle", harnessAgent(pure.HarnessCodex, "", ""), "/harness-codex:0.2.0"},
-		{"aider default bundle", harnessAgent(pure.HarnessAider, "", ""), "/harness-aider:0.2.0"},
-		{"goose default bundle", harnessAgent(pure.HarnessGoose, "", ""), "/harness-goose:0.2.0"},
+		{"claude-code default bundle", harnessAgent(pure.HarnessClaudeCode, "", ""), "/harness-claude-code:0.2.1"},
+		{"codex default bundle", harnessAgent(pure.HarnessCodex, "", ""), "/harness-codex:0.2.1"},
+		{"aider default bundle", harnessAgent(pure.HarnessAider, "", ""), "/harness-aider:0.2.1"},
+		{"goose default bundle", harnessAgent(pure.HarnessGoose, "", ""), "/harness-goose:0.2.1"},
 		{"version pins the tag", harnessAgent(pure.HarnessClaudeCode, "", "1.2.3"), "/harness-claude-code:1.2.3"},
 		{"explicit image wins", harnessAgent(pure.HarnessClaudeCode, "example.com/my/claude:dev", "1.2.3"), "example.com/my/claude:dev"},
-		{"hermes (HTTP) uses base agent image", harnessAgent(pure.HarnessHermes, "", ""), "/agent:0.2.0"},
-		{"generic-cli without image uses base agent image", harnessAgent(pure.HarnessGenericCLI, "", ""), "/agent:0.2.0"},
+		{"hermes (HTTP) uses base agent image", harnessAgent(pure.HarnessHermes, "", ""), "/agent:0.2.1"},
+		{"generic-cli without image uses base agent image", harnessAgent(pure.HarnessGenericCLI, "", ""), "/agent:0.2.1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestHarnessImage(t *testing.T) {
 	// Loop mode (no harness) → base agent image.
 	loop := &amv1.Agent{}
 	loop.Spec.Mode = pure.ModeLoop
-	if got := HarnessImage(loop); !strings.Contains(got, "/agent:0.2.0") {
+	if got := HarnessImage(loop); !strings.Contains(got, "/agent:0.2.1") {
 		t.Errorf("loop-mode HarnessImage = %q, want base agent image", got)
 	}
 }

@@ -4,7 +4,7 @@ import "testing"
 
 // Default resolution and the two GLOBAL overrides (kept backward compatible).
 func TestImage_Defaults_And_GlobalOverrides(t *testing.T) {
-	if got := Image("agent"); got != "ghcr.io/smol-platform/smol-agents/agent:0.2.0" {
+	if got := Image("agent"); got != "ghcr.io/smol-platform/smol-agents/agent:0.2.1" {
 		t.Errorf("default Image(agent) = %q", got)
 	}
 
