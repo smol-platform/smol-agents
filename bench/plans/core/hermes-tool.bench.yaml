@@ -11,10 +11,10 @@ seed: 42
 requiredCaps: [hermes]
 input:
   nonce: true
-  prompt: "Use your shell tool to run exactly: echo {{nonce}} | rev . Return ONLY the tool's stdout as the final line."
+  prompt: "Use your shell tool to run exactly: echo {{NONCE}} | rev . Return ONLY the tool's stdout as the final line."
 oracle:
   kind: tool_observed       # a Step of Kind=Observation whose Result != Arguments AND output contains the reversed nonce
-  outputContainsReversed: "{{nonce}}"
+  outputContainsReversed: "{{NONCE}}"
 gates:
   - { metric: oracle.pass, op: eq, want: true }
   - { metric: latency.p95.ms, op: lte, want: 8000 }

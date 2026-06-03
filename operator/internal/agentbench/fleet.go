@@ -95,6 +95,24 @@ func (f *Fleet) Deploy(ctx context.Context, plan *BenchPlan) error {
 		}
 	}
 
+	// Copy real provider secrets from the source namespace (values never committed
+	// to the repo). The operator bakes these values into the per-run broker config,
+	// so they must exist in the run namespace before the Agents reconcile.
+	for _, name := range plan.Fleet.CopySecrets {
+		src := &corev1.Secret{}
+		if err := f.client.Get(ctx, client.ObjectKey{Namespace: plan.Fleet.SecretSourceNamespace, Name: name}, src); err != nil {
+			return fmt.Errorf("fleet: copy secret %s/%s: %w", plan.Fleet.SecretSourceNamespace, name, err)
+		}
+		dst := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: f.namespace},
+			Type:       src.Type,
+			Data:       src.Data,
+		}
+		if err := f.client.Create(ctx, dst); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("fleet: create copied secret %s: %w", name, err)
+		}
+	}
+
 	// Manifests.
 	for _, rel := range plan.Fleet.Manifests {
 		objs, err := f.loadManifest(rel)

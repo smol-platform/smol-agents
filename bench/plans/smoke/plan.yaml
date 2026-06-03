@@ -1,0 +1,60 @@
+# Smoke plan — the first live cftest run. High-confidence, VALID cases on real z.ai
+# backends across both transports: a HTTP harness (Hermes) and a CLI harness with
+# durable AgentFS (claude-code, which runs IN the sandboxed run pod).
+#
+# NOTE (design finding, see docs/design/benchmarking-platform.md): Hermes tools run
+# in the GATEWAY, not the run pod — so egress/secret-in-pod oracles must use a CLI/
+# in-pod harness, not Hermes. Those cases are deferred out of this smoke run.
+apiVersion: agentbench/v1
+kind: BenchPlan
+metadata: { name: smoke }
+fleet:
+  secretSourceNamespace: hermes-e2e
+  copySecrets: [hermes-gw-auth, zai-key, agentfs-kopia-creds]
+  manifests:
+    - ../../fixtures/agents/bench-hermes.yaml
+    - ../../fixtures/agents/bench-claude-fs.yaml
+cases:
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata: { name: hermes-output }
+    tier: correctness
+    agentRef: bench-hermes
+    driver: run
+    samples: 3
+    seed: 42
+    requiredCaps: [hermes]
+    input: { prompt: "Compute fib(12). Reply with ONLY the integer on the final line." }
+    oracle: { kind: output_match, want: "144" }
+    gates:
+      - { metric: oracle.pass, op: eq, want: true }
+      - { metric: tokens.total, op: gte, want: 1 }
+      - { metric: latency.p95.ms, op: lte, want: 30000 }
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata: { name: hermes-tool }
+    tier: correctness
+    agentRef: bench-hermes
+    driver: run
+    samples: 1
+    requiredCaps: [hermes]
+    input:
+      nonce: true
+      prompt: "Use your shell/terminal tool to run exactly: echo {{NONCE}} — then return ONLY the tool's stdout as the final line."
+    oracle: { kind: tool_observed }
+    gates:
+      - { metric: oracle.pass, op: eq, want: true }
+  - apiVersion: agentbench/v1
+    kind: BenchCase
+    metadata: { name: fs-roundtrip }
+    tier: correctness
+    agentRef: bench-claude-fs
+    driver: run
+    samples: 1
+    requiredCaps: [s3]
+    input:
+      nonce: true
+      prompt: "Write the exact text {{NONCE}} to /var/agentfs/bench-nonce.txt (overwrite, no trailing newline). Then on a fresh run, read /var/agentfs/bench-nonce.txt and return its contents verbatim."
+    oracle: { kind: output_match, want: "{{NONCE}}" }
+    gates:
+      - { metric: oracle.pass, op: eq, want: true }

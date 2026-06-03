@@ -90,6 +90,14 @@ type FleetSpec struct {
 	Manifests []string `json:"manifests,omitempty"`
 	// AwaitReady lists object refs (kind/name) to block on before submitting.
 	AwaitReady []string `json:"awaitReady,omitempty"`
+	// SecretSourceNamespace is where CopySecrets are read from (e.g. a deployed
+	// stack like hermes-e2e). Lets the plan reference real provider secrets
+	// without committing their values.
+	SecretSourceNamespace string `json:"secretSourceNamespace,omitempty"`
+	// CopySecrets are secret names copied verbatim from SecretSourceNamespace into
+	// the run namespace before manifests apply (the operator bakes their values
+	// into the per-run broker config, so they must exist in-namespace).
+	CopySecrets []string `json:"copySecrets,omitempty"`
 }
 
 // CaseInput is the prompt + nonce knob for a case.

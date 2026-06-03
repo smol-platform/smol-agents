@@ -10,7 +10,7 @@ samples: 3
 requiredCaps: [agentfs, s3]
 input:
   nonce: true
-  prompt: "Write the exact text {{nonce}} to /var/agentfs/bench-nonce.txt (overwrite). Then on a fresh run, read /var/agentfs/bench-nonce.txt and return its contents verbatim."
-oracle: { kind: fs_roundtrip, file: "/var/agentfs/bench-nonce.txt", match: "{{nonce}}" }
+  prompt: "Write the exact text {{NONCE}} to /var/agentfs/bench-nonce.txt (overwrite). Then on a fresh run, read /var/agentfs/bench-nonce.txt and return its contents verbatim."
+oracle: { kind: fs_roundtrip, file: "/var/agentfs/bench-nonce.txt", match: "{{NONCE}}" }
 gates:
   - { metric: oracle.pass, op: eq, want: true }

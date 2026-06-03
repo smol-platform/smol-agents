@@ -328,7 +328,9 @@ func buildClient(kubeconfig, kubeContext string) (client.Client, error) {
 }
 
 func newRunID() string {
-	return time.Now().UTC().Format("20060102T1504Z") + "-" + agentbench.NewNonce()[:4]
+	// RFC 1123 label: lowercase alphanumerics + '-' only (no 'T'/'Z' separators —
+	// the run ID becomes a Kubernetes namespace name).
+	return time.Now().UTC().Format("20060102-1504") + "-" + agentbench.NewNonce()[:4]
 }
 
 func splitCaps(s string) []string {

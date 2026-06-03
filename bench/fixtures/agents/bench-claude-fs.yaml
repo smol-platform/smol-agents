@@ -1,26 +1,32 @@
 # claude-code harness -> z.ai Anthropic endpoint, with durable AgentFS (kopia -> minio).
-# EffectiveWorkingDir binds the CLI CWD to the AgentFS mount so file writes persist.
-# Backs fs-roundtrip, fs-kill-survive, and (on AWS metal) the kata isolation cases.
+# claude-code runs IN the sandboxed run pod (unlike Hermes tools, which run in the
+# gateway), so this is the path that exercises real in-pod execution + AgentFS.
+# Secret names match the deployed cftest stack (zai-key / agentfs-kopia-creds).
 apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata: { name: bench-claude-fs }
 spec:
   mode: harness
-  instructions: "You are a coding agent. Follow the instruction exactly and write files where asked."
+  instructions: "You are a coding agent. Follow the instruction exactly; write/read files where asked and return only what is requested."
   budget: { maxSteps: 1, maxTokens: 100000, maxWallClockSeconds: 600, maxToolCalls: 32 }
   storage:
     kind: agentfs
     agentfs:
       mountPath: /var/agentfs
+      sizeGiB: 1
       backend: kopia
       backup:
+        schedule: "@every 30s"
         s3:
           bucket: agentfs
+          prefix: bench-claude-fs/
+          region: us-east-1
           endpointURL: http://minio.hermes-e2e.svc.cluster.local:9000
-          credentialsRef: { secretName: minio-creds }
+          credentialsRef: { secretName: agentfs-kopia-creds }
   harness:
     kind: claude-code
+    version: "0.1.15-phases"
     env:
       - { name: ANTHROPIC_BASE_URL, value: "https://api.z.ai/api/anthropic" }
       - { name: ANTHROPIC_MODEL, value: glm-4.6 }
-      - { name: ANTHROPIC_AUTH_TOKEN, secretRef: { secretName: zai-anthropic } }
+      - { name: ANTHROPIC_AUTH_TOKEN, secretRef: { secretName: zai-key, key: ZAI_API_KEY } }
