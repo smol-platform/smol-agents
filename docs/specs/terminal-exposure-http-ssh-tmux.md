@@ -1,5 +1,7 @@
 # Spec: Terminal Exposure — Web (HTTP) + SSH/tmux for Interactive Agents
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D5: **driver-mode in v1** (not observe-only); D9: human identity = a **bundled self-hosted OIDC (Dex/Keycloak)** — the prerequisite is now decided; `ttyd` loopback sidecar + `AttachGrant`. Only `spec.session.interactive` agents get an attach plane (D4). Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status:** RESEARCH + DESIGN. Not built. Grounded against v0.2.0 source (2026-06-03).
 > **Category:** research / design note — proposals below are clearly marked **PROPOSED**.
 > **Audience:** platform maintainers deciding how to expose a *live* agent terminal

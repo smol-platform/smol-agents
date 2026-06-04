@@ -1,5 +1,7 @@
 # Spec: Response Richness — Tool Calls, Real Token/Cost Accounting, and Termination-Message Budgeting
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** Decided: cost in `Status` = integer **milli-USD**, observability-only (never a budget axis); **no oracle/gate ever reads `usage.toolCalls`** (structurally 0 on the harness path); seed is best-effort. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN — proposal, not built.** Authored 2026-06-03 against v0.2.0 source.
 > Scope: populate `Response.ToolCalls` and real token/cost counts from harnesses,
 > thread them into `Status.Steps`/`Status.Usage`, add a cost field path, and add

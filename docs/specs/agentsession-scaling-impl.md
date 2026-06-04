@@ -1,5 +1,7 @@
 # AgentSession Scaling — Implementation Spec
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D10 (mid-scale): the turn-concurrency + retention knobs are required; D4: relationship to `spec.session`; D1: per-namespace NATS ACLs. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: SPEC (implementation-grade) — proposed, NOT built. 2026-06-03.**
 > Category: stub→impl. This is the *implementation* companion to the architecture in
 > [`docs/design/agent-session-scaling.md`](../design/agent-session-scaling.md): exact Go struct

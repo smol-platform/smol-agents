@@ -1,5 +1,7 @@
 # Spec — Agent-to-Agent (`ToolKind=agent`) Child-Run Invoker
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** Validated live (cftest + AWS-kata probes): A2A child-run creation works under runc AND a real kata microVM, and the run egress cage needs the explicit kubernetes-endpoint allow. D1: namespaced RBAC scoping is load-bearing for multi-tenant. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: PROPOSAL / NOT BUILT (v0.2.0).** Implementation-grade spec, code-checked 2026-06-02.
 > **Category:** stub→impl. **Effort: XL.** **Depends-on:** [loop-mode-tools-and-invokers](loop-mode-tools-and-invokers.md) (hard prerequisite — the empty-`Invokers` seam must be closed first).
 >

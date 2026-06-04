@@ -1,5 +1,7 @@
 # Spec: Wire AgentNetwork onto the run / session / serving datapath
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D1+D3: the SmolAgent serving-pod egress floor is **default-on** and mandatory P0; plus the validated apiserver-endpoint allow for A2A (cftest/AWS probes); eBPF datapath enforcement required. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN — not implemented. Target v0.2.x → v0.3.0.** Authored 2026-06-03 against the tree at HEAD.
 >
 > This is an implementation-grade spec. It extends, and does not duplicate, the honesty pass in

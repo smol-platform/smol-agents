@@ -1,5 +1,7 @@
 # Spec: Full support for pi-mono (Mario Zechner's `pi`) over HTTP
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** Decided: rename the `pi` kind → `inflection-pi` (+ deprecation alias); `pi-mono` is the CLI. D2/D4/D5: the resident interactive variant gets `spec.session` + driver-mode attach. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN / PROPOSAL — 2026-06-03.** Nothing in this spec is built yet. It is an implementation-grade plan to add **first-class support for the real `pi` coding agent** (`@earendil-works/pi-coding-agent`, formerly `@mariozechner/pi-coding-agent`) to the smol-agents runtime, **driven over HTTP** as the user explicitly requested. The existing `HarnessKind=pi` is a **false friend** (Inflection AI's hosted Pi) — this spec resolves that naming collision.
 >
 > Builds on (read first, do not duplicate): [harness-authoring.md](../design/harness-authoring.md) — the authoritative "how to add a HarnessKind" + Response-richness contract. This spec is a concrete *instance* of that process plus the HTTP-wrapping, bundle-image, credential, deadline, and terminal pieces specific to pi.

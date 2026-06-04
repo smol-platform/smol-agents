@@ -1,5 +1,7 @@
 # Spec: Run Artifacts — Capture Files OUT to S3 with a Manifest in Status
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D1: artifact S3 prefixes must be per-tenant-scoped; collect/upload in the agentfs **sidecar** (which holds creds+mount), not the untrusted harness container. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status:** DESIGN / proposal. Implementation-grade spec. Grounded against
 > v0.2.0 source (HEAD `0f64158`, read 2026-06-03). Nothing in §4–§6 is built
 > yet unless explicitly marked "(landed)".

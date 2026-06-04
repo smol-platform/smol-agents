@@ -1,5 +1,7 @@
 # Spec: Determinism + eval/replay for harness & loop runs
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D6: replay is **post-GA**; near-term reproducibility = best-effort seed + N-sample distributions; no `usage.toolCalls` gating. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN / SPEC — 2026-06-03 (v0.2.0 source).** Implementation-grade plan for making smol-agents runs **as reproducible as the backend allows**, and adding an offline **record/replay** capability plus an `agent eval` regression-suite runner. Every code claim is cited `file:line` against the tree. Proposals are marked **PROPOSED**; anything already in the tree is called out as **DONE** with the citation so we do not re-build it.
 >
 > **Extends, does not duplicate:** [framework-enhancements.md](../design/framework-enhancements.md) §2D **O2** ("Determinism + eval/replay: wire `Seed` + record/replay harness"). That sketch is the rationale; this file is the build sheet — and it **corrects O2's premise**: the `Seed`-wiring half is already landed (see §2), so the deliverable is now the replay decorator + `eval` subcommand, not the seed plumbing.

@@ -1,5 +1,7 @@
 # Spec — Run-Path Governance (placement, deadlines, concurrency, session resources)
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D10 (mid-scale ~100s): ship **per-tenant concurrency caps + an admission queue with fairness/priority + run-path node autoscaling** (not just soft caps); D3: placement fail-closed, kata enforced; cost = milli-USD obs-only. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > Status: **DESIGN / NOT BUILT (2026-06-03).** This is an implementation-grade
 > proposal. Nothing in §5 (Concrete changes) exists yet unless explicitly
 > labelled "EXISTS". It deepens the P1 backlog item **P1-4** ("no per-tenant

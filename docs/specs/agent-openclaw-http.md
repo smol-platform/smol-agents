@@ -1,5 +1,7 @@
 # Spec: Full Support for OpenClaw ("Molty") over HTTP
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D2 (interactive first-class) + D4 (`spec.session{required,interactive}`) + D5/D9 (driver-mode attach via bundled OIDC) for the daemon; D1+D3: serving-pod egress floor default-on, kata enforced. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > Status: **DESIGN / PROPOSAL** — not built. Grounded against v0.2.0 source (2026-06-03)
 > and against the current OpenClaw docs (fetched 2026-06-03; see *External interface
 > research*).

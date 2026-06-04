@@ -1,5 +1,7 @@
 # Spec: AgentPolicy enforcement — admission gate, reconcile re-validation, output redaction
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D1: multi-tenant makes this **mandatory P0** (not observability-only); redaction is **built**; admission `failurePolicy: Fail` (D3, not Ignore). Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN / NOT BUILT (v0.2.0).** As of HEAD (2026-06-02) `AgentPolicy` is a CRD + Go types with **no controller and zero enforcement**. This spec turns it into a real namespace guardrail: an admission webhook that rejects non-conforming `Agent`/`AgentRun` writes, an `AgentPolicyReconciler` that re-marks dependents when a policy tightens, and a redaction pass applied to `RunResult.Output`/`Steps` on the fold. Every "exists today" claim cites `file:line`; every proposed change is marked **(proposed)**.
 
 > Builds on (read first, do not duplicate): [`docs/design/agentnetwork-agentpolicy-interaction.md`](../design/agentnetwork-agentpolicy-interaction.md) §6.1 + §7. That doc is the honest enforcement-reality survey; this is the implementation-grade plan for the `AgentPolicy` half. The `AgentNetwork` datapath half is [`docs/specs/agentnetwork-datapath-enforcement.md`](./agentnetwork-datapath-enforcement.md).

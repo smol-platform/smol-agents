@@ -1,5 +1,7 @@
 # Spec: Full support for NousResearch Hermes Agent
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D6: provider-session (stable `X-Hermes-Session-Id`) is the cross-turn-memory answer; D1+D10 multi-tenant/mid-scale; an operator-managed `HermesGateway` CRD is now on the roadmap (a gateway is RCE blast-radius). Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN / SPEC — 2026-06-03 (v0.2.0 source).** Implementation-grade plan for taking the `hermes` harness from "chat-only, single-shot, fire-and-forget" to **full Hermes Agent gateway support**: structured tool-call visibility via `/v1/responses`, SSE streaming, async `/v1/runs` with stop-on-cancel, AgentSession-driven stable session ids, and a corrected admission rule for gateway-side memory. Every code claim is cited `file:line` against the tree; every external-API claim is cited to the Hermes docs. Proposals are marked **PROPOSED**; nothing here is implemented yet unless explicitly stated.
 >
 > **Extends, does not duplicate:** [harness-authoring.md](../design/harness-authoring.md) (the `HarnessKind` authoring contract + Response richness contract) and [framework-enhancements.md](../design/framework-enhancements.md) §2A (H1/H2/H4/H5), §2C/2D (A2/A4). This spec is the concrete, ready-to-implement version of those sketches for the Hermes-specific surface. Read those first for the rationale; this file is the build sheet.

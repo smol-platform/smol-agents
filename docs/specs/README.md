@@ -180,13 +180,25 @@ Four nodes are **backbones** — most other specs transitively depend on them, s
 
 Five themed, independently-shippable milestones in dependency order. Each is releasable on its own and respects every `dependsOn`. Effort is the aggregate of included specs (S=1, M=2, L=3, XL=5 story-points as a rough planning weight).
 
+> **✅ Re-prioritized 2026-06-03 per [decisions.md](../design/decisions.md).** **M1 is now
+> mandatory/P0**, not a "multi-tenant prerequisite" (D1): policy enforcement + **built**
+> redaction, AgentNetwork datapath + the serving egress floor **default-ON** (D3, not
+> opt-in), run-governance **per-tenant caps + admission queue + run-path autoscaling**
+> (D10), the **`DynamicCredentialPolicy` CRD** (D8, operator-granted), and NATS
+> per-namespace ACLs. A **bundled self-hosted OIDC (Dex/Keycloak)** + `AttachGrant` join the
+> interactive tier (M4/M5) as a new infra dependency (D5/D9); attach is **driver-mode in
+> v1** (D5), and sessions/attach are gated by the new **`spec.session{required,interactive}`**
+> Agent field (D4). **Loop-resume, HITL mid-run continuation, and replay are post-GA** (D6)
+> — the M5 continuation-pod engine and M2's `HarnessKind=replay` slip past GA. The
+> per-milestone specifics below predate this and are superseded where they conflict.
+
 ### M1 — Containment + Governance floor `(≈ L+L+L+L = 4×L, ~12 pts)`
 
 > **Goal:** make the control plane around the proven runtime real and fail-closed — per-workload egress, policy enforcement, run placement/quota/deadline. This is the multi-tenant prerequisite the fit analysis (§1 gaps 1–3) called out.
 
 - [run-governance.md](run-governance.md) — node placement (kata runs stop failing to schedule), per-agent/per-namespace concurrency, run deadlines, `AgentRunQuota` CRD.
 - [agentpolicy-enforcement.md](agentpolicy-enforcement.md) — the missing `AgentPolicy` controller + admission gate + `ComposePolicies`/redaction (observability-only redaction — **not** containment; see its R1 risk).
-- [agentnetwork-datapath-enforcement.md](agentnetwork-datapath-enforcement.md) — wire `AgentNetwork` allow-lists onto the run/session NetworkPolicy + eBPF tier; add the **opt-in** SmolAgent serving-pod egress floor.
+- [agentnetwork-datapath-enforcement.md](agentnetwork-datapath-enforcement.md) — wire `AgentNetwork` allow-lists onto the run/session NetworkPolicy + eBPF tier; add the **default-on** SmolAgent serving-pod egress floor (D3 — strict/fail-closed).
 - [dynamic-credential-backends.md](dynamic-credential-backends.md) — `DynamicCredentialBackend` CRD (GitHub App mint) producer side; SPIRE-backed broker fail-closed guard. (Consumer datapath co-lands with the AgentNetwork proxy.)
 
 **Exit criteria:** an `AgentPolicy` denies a disallowed provider at admission and redacts a folded `Status.Output` on cftest; an `AgentNetwork` allow-list demonstrably opens one extra egress host (Tier-1 NetworkPolicy on k0s, confirmed by the CNI honoring it); a kata-fc run gets correct `nodeAffinity` + a deadline; concurrency cap holds (soft, eventually-consistent). **Dependency note:** the policy↔network pair co-ships; `dynamic-credential-backends` end-to-end mint is **deferred to M2's** AgentNetwork proxy+SPIRE injection (producer lands here, consumer there — its R1 risk).
@@ -257,6 +269,17 @@ What each named agent needs to reach "full support," and where it lands. (✓ = 
 ---
 
 ## 6. Open decisions for the maintainer
+
+> **✅ RESOLVED 2026-06-03 — see [decisions.md](../design/decisions.md).** A maintainer
+> interview settled the framing + the major forks: **multi-tenant/untrusted** (governance
+> is mandatory/P0), **both batch + interactive first-class**, **strict/fail-closed default**
+> (`failurePolicy=Fail`, serving egress floor default-on, kata enforced, permission flags
+> opt-in-only), **explicit `spec.session{required,interactive}` field**, **driver-mode
+> attach in v1 with a bundled OIDC (Dex/Keycloak)**, **provider-session + workspace memory
+> (loop-resume/HITL deferred)**, **MCP HTTP + stdio-via-cluster-allow-list**,
+> **`DynamicCredentialPolicy` CRD (operator-granted)**, and **mid-scale (~100s concurrent)**.
+> The list below is retained as the rolled-up source; `decisions.md` is now authoritative
+> where they differ.
 
 Rolled up and de-duplicated across all 17 specs, prioritized by **blocking impact**. These shape or block the work above; the maintainer should resolve **P0** before M1 starts and **P1** before the milestone that owns them.
 

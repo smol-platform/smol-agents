@@ -1,5 +1,7 @@
 # Spec: Full support for Anthropic Claude Code (`harness.kind=claude-code`)
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D3: permission flags (`--dangerously-skip-permissions`/`--permission-mode`) are opt-in-only, microVM-gated, never default — `HarnessCLISpec.ExtraFlags` shipped; D6: resumable/resident claude is post-GA, batch `--print` now; D4: `spec.session` field. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **Status: DESIGN / SPEC — 2026-06-03 (against v0.2.0 source).** Implementation-grade specification for taking the `claude-code` harness from a one-shot `claude --print <prompt>` text oracle to a first-class, richly-instrumented, resumable, MCP-capable agent on the smol-agents platform. Nothing in the **Design** / **Concrete changes** sections is in the tree yet unless explicitly marked "BUILT"; every "BUILT" claim is cited to `file:line`.
 >
 > **Extends, does not duplicate:** [harness-authoring.md](../design/harness-authoring.md) (the authoring contract + §8 "per-kind permission / flag passthrough" DESIGN block this spec makes concrete for Claude Code). Read that first — this spec is the Claude-Code-specific deepening of it.

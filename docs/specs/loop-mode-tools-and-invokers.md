@@ -1,5 +1,7 @@
 # Spec — Loop-Mode Tools & Invokers (HTTP + MCP)
 
+> **✅ Decisions resolved 2026-06-03 — see [decisions.md](../design/decisions.md).** D7/D11: MCP = Streamable-HTTP per-agent **plus stdio only from an operator cluster allow-list** of approved images; hand-rolled client. Mandatory for multi-tenant tool use. Where this doc still says OPEN/PROPOSED and conflicts, the decision log wins.
+
 > **STATUS: DESIGN / PROPOSAL — not implemented as of v0.2.0 (2026-06-03).**
 > This spec turns the gap described in
 > [tool-kinds-roadmap.md](../design/tool-kinds-roadmap.md) into an
