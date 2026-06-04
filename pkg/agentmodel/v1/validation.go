@@ -67,6 +67,9 @@ func ValidateAgent(a Agent) error {
 	if err := ValidateStorage(a.Spec.Storage); err != nil {
 		errs = append(errs, fmt.Errorf("spec.storage: %w", err))
 	}
+	if a.Spec.Approval != nil && a.Spec.Approval.ApprovalTimeoutSeconds < 0 {
+		errs = append(errs, errors.New("spec.approval.approvalTimeoutSeconds must be >= 0"))
+	}
 
 	return errors.Join(errs...)
 }
@@ -138,6 +141,9 @@ func ValidateAgentRun(r AgentRun) error {
 	}
 	for i, in := range r.Spec.Inputs {
 		errs = append(errs, validateRunInput(i, in)...)
+	}
+	if r.Spec.Decision != nil && r.Spec.Decision.Token == "" {
+		errs = append(errs, errors.New("spec.decision.token is required"))
 	}
 	return errors.Join(errs...)
 }

@@ -101,6 +101,10 @@ type AgentRunReconciler struct {
 	// ActiveDeadlineSeconds hard backstop (0 → 1.5). Set from
 	// --run-deadline-multiplier.
 	RunDeadlineMultiplier float64
+	// DefaultApprovalTimeout expires an un-decided pre-run approval when the
+	// Agent's ApprovalPolicy sets no timeout (0 → 1h). Set from
+	// --default-approval-timeout.
+	DefaultApprovalTimeout time.Duration
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -151,6 +155,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	pod := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod)
 	if apierrors.IsNotFound(err) {
+		// Pre-run approval gate (M5): hold the run in RequiresAction until a
+		// human approves via spec.decision, before any pod or cost exists. The
+		// cancel check above still wins. handled ⇒ status is set, return now.
+		if handled, gres, gerr := r.preRunApproval(ctx, run, agent); handled {
+			return gres, gerr
+		}
+
 		// Resolve run-pod isolation fail-closed before any prep work: a policy
 		// violation (runc without operator opt-in) fails the run; a not-yet-
 		// registered hardened RuntimeClass holds it Pending rather than
@@ -301,6 +312,82 @@ func (r *AgentRunReconciler) markPending(run *amv1.AgentRun, reason, msg string)
 	run.Status.State = pure.PhasePending
 	run.Status.TerminationReason = msg
 	run.Status.StartedAt = nil
+}
+
+func (r *AgentRunReconciler) markRequiresAction(run *amv1.AgentRun, pa *pure.PendingAction) {
+	run.Status.State = pure.PhaseRequiresAction
+	run.Status.PendingAction = pa
+	run.Status.TerminationReason = "" // non-terminal; clear any stale Pending hint
+}
+
+// approvalTimeout resolves the effective pre-run approval TTL: the Agent's
+// override, else the operator default, else 1h.
+func (r *AgentRunReconciler) approvalTimeout(agent *amv1.Agent) time.Duration {
+	if agent.Spec.Approval != nil && agent.Spec.Approval.ApprovalTimeoutSeconds > 0 {
+		return time.Duration(agent.Spec.Approval.ApprovalTimeoutSeconds) * time.Second
+	}
+	if r.DefaultApprovalTimeout > 0 {
+		return r.DefaultApprovalTimeout
+	}
+	return time.Hour
+}
+
+// preRunApproval implements the M5 pre-run approval gate. It returns handled=true
+// (with the result/err to return) when the run is waiting for, denied by, or has
+// expired an approval — NO pod is created in those cases. handled=false means the
+// run is ungated or approved and reconcile should proceed to create the pod.
+func (r *AgentRunReconciler) preRunApproval(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) (handled bool, res ctrl.Result, err error) {
+	gated := agent.Spec.Approval != nil && agent.Spec.Approval.RequireApprovalBeforeRun
+	if run.Spec.RequireApprovalBeforeRun != nil {
+		gated = *run.Spec.RequireApprovalBeforeRun // per-run override
+	}
+	if !gated {
+		return false, ctrl.Result{}, nil
+	}
+
+	// A decision only counts when its token matches the pending one (or none has
+	// been minted yet) — a stale/mismatched token is ignored, keeping the run
+	// parked rather than acting on an approval for a different state.
+	tokenMatches := run.Status.PendingAction == nil ||
+		(run.Spec.Decision != nil && run.Spec.Decision.Token == run.Status.PendingAction.Token)
+
+	if d := run.Spec.Decision; d != nil && tokenMatches {
+		if d.Approve {
+			run.Status.PendingAction = nil // clear the gate; pod-create proceeds
+			return false, ctrl.Result{}, nil
+		}
+		r.markTerminal(run, pure.PhaseCancelled, "decision:denied:"+d.Reason)
+		out, e := r.updateRunStatus(ctx, run, ctrl.Result{})
+		return true, out, e
+	}
+
+	// No matching decision yet — mint the pending token on first entry.
+	if run.Status.PendingAction == nil {
+		token := string(run.UID)
+		if token == "" {
+			token = run.Name
+		}
+		r.markRequiresAction(run, &pure.PendingAction{
+			Kind:        "pre-run",
+			Token:       token,
+			RequestedAt: metav1.Now(),
+			Reason:      "awaiting human approval before run",
+		})
+		out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: r.approvalTimeout(agent)})
+		return true, out, e
+	}
+
+	// Already pending — expire on TTL.
+	if !run.Status.PendingAction.RequestedAt.IsZero() &&
+		time.Since(run.Status.PendingAction.RequestedAt.Time) >= r.approvalTimeout(agent) {
+		r.markTerminal(run, pure.PhaseExpired, "approval:timeout")
+		out, e := r.updateRunStatus(ctx, run, ctrl.Result{})
+		return true, out, e
+	}
+
+	// Still waiting (incl. a stale/mismatched decision token) — requeue near TTL.
+	out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
+	return true, out, e
 }
 
 func (r *AgentRunReconciler) markRunning(run *amv1.AgentRun) {

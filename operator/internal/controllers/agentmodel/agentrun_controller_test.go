@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -273,6 +274,122 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.TerminationReason != "harness: http 502: upstream refused" {
 		t.Errorf("error should win, got %q", run.Status.TerminationReason)
+	}
+}
+
+func getRun(t *testing.T, r *AgentRunReconciler, ns, name string) *amv1.AgentRun {
+	t.Helper()
+	got := &amv1.AgentRun{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, got); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	return got
+}
+
+func runPodExists(r *AgentRunReconciler, ns, name string) bool {
+	return r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, &corev1.Pod{}) == nil
+}
+
+// M5.3: a gated run parks in RequiresAction (no pod, no cost) until a token-
+// matched approval lets it proceed; deny → Cancelled; stale token ignored; TTL
+// → Expired.
+func TestPreRunApproval_GateThenApprove(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 3600}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile 1: %v", err)
+	}
+	got := getRun(t, r, "tenant-a", "run-001")
+	if got.Status.State != pure.PhaseRequiresAction {
+		t.Fatalf("want RequiresAction, got %q", got.Status.State)
+	}
+	if got.Status.PendingAction == nil || got.Status.PendingAction.Token == "" || got.Status.PendingAction.Kind != "pre-run" {
+		t.Fatalf("pending token not minted: %+v", got.Status.PendingAction)
+	}
+	if runPodExists(r, "tenant-a", "run-001") {
+		t.Fatalf("no pod must exist while awaiting approval")
+	}
+
+	got.Spec.Decision = &pure.Decision{Token: got.Status.PendingAction.Token, Approve: true, DecidedBy: "ops"}
+	if err := r.Update(context.Background(), got); err != nil {
+		t.Fatalf("patch decision: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile 2: %v", err)
+	}
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State == pure.PhaseRequiresAction {
+		t.Fatalf("approval should clear the gate; still RequiresAction")
+	}
+	if after.Status.PendingAction != nil {
+		t.Errorf("PendingAction should be cleared after approval, got %+v", after.Status.PendingAction)
+	}
+}
+
+func TestPreRunApproval_Deny(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 3600}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	_, _ = r.Reconcile(context.Background(), req)
+	got := getRun(t, r, "tenant-a", "run-001")
+	got.Spec.Decision = &pure.Decision{Token: got.Status.PendingAction.Token, Approve: false, Reason: "nope"}
+	if err := r.Update(context.Background(), got); err != nil {
+		t.Fatalf("patch decision: %v", err)
+	}
+	_, _ = r.Reconcile(context.Background(), req)
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State != pure.PhaseCancelled {
+		t.Fatalf("deny → want Cancelled, got %q", after.Status.State)
+	}
+}
+
+func TestPreRunApproval_StaleTokenIgnored(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 3600}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	_, _ = r.Reconcile(context.Background(), req)
+	got := getRun(t, r, "tenant-a", "run-001")
+	got.Spec.Decision = &pure.Decision{Token: "wrong-token", Approve: true}
+	if err := r.Update(context.Background(), got); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	_, _ = r.Reconcile(context.Background(), req)
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State != pure.PhaseRequiresAction {
+		t.Fatalf("stale token must keep the run parked, got %q", after.Status.State)
+	}
+}
+
+func TestPreRunApproval_ExpireOnTTL(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 1}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	// Seed an already-old pending action (the fake client may not persist an
+	// initial Status, so set it explicitly).
+	seed := getRun(t, r, "tenant-a", "run-001")
+	seed.Status.State = pure.PhaseRequiresAction
+	seed.Status.PendingAction = &pure.PendingAction{
+		Kind: "pre-run", Token: "tok1",
+		RequestedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+	}
+	if err := r.Status().Update(context.Background(), seed); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State != pure.PhaseExpired {
+		t.Fatalf("past-TTL approval → want Expired, got %q", after.Status.State)
 	}
 }
 

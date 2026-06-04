@@ -84,6 +84,10 @@ type AgentSpec struct {
 	Identity IdentitySpec `json:"identity,omitempty"`
 	Sandbox  SandboxSpec  `json:"sandbox,omitempty"`
 
+	// Approval, when set, gates this Agent's runs behind a human pre-run
+	// approval (M5). +optional
+	Approval *ApprovalPolicy `json:"approval,omitempty"`
+
 	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
 	// controller; cancel deletes the pod immediately. Slated for removal.
 	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`
@@ -245,6 +249,14 @@ type AgentRunSpec struct {
 	// +optional
 	PlacementFallback string `json:"placementFallback,omitempty"`
 
+	// Decision is a human's pre-run approval verdict (M5), patched onto a run
+	// that is waiting in RequiresAction. +optional
+	Decision *Decision `json:"decision,omitempty"`
+
+	// RequireApprovalBeforeRun overrides the Agent's ApprovalPolicy for THIS run
+	// (nil = inherit). +optional
+	RequireApprovalBeforeRun *bool `json:"requireApprovalBeforeRun,omitempty"`
+
 	// MemoryRetrieverRef is the namespace-local name of a MemoryRetriever CR
 	// whose filesystem store should be mounted into the agent pod when
 	// MemoryRetriever.spec.mount.enabled is true (R-MEM-FS-2).
@@ -328,6 +340,10 @@ type RunStatus struct {
 	Usage             Usage           `json:"usage"`
 	TerminationReason string          `json:"terminationReason,omitempty"`
 	Output            json.RawMessage `json:"output,omitempty"`
+
+	// PendingAction is set while State==RequiresAction (M5): it records the
+	// approval token a human must echo in spec.decision. +optional
+	PendingAction *PendingAction `json:"pendingAction,omitempty"`
 }
 
 // AgentSession — long-running aggregation. R-AM-API-5.
@@ -376,4 +392,43 @@ type AgentPolicySpec struct {
 
 type RedactionPolicy struct {
 	Patterns []string `json:"patterns,omitempty"` // regex patterns
+}
+
+// ApprovalPolicy gates an Agent's runs behind a human pre-run approval. Only the
+// cheap pre-run gate ships near-term — the run pauses in RequiresAction before
+// any pod or cost exists. Loop-mode mid-run continuation is deferred post-GA
+// (D6), so this carries only the pre-run knobs.
+type ApprovalPolicy struct {
+	// RequireApprovalBeforeRun holds every run for this Agent in RequiresAction
+	// until a human approves it via the run's spec.decision.
+	// +optional
+	RequireApprovalBeforeRun bool `json:"requireApprovalBeforeRun,omitempty"`
+	// ApprovalTimeoutSeconds expires an un-decided run after this long. 0 falls
+	// back to the operator's --default-approval-timeout.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ApprovalTimeoutSeconds int32 `json:"approvalTimeoutSeconds,omitempty"`
+}
+
+// Decision is a human's verdict on a gated run, patched onto the run spec. Token
+// must match Status.PendingAction.Token — a stale/mismatched token is ignored so
+// an approval can't apply to a different pending state.
+type Decision struct {
+	Token   string `json:"token"`
+	Approve bool   `json:"approve"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	DecidedBy string `json:"decidedBy,omitempty"`
+}
+
+// PendingAction records why a run sits in RequiresAction. Near-term the only
+// Kind is "pre-run"; loop-mode "tool-call" gating (with Tool/Arguments/StepIndex)
+// is deferred post-GA (D6).
+type PendingAction struct {
+	Kind        string      `json:"kind"`
+	Token       string      `json:"token"`
+	RequestedAt metav1.Time `json:"requestedAt"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
 }

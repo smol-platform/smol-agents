@@ -9,6 +9,8 @@ package v1
 // "deny all" — a namespace with no policies, or policies that leave an axis
 // empty, imposes nothing on that axis. This keeps the default open and makes
 // adding a policy a deliberate tightening.
+//
+// +kubebuilder:object:generate=false
 type EffectivePolicy struct {
 	// Providers is the union of every policy's AllowedProviders. Empty ⇒ any
 	// provider is allowed (no policy constrained providers).
