@@ -236,6 +236,15 @@ type AgentRunSpec struct {
 
 	Cancel bool `json:"cancel,omitempty"`
 
+	// PlacementFallback controls what happens when the run's sandbox class is a
+	// microVM (kata) but no AgentNodePool provides that isolation. "Pending"
+	// (default, fail-closed) holds the run until capacity appears; "Schedule"
+	// lets it schedule without node affinity (a dev/unlabelled-cluster escape
+	// hatch — the RuntimeClass is still pinned).
+	// +kubebuilder:validation:Enum=Pending;Schedule
+	// +optional
+	PlacementFallback string `json:"placementFallback,omitempty"`
+
 	// MemoryRetrieverRef is the namespace-local name of a MemoryRetriever CR
 	// whose filesystem store should be mounted into the agent pod when
 	// MemoryRetriever.spec.mount.enabled is true (R-MEM-FS-2).

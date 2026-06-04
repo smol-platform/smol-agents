@@ -21,6 +21,7 @@ import (
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
@@ -96,6 +97,10 @@ type AgentRunReconciler struct {
 	AllowHostRuntime bool
 	// MaxConcurrentReconciles bounds parallel run reconciles (default 1).
 	MaxConcurrentReconciles int
+	// RunDeadlineMultiplier scales the run's wall-clock budget into the pod's
+	// ActiveDeadlineSeconds hard backstop (0 → 1.5). Set from
+	// --run-deadline-multiplier.
+	RunDeadlineMultiplier float64
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -160,6 +165,20 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 15 * time.Second})
 		}
 
+		// Resolve node placement for the sandbox class. A KVM class with no
+		// matching AgentNodePool holds the run Pending (fail-closed) rather than
+		// scheduling a kata pod that can never run — unless PlacementFallback is
+		// "Schedule" (a dev/unlabelled-cluster escape hatch). R-PROV-2 / D3.
+		placement, _, plErr := features.ResolvePlacementForClass(ctx, r.Client, sbClass)
+		if plErr != nil {
+			return ctrl.Result{}, fmt.Errorf("resolve placement: %w", plErr)
+		}
+		if placement == nil && builders.RequiresKVM(sbClass) && run.Spec.PlacementFallback != "Schedule" {
+			r.markPending(run, "NoKVMCapacity",
+				fmt.Sprintf("no AgentNodePool provides isolation %q", sbClass))
+			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
+		}
+
 		// Resolve the loop-mode ModelProvider + gather every secret the broker
 		// must serve (harness env secretRef + the provider API key). A missing
 		// source Secret / ModelProvider keeps the run Pending and retries.
@@ -187,6 +206,16 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// Pin the resolved sandbox RuntimeClass so the run executes under a real
 		// isolation boundary (default kata-fc), not the cluster-default runtime.
 		builders.ApplyRunSandbox(desired, sbClass)
+
+		// Bind the pod to its kata node pool (no-op for runc / no pool) and set a
+		// hard ActiveDeadlineSeconds backstop from the effective wall-clock budget
+		// (BudgetOverride wins over the Agent's budget).
+		builders.ApplyRunPodPlacement(desired, placement)
+		effWall := agent.Spec.Budget.MaxWallClockSeconds
+		if run.Spec.BudgetOverride != nil && run.Spec.BudgetOverride.MaxWallClockSeconds > 0 {
+			effWall = run.Spec.BudgetOverride.MaxWallClockSeconds
+		}
+		builders.ApplyRunDeadline(desired, effWall, r.RunDeadlineMultiplier)
 
 		// Attach filesystem MemoryRetriever mount if referenced (R-MEM-FS-2).
 		mountInput, mountEnabled, mountErr := memoryFSRetriever(ctx, r.Client, run)
