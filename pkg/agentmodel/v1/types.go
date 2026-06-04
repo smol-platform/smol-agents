@@ -334,6 +334,11 @@ type ToolCallRecord struct {
 	Result     json.RawMessage `json:"result,omitempty"`
 	Error      string          `json:"error,omitempty"`
 	DurationMs int64           `json:"durationMs"`
+	// ArgsBytes / ResultBytes record the original payload sizes when the
+	// termination-message clamp elides Arguments/Result, so the trace summary
+	// stays honest about what was dropped (M2.3).
+	ArgsBytes   int64 `json:"argsBytes,omitempty"`
+	ResultBytes int64 `json:"resultBytes,omitempty"`
 }
 
 // RunStatus is the live state of an AgentRun.

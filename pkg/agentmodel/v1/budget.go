@@ -38,6 +38,9 @@ type Usage struct {
 	Tokens        int64         `json:"tokens"`
 	ToolCalls     int32         `json:"toolCalls"`
 	WallClockUsed time.Duration `json:"wallClockUsed"`
+	// CostUSDMilli is the backend-reported cost in integer milli-USD,
+	// observability only — never read by AllowsStep or any gate.
+	CostUSDMilli int64 `json:"costUSDMilli,omitempty"`
 }
 
 // Validate ensures all four budget axes are positive (or zero, for

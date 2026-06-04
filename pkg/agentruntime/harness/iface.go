@@ -46,22 +46,28 @@ type Request struct {
 //
 // RESPONSE RICHNESS CONTRACT (authoritative — see docs/design/harness-authoring.md):
 //   - Output is ALWAYS set.
-//   - TokensIn/TokensOut are best-effort and 0 for ALL CLI kinds
-//     (claude-code/codex/aider/goose/generic-cli) — only HTTP kinds with an
-//     OpenAI-style usage block (Hermes) populate them.
-//   - ToolCalls is populated by NO harness today (forward-compat field).
+//   - TokensIn/TokensOut/CostUSDMilli/ToolCalls are BEST-EFFORT: a harness
+//     populates them when it can parse its backend's usage/event stream
+//     (Hermes; claude-code/codex with --output-format json; pi-mono) and leaves
+//     them zero/empty otherwise. They are observability only — cost is never a
+//     budget axis, and no gate/oracle reads ToolCalls (structurally 0 for kinds
+//     that emit no tool stream).
 //   - DurationMs is measured by the executor's clock.
-//
-// Callers needing token or tool-call accounting must use Hermes or loop mode.
 type Response struct {
 	// Output is the harness's final answer (raw bytes). Always set.
 	Output []byte
 
-	// TokensIn / TokensOut: best-effort; 0 for all CLI kinds (see contract above).
+	// TokensIn / TokensOut: best-effort, set when the harness parses a usage
+	// block (see contract above).
 	TokensIn  int64
 	TokensOut int64
 
-	// ToolCalls: forward-compat; populated by no harness today (see contract above).
+	// CostUSDMilli is the backend-reported cost in integer milli-USD,
+	// observability only — never a budget axis. Best-effort.
+	CostUSDMilli int64
+
+	// ToolCalls: best-effort tool-call trace parsed from the backend (see
+	// contract above).
 	ToolCalls []v1.ToolCallRecord
 
 	// DurationMs measured by the executor's clock.

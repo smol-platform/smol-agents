@@ -395,7 +395,9 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 	endedAt := e.Clock.Now()
 
 	usage := v1.Usage{Steps: 1, Tokens: resp.TokensIn + resp.TokensOut,
-		ToolCalls: int32(len(resp.ToolCalls)), WallClockUsed: e.Clock.Since(startedAt)}
+		ToolCalls:     int32(len(resp.ToolCalls)),
+		CostUSDMilli:  resp.CostUSDMilli, // observability only — not read by AllowsStep
+		WallClockUsed: e.Clock.Since(startedAt)}
 
 	// One Step captures the whole bounded call. ToolCalls carries the harness's
 	// own tool log when it surfaces one (e.g. Hermes via the Responses API);
