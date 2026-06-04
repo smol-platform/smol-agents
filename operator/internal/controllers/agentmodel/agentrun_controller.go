@@ -251,7 +251,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 		// Cage egress: a default-deny NetworkPolicy (blocks instance-metadata /
 		// arbitrary outbound) must exist before the pod schedules.
-		if err := r.ensureRunEgressPolicy(ctx, run); err != nil {
+		if err := r.ensureRunEgressPolicy(ctx, run, agent); err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure egress policy: %w", err)
 		}
 
@@ -449,13 +449,17 @@ func (r *AgentRunReconciler) resolveRunSandbox(ctx context.Context, agent *amv1.
 
 // ensureRunEgressPolicy creates the run pod's default-deny egress NetworkPolicy
 // (idempotent), owned by the run so it is GC'd with it.
-func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv1.AgentRun) error {
-	np := builders.BuildAgentRunEgressPolicy(run)
+func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) error {
+	netPlan, err := resolveBoundNetworks(ctx, r.Client, agent)
+	if err != nil {
+		return err
+	}
+	np := builders.BuildAgentRunEgressPolicyWithPlan(run, netPlan)
 	if err := ctrl.SetControllerReference(run, np, r.Scheme); err != nil {
 		return err
 	}
 	var existing networkingv1.NetworkPolicy
-	err := r.Get(ctx, types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, &existing)
+	err = r.Get(ctx, types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, &existing)
 	if apierrors.IsNotFound(err) {
 		return r.Create(ctx, np)
 	}

@@ -18,6 +18,8 @@
 package builders
 
 import (
+	"net/netip"
+
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +27,8 @@ import (
 	"k8s.io/utils/ptr"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	purev1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/plan"
 	pkgsandbox "github.com/smol-platform/smol-agents/pkg/sandbox"
 )
 
@@ -58,14 +62,85 @@ func ApplyRunSandbox(pod *corev1.Pod, class string) {
 // link-local / instance-metadata range blocked everywhere. A tighter per-Agent
 // allow-list (AgentNetwork CIDRs) can layer on top later.
 func BuildAgentRunEgressPolicy(run *amv1.AgentRun) *networkingv1.NetworkPolicy {
-	return buildEgressPolicy(run.Name+"-egress", run.Namespace, "agent-run",
-		map[string]string{"agents.smol-agents.ai/run": run.Name})
+	return BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+}
+
+// BuildAgentRunEgressPolicyWithPlan layers a bound NetworkPlan's allow-list onto
+// the run's egress cage (an empty plan is the unchanged default-deny floor).
+func BuildAgentRunEgressPolicyWithPlan(run *amv1.AgentRun, p plan.NetworkPlan) *networkingv1.NetworkPolicy {
+	return BuildEgressPolicyWithPlan(run.Name+"-egress", run.Namespace, "agent-run",
+		map[string]string{"agents.smol-agents.ai/run": run.Name}, p)
 }
 
 // BuildAgentSessionEgressPolicy is the same default-deny egress cage for a
 // long-running AgentSession worker pod.
 func BuildAgentSessionEgressPolicy(name, namespace string, podSelector map[string]string) *networkingv1.NetworkPolicy {
-	return buildEgressPolicy(name+"-egress", namespace, "agent-session", podSelector)
+	return BuildAgentSessionEgressPolicyWithPlan(name, namespace, podSelector, plan.NetworkPlan{})
+}
+
+// BuildAgentSessionEgressPolicyWithPlan layers a bound NetworkPlan onto a session
+// worker's egress cage.
+func BuildAgentSessionEgressPolicyWithPlan(name, namespace string, podSelector map[string]string, p plan.NetworkPlan) *networkingv1.NetworkPolicy {
+	return BuildEgressPolicyWithPlan(name+"-egress", namespace, "agent-session", podSelector, p)
+}
+
+// BuildEgressPolicyWithPlan renders the egress cage, layering a NetworkPlan's
+// allow-list on top of the default-deny floor. With an empty plan it is
+// byte-identical to the default-deny floor (DNS + in-cluster + public 80/443).
+// With allow rules it REPLACES the blanket public 80/443 rule with
+// per-(CIDR,ports,proto) rules, so a bound AgentNetwork *tightens* (never
+// widens) what the pod can reach — DNS, in-cluster, and the metadata block are
+// always preserved. An allow CIDR overlapping the metadata range is dropped
+// (defense; the plan compositor already rejects them).
+func BuildEgressPolicyWithPlan(name, namespace, component string, podSelector map[string]string, p plan.NetworkPlan) *networkingv1.NetworkPolicy {
+	np := buildEgressPolicy(name, namespace, component, podSelector)
+	if len(p.AllowRules) == 0 {
+		return np // unchanged floor
+	}
+	// Keep DNS (rule 0) + in-cluster (rule 1); replace the public rule (rule 2)
+	// with the explicit per-allow rules.
+	egress := np.Spec.Egress[:2]
+	for _, r := range p.AllowRules {
+		if overlapsMetadata(r.CIDR) {
+			continue
+		}
+		egress = append(egress, egressRuleFromAllow(r))
+	}
+	np.Spec.Egress = egress
+	return np
+}
+
+// egressRuleFromAllow translates one allow-list entry into a NetworkPolicy
+// egress rule. Empty Ports = any port; an empty protocol defaults to TCP when
+// ports are listed.
+func egressRuleFromAllow(r purev1.EgressRule) networkingv1.NetworkPolicyEgressRule {
+	rule := networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: r.CIDR}}},
+	}
+	proto := corev1.ProtocolTCP
+	if r.Protocol == "udp" {
+		proto = corev1.ProtocolUDP
+	}
+	for _, port := range r.Ports {
+		pp := intstr.FromInt32(port)
+		rule.Ports = append(rule.Ports, networkingv1.NetworkPolicyPort{Protocol: &proto, Port: &pp})
+	}
+	return rule
+}
+
+// overlapsMetadata reports whether cidr intersects the 169.254/16 link-local
+// (instance-metadata) range — such a rule is never honored on the egress floor.
+func overlapsMetadata(cidr string) bool {
+	ll := netip.MustParsePrefix(metadataBlockedCIDR)
+	pfx, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		if addr, aerr := netip.ParseAddr(cidr); aerr == nil {
+			pfx = netip.PrefixFrom(addr, addr.BitLen())
+		} else {
+			return false // unparseable — let validation handle it
+		}
+	}
+	return ll.Overlaps(pfx)
 }
 
 // buildEgressPolicy renders the shared default-deny-egress NetworkPolicy: DNS +

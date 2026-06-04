@@ -86,9 +86,10 @@ func TestResolveRunSandbox(t *testing.T) {
 
 func TestEnsureRunEgressPolicy(t *testing.T) {
 	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a1", Namespace: "tenant-a"}}
 	r := sandboxReconciler(t, nil, run)
 
-	if err := r.ensureRunEgressPolicy(context.Background(), run); err != nil {
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent); err != nil {
 		t.Fatalf("ensureRunEgressPolicy: %v", err)
 	}
 	var np networkingv1.NetworkPolicy
@@ -99,7 +100,7 @@ func TestEnsureRunEgressPolicy(t *testing.T) {
 		t.Errorf("egress NP not owned by the run: %+v", np.OwnerReferences)
 	}
 	// Idempotent.
-	if err := r.ensureRunEgressPolicy(context.Background(), run); err != nil {
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent); err != nil {
 		t.Fatalf("second ensureRunEgressPolicy: %v", err)
 	}
 }
