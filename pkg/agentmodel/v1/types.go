@@ -93,6 +93,10 @@ type AgentSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	MaxConcurrentRuns int32 `json:"maxConcurrentRuns,omitempty"`
 
+	// Session, when set, marks the Agent as requiring a resident session and/or
+	// an interactive attach plane (D4). +optional
+	Session *SessionSpec `json:"session,omitempty"`
+
 	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
 	// controller; cancel deletes the pod immediately. Slated for removal.
 	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`
@@ -418,6 +422,18 @@ type ApprovalPolicy struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	ApprovalTimeoutSeconds int32 `json:"approvalTimeoutSeconds,omitempty"`
+}
+
+// SessionSpec marks an Agent as requiring a resident session and/or an
+// interactive attach plane (D4). Required ⇒ a warm session pod that outlives a
+// single turn; Interactive ⇒ a human attach plane (which implies Required and,
+// at the serving layer, a non-Knative deployment). One-shot AgentRuns leave
+// this nil.
+type SessionSpec struct {
+	// +optional
+	Required bool `json:"required,omitempty"`
+	// +optional
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 // Decision is a human's verdict on a gated run, patched onto the run spec. Token

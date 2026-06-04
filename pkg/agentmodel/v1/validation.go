@@ -70,6 +70,9 @@ func ValidateAgent(a Agent) error {
 	if a.Spec.Approval != nil && a.Spec.Approval.ApprovalTimeoutSeconds < 0 {
 		errs = append(errs, errors.New("spec.approval.approvalTimeoutSeconds must be >= 0"))
 	}
+	if a.Spec.Session != nil && a.Spec.Session.Interactive && !a.Spec.Session.Required {
+		errs = append(errs, errors.New("spec.session.interactive requires session.required=true (an attach plane needs a resident pod)"))
+	}
 
 	return errors.Join(errs...)
 }

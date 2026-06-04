@@ -57,6 +57,25 @@ func TestValidateAgent_ApprovalTimeout(t *testing.T) {
 	}
 }
 
+// M4.3: an interactive session needs a resident pod (required=true).
+func TestValidateAgent_Session(t *testing.T) {
+	base := AgentSpec{
+		Model:        ModelRef{ProviderRef: "p", Name: "m"},
+		Instructions: "x",
+		Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0},
+	}
+	bad := base
+	bad.Session = &SessionSpec{Interactive: true} // interactive without required
+	if err := ValidateAgent(Agent{Spec: bad}); err == nil {
+		t.Errorf("interactive session without required must be rejected")
+	}
+	ok := base
+	ok.Session = &SessionSpec{Required: true, Interactive: true}
+	if err := ValidateAgent(Agent{Spec: ok}); err != nil {
+		t.Errorf("required+interactive must pass: %v", err)
+	}
+}
+
 func TestValidateAgentRun_DecisionToken(t *testing.T) {
 	run := AgentRun{Spec: AgentRunSpec{AgentRef: "a", Input: json.RawMessage(`{}`)}}
 	run.Spec.Decision = &Decision{Approve: true} // no token
