@@ -120,9 +120,14 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	// Egress cage selecting the worker pods.
-	np := builders.BuildAgentSessionEgressPolicy(synthetic.Name, session.Namespace,
-		map[string]string{"agents.smol-agents.ai/run": synthetic.Name})
+	// Egress cage selecting the worker pods, with any bound AgentNetwork
+	// allow-list layered on (M1.16) — empty plan = the default-deny floor.
+	netPlan, err := resolveBoundNetworks(ctx, r.Client, agent)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("resolve bound networks: %w", err)
+	}
+	np := builders.BuildAgentSessionEgressPolicyWithPlan(synthetic.Name, session.Namespace,
+		map[string]string{"agents.smol-agents.ai/run": synthetic.Name}, netPlan)
 	if err := r.ensureOwned(ctx, session, np); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session egress: %w", err)
 	}
