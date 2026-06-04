@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -180,7 +181,19 @@ func ValidateAgentPolicy(p AgentPolicy) error {
 		return errors.New("name is required")
 	}
 	if p.Spec.MaxBudget != nil {
-		return p.Spec.MaxBudget.Validate()
+		if err := p.Spec.MaxBudget.Validate(); err != nil {
+			return err
+		}
+	}
+	// Reject a redaction pattern that does not compile, so a bad pattern is
+	// caught at admission rather than silently skipped (or panicking) on the
+	// fold path. Go's regexp is RE2, so compilation is the only failure mode.
+	if p.Spec.Redaction != nil {
+		for i, pat := range p.Spec.Redaction.Patterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				return fmt.Errorf("spec.redaction.patterns[%d]: %w", i, err)
+			}
+		}
 	}
 	return nil
 }
