@@ -88,6 +88,11 @@ type AgentSpec struct {
 	// approval (M5). +optional
 	Approval *ApprovalPolicy `json:"approval,omitempty"`
 
+	// MaxConcurrentRuns caps how many of this Agent's runs may be Running at
+	// once (0 = unlimited). Enforced as a soft admission gate (D10). +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxConcurrentRuns int32 `json:"maxConcurrentRuns,omitempty"`
+
 	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
 	// controller; cancel deletes the pod immediately. Slated for removal.
 	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`

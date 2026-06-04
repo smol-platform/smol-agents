@@ -290,6 +290,69 @@ func runPodExists(r *AgentRunReconciler, ns, name string) bool {
 	return r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, &corev1.Pod{}) == nil
 }
 
+// M1.12: the per-tenant concurrency gate holds a run Pending when the namespace
+// (or Agent) is at its Running-runs cap, and admits otherwise.
+func mkRun(name, ns, ref string) *amv1.AgentRun {
+	r := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+	r.Spec.AgentRef = ref
+	r.Spec.Input = []byte(`{}`)
+	return r
+}
+
+func TestAdmitRunConcurrency_NamespaceCap(t *testing.T) {
+	quota := &amv1.AgentRunQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "q", Namespace: "tenant-a"},
+		Spec:       pure.AgentRunQuotaSpec{MaxConcurrentRuns: 2},
+	}
+	rec := newRunReconcilerForTest(t, interceptor.Funcs{}, quota, mkRun("run-a", "tenant-a", "alice"), mkRun("run-b", "tenant-a", "bob"))
+	for _, n := range []string{"run-a", "run-b"} { // seed both Running
+		got := getRun(t, rec, "tenant-a", n)
+		got.Status.State = pure.PhaseRunning
+		if err := rec.Status().Update(context.Background(), got); err != nil {
+			t.Fatalf("seed running: %v", err)
+		}
+	}
+	newRun := mkRun("run-c", "tenant-a", "carol")
+	handled, _, _ := rec.admitRunConcurrency(context.Background(), newRun, harnessAgent("carol", "tenant-a"))
+	if !handled || newRun.Status.State != pure.PhasePending {
+		t.Fatalf("at-cap run must be held Pending; handled=%v state=%q", handled, newRun.Status.State)
+	}
+	if newRun.Status.TerminationReason != "namespace at concurrency cap 2" {
+		t.Errorf("reason = %q", newRun.Status.TerminationReason)
+	}
+}
+
+func TestAdmitRunConcurrency_UnderCapAdmits(t *testing.T) {
+	quota := &amv1.AgentRunQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "q", Namespace: "tenant-a"},
+		Spec:       pure.AgentRunQuotaSpec{MaxConcurrentRuns: 5},
+	}
+	rec := newRunReconcilerForTest(t, interceptor.Funcs{}, quota, mkRun("run-a", "tenant-a", "alice"))
+	got := getRun(t, rec, "tenant-a", "run-a")
+	got.Status.State = pure.PhaseRunning
+	_ = rec.Status().Update(context.Background(), got)
+
+	handled, _, _ := rec.admitRunConcurrency(context.Background(), mkRun("run-b", "tenant-a", "bob"), harnessAgent("bob", "tenant-a"))
+	if handled {
+		t.Fatalf("under cap must admit (handled=false)")
+	}
+}
+
+func TestAdmitRunConcurrency_PerAgentCap(t *testing.T) {
+	rec := newRunReconcilerForTest(t, interceptor.Funcs{}, mkRun("run-a", "tenant-a", "alice"))
+	got := getRun(t, rec, "tenant-a", "run-a")
+	got.Status.State = pure.PhaseRunning
+	_ = rec.Status().Update(context.Background(), got)
+
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.MaxConcurrentRuns = 1 // alice already has 1 Running
+	newRun := mkRun("run-b", "tenant-a", "alice")
+	handled, _, _ := rec.admitRunConcurrency(context.Background(), newRun, agent)
+	if !handled || newRun.Status.State != pure.PhasePending {
+		t.Fatalf("per-agent cap must hold the second alice run; handled=%v state=%q", handled, newRun.Status.State)
+	}
+}
+
 // M5.3: a gated run parks in RequiresAction (no pod, no cost) until a token-
 // matched approval lets it proceed; deny → Cancelled; stale token ignored; TTL
 // → Expired.

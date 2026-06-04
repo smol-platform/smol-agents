@@ -105,6 +105,10 @@ type AgentRunReconciler struct {
 	// Agent's ApprovalPolicy sets no timeout (0 → 1h). Set from
 	// --default-approval-timeout.
 	DefaultApprovalTimeout time.Duration
+	// DefaultNamespaceRunConcurrency caps Running AgentRuns per namespace when no
+	// AgentRunQuota sets one (0 = unlimited). Set from
+	// --default-namespace-run-concurrency.
+	DefaultNamespaceRunConcurrency int32
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -160,6 +164,14 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// cancel check above still wins. handled ⇒ status is set, return now.
 		if handled, gres, gerr := r.preRunApproval(ctx, run, agent); handled {
 			return gres, gerr
+		}
+
+		// Per-tenant concurrency gate (D10): hold the run Pending if the Agent or
+		// namespace is at its Running-runs cap. Soft / eventually-consistent
+		// (MaxConcurrentReconciles bounds boundary overshoot); fails open on a
+		// list error so an apiserver hiccup never strands a run.
+		if handled, cres, cerr := r.admitRunConcurrency(ctx, run, agent); handled {
+			return cres, cerr
 		}
 
 		// Resolve run-pod isolation fail-closed before any prep work: a policy
@@ -388,6 +400,72 @@ func (r *AgentRunReconciler) preRunApproval(ctx context.Context, run *amv1.Agent
 	// Still waiting (incl. a stale/mismatched decision token) — requeue near TTL.
 	out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
 	return true, out, e
+}
+
+// admitRunConcurrency holds a run Pending when its Agent or namespace is at the
+// Running-runs cap. handled=true ⇒ status set + return now. Fails open (admits)
+// on a count error.
+func (r *AgentRunReconciler) admitRunConcurrency(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) (handled bool, res ctrl.Result, err error) {
+	perAgentCap := agent.Spec.MaxConcurrentRuns
+	nsCap := r.resolveNamespaceCap(ctx, run.Namespace)
+	if perAgentCap <= 0 && nsCap <= 0 {
+		return false, ctrl.Result{}, nil
+	}
+	perAgent, total, cErr := r.countLiveRuns(ctx, run.Namespace, run.Name)
+	if cErr != nil {
+		return false, ctrl.Result{}, nil // fail open
+	}
+	if perAgentCap > 0 && perAgent[run.Spec.AgentRef] >= perAgentCap {
+		r.markPending(run, "ConcurrencyLimited",
+			fmt.Sprintf("agent %q at concurrency cap %d", run.Spec.AgentRef, perAgentCap))
+		out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
+		return true, out, e
+	}
+	if nsCap > 0 && total >= nsCap {
+		r.markPending(run, "ConcurrencyLimited",
+			fmt.Sprintf("namespace at concurrency cap %d", nsCap))
+		out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
+		return true, out, e
+	}
+	return false, ctrl.Result{}, nil
+}
+
+// countLiveRuns tallies Running AgentRuns in the namespace (excluding self),
+// bucketed by AgentRef and in total. Only Running runs hold a concurrency slot.
+func (r *AgentRunReconciler) countLiveRuns(ctx context.Context, ns, selfName string) (perAgent map[string]int32, total int32, err error) {
+	var list amv1.AgentRunList
+	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
+		return nil, 0, err
+	}
+	perAgent = map[string]int32{}
+	for i := range list.Items {
+		run := &list.Items[i]
+		if run.Name == selfName || run.Status.State != pure.PhaseRunning {
+			continue
+		}
+		perAgent[run.Spec.AgentRef]++
+		total++
+	}
+	return perAgent, total, nil
+}
+
+// resolveNamespaceCap returns the strictest (smallest non-zero) MaxConcurrentRuns
+// across the namespace's AgentRunQuotas, else the operator default.
+func (r *AgentRunReconciler) resolveNamespaceCap(ctx context.Context, ns string) int32 {
+	var list amv1.AgentRunQuotaList
+	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
+		return r.DefaultNamespaceRunConcurrency
+	}
+	cap := int32(0)
+	for i := range list.Items {
+		if m := list.Items[i].Spec.MaxConcurrentRuns; m > 0 && (cap == 0 || m < cap) {
+			cap = m
+		}
+	}
+	if cap == 0 {
+		return r.DefaultNamespaceRunConcurrency
+	}
+	return cap
 }
 
 func (r *AgentRunReconciler) markRunning(run *amv1.AgentRun) {
