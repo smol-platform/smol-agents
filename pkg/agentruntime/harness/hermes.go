@@ -180,12 +180,13 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	if respField == "" {
 		respField = "choices.0.message.content"
 	}
-	in, out := parseUsage(res.Body)
+	in, out, costMilli := parseUsage(res.Body)
 	return Response{
-		Output:     []byte(extractField(res.Body, respField)),
-		TokensIn:   in,
-		TokensOut:  out,
-		DurationMs: res.DurationMs,
+		Output:       []byte(extractField(res.Body, respField)),
+		TokensIn:     in,
+		TokensOut:    out,
+		CostUSDMilli: costMilli,
+		DurationMs:   res.DurationMs,
 	}, nil
 }
 
@@ -262,15 +263,36 @@ func jsonOrString(v string) any {
 	return v
 }
 
-// parseUsage extracts OpenAI usage.{prompt,completion}_tokens from a response
-// body. Missing/garbled usage yields (0, 0).
-func parseUsage(body []byte) (in, out int64) {
+// parseUsage extracts token usage from a response body, accepting BOTH the chat
+// shape (usage.prompt_tokens/completion_tokens) and the Responses shape
+// (usage.input_tokens/output_tokens). The two never cross-zero: a non-zero
+// value in either field wins, so a body carrying only one shape — or a 0 in one
+// and a real count in the other — still reports the real counts (the top
+// correctness hazard: a mis-parse that silently zeroes the token budget). Also
+// returns best-effort cost in integer milli-USD from total_cost_usd when the
+// gateway reports it. Missing/garbled usage yields (0, 0, 0).
+func parseUsage(body []byte) (in, out, costMilli int64) {
 	var r struct {
 		Usage struct {
 			PromptTokens     int64 `json:"prompt_tokens"`
 			CompletionTokens int64 `json:"completion_tokens"`
+			InputTokens      int64 `json:"input_tokens"`
+			OutputTokens     int64 `json:"output_tokens"`
 		} `json:"usage"`
+		TotalCostUSD float64 `json:"total_cost_usd"`
 	}
 	_ = json.Unmarshal(body, &r)
-	return r.Usage.PromptTokens, r.Usage.CompletionTokens
+	in = firstNonZeroI64(r.Usage.PromptTokens, r.Usage.InputTokens)
+	out = firstNonZeroI64(r.Usage.CompletionTokens, r.Usage.OutputTokens)
+	if r.TotalCostUSD > 0 {
+		costMilli = int64(r.TotalCostUSD*1000 + 0.5)
+	}
+	return in, out, costMilli
+}
+
+func firstNonZeroI64(a, b int64) int64 {
+	if a != 0 {
+		return a
+	}
+	return b
 }

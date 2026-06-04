@@ -354,6 +354,29 @@ func TestHermesHarness_EphemeralUsesUniqueSession(t *testing.T) {
 	}
 }
 
+// M2.7: parseUsage accepts both the chat and Responses token shapes and never
+// cross-zeroes — the top correctness hazard (a mis-parse zeroing the budget).
+func TestParseUsage_DualShape(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		in, out, cost int64
+	}{
+		{"chat", `{"usage":{"prompt_tokens":10,"completion_tokens":5}}`, 10, 5, 0},
+		{"responses", `{"usage":{"input_tokens":12,"output_tokens":7}}`, 12, 7, 0},
+		// chat prompt is real but chat completion is 0 → responses output wins.
+		{"no-cross-zero", `{"usage":{"prompt_tokens":3,"completion_tokens":0,"input_tokens":0,"output_tokens":9}}`, 3, 9, 0},
+		{"cost", `{"usage":{"prompt_tokens":1,"completion_tokens":1},"total_cost_usd":0.0123}`, 1, 1, 12},
+		{"empty", `{}`, 0, 0, 0},
+	}
+	for _, c := range cases {
+		in, out, cost := parseUsage([]byte(c.body))
+		if in != c.in || out != c.out || cost != c.cost {
+			t.Errorf("%s: got (%d,%d,%d) want (%d,%d,%d)", c.name, in, out, cost, c.in, c.out, c.cost)
+		}
+	}
+}
+
 func TestHermesHarness_RequiresURL(t *testing.T) {
 	h := &HermesHarness{}
 	if _, err := h.Run(context.Background(), Request{Spec: v1.HarnessSpec{Kind: v1.HarnessHermes}}); err == nil {
