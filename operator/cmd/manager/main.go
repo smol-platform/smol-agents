@@ -147,6 +147,10 @@ func main() {
 			setupLog.Error(err, "unable to register AgentNetwork webhook")
 			os.Exit(1)
 		}
+		if err := webhooks.SetupAgentPolicyGateWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentPolicy gate webhook")
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
