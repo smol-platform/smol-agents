@@ -166,12 +166,27 @@ type HarnessCLISpec struct {
 	// +optional
 	ExtraFlags []string `json:"extraFlags,omitempty"`
 
-	// PassthroughEnv is DEAD as of v0.2.0 — it has no reader: the CLI driver's
-	// mergeEnv (pkg/agentruntime/harness/cli.go) already inherits the full parent
-	// environment, so this allow-list is never consulted. Use Env (literal) or
-	// Env[].SecretRef (broker). Slated for removal or implementation.
+	// OutputFormat selects the CLI's machine-readable output (when it supports
+	// one) so the harness can parse tokens/cost/tool-calls. Empty = the kind's
+	// default (claude-code/codex parse "json"; generic-cli stays "text").
+	// +kubebuilder:validation:Enum=text;json;stream-json
 	// +optional
-	PassthroughEnv []string `json:"passthroughEnv,omitempty"`
+	OutputFormat string `json:"outputFormat,omitempty"`
+
+	// ApprovalMode maps to the CLI's permission posture (claude-code
+	// --permission-mode, codex --ask-for-approval). "" / "safe" keep the safe
+	// headless default; "never" enables the opt-in danger flag and is
+	// admission-refused unless the resolved RuntimeClass is a microVM (D3).
+	// +kubebuilder:validation:Enum=safe;acceptEdits;never
+	// +optional
+	ApprovalMode string `json:"approvalMode,omitempty"`
+
+	// AllowedTools / DisallowedTools map to the CLI's permission allow/deny
+	// lists (e.g. claude-code --allowedTools / --disallowedTools).
+	// +optional
+	AllowedTools []string `json:"allowedTools,omitempty"`
+	// +optional
+	DisallowedTools []string `json:"disallowedTools,omitempty"`
 }
 
 // HarnessHTTPSpec configures HTTP-based harnesses (pi, generic-http).
@@ -334,10 +349,22 @@ func ValidateHarness(h HarnessSpec) error {
 			}
 		}
 	case HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI:
-		// CLI block is optional — defaults wired by the runtime — but if
-		// present its MaxOutputBytes must be sane.
-		if h.CLI != nil && h.CLI.MaxOutputBytes < 0 {
-			errs = append(errs, errors.New("harness.cli.maxOutputBytes must be ≥ 0"))
+		// CLI block is optional — defaults wired by the runtime — but if present
+		// its MaxOutputBytes must be sane and its enums valid.
+		if h.CLI != nil {
+			if h.CLI.MaxOutputBytes < 0 {
+				errs = append(errs, errors.New("harness.cli.maxOutputBytes must be ≥ 0"))
+			}
+			switch h.CLI.OutputFormat {
+			case "", "text", "json", "stream-json":
+			default:
+				errs = append(errs, fmt.Errorf("harness.cli.outputFormat=%q is invalid", h.CLI.OutputFormat))
+			}
+			switch h.CLI.ApprovalMode {
+			case "", "safe", "acceptEdits", "never":
+			default:
+				errs = append(errs, fmt.Errorf("harness.cli.approvalMode=%q is invalid", h.CLI.ApprovalMode))
+			}
 		}
 	}
 	for i, e := range h.Env {

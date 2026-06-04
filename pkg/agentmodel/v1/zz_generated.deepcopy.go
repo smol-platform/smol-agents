@@ -617,8 +617,13 @@ func (in *HarnessCLISpec) DeepCopyInto(out *HarnessCLISpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.PassthroughEnv != nil {
-		in, out := &in.PassthroughEnv, &out.PassthroughEnv
+	if in.AllowedTools != nil {
+		in, out := &in.AllowedTools, &out.AllowedTools
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.DisallowedTools != nil {
+		in, out := &in.DisallowedTools, &out.DisallowedTools
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}

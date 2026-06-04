@@ -50,6 +50,25 @@ func TestValidateHarness_CLIDefaultsAccepted(t *testing.T) {
 	}
 }
 
+// M3.14: the typed CLI seam validates OutputFormat/ApprovalMode enums.
+func TestValidateHarness_CLIEnums(t *testing.T) {
+	mk := func(of, am string) HarnessSpec {
+		return HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{OutputFormat: of, ApprovalMode: am}}
+	}
+	if err := ValidateHarness(mk("json", "never")); err != nil {
+		t.Errorf("valid enums rejected: %v", err)
+	}
+	if err := ValidateHarness(mk("", "")); err != nil {
+		t.Errorf("empty (default) enums must pass: %v", err)
+	}
+	if err := ValidateHarness(mk("yaml", "")); err == nil {
+		t.Errorf("bad outputFormat must be rejected")
+	}
+	if err := ValidateHarness(mk("", "yolo")); err == nil {
+		t.Errorf("bad approvalMode must be rejected")
+	}
+}
+
 func TestValidateHarness_EnvSecretMutex(t *testing.T) {
 	h := HarnessSpec{Kind: HarnessClaudeCode, Env: []HarnessEnvVar{{
 		Name: "KEY", Value: "literal", SecretRef: &AuthRef{SecretName: "k"},
