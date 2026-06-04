@@ -239,7 +239,7 @@ func TestAgentRunReconciler_MarkTerminal_ClearsStaleReason(t *testing.T) {
 // exits 0) is the most specific signal and must win over whatever pod-level
 // reason markTerminal left behind.
 func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
-	r := &AgentRunReconciler{}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
 	r.markTerminal(run, pure.PhaseCompleted, "") // pod said Succeeded, no reason
 	pod := runPodWithTerminationMessage(agentruntime.RunResult{
@@ -247,7 +247,7 @@ func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
 		TerminationReason: "budget:tokens",
 		Usage:             pure.Usage{Steps: 1, Tokens: 16102},
 	})
-	r.foldRunResult(run, pod)
+	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.State != pure.PhaseExpired {
 		t.Errorf("state should be refined to Expired, got %q", run.Status.State)
 	}
@@ -262,7 +262,7 @@ func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
 // A runtime error wins over both any prior reason and over the runtime's own
 // TerminationReason (an Error is more diagnostic than the bare reason).
 func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
-	r := &AgentRunReconciler{}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
 	r.markTerminal(run, pure.PhaseFailed, "pod:Error")
 	pod := runPodWithTerminationMessage(agentruntime.RunResult{
@@ -270,9 +270,46 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 		TerminationReason: "harness:timeout",
 		Error:             "harness: http 502: upstream refused",
 	})
-	r.foldRunResult(run, pod)
+	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.TerminationReason != "harness: http 502: upstream refused" {
 		t.Errorf("error should win, got %q", run.Status.TerminationReason)
+	}
+}
+
+// M1.4: a namespace RedactionPolicy masks the folded Status.Output and any
+// secret in a Step's tool-call result; with no policy the fold is byte-identical
+// (zero-overhead fast path). RedactJSON re-marshals via map[string]any, so key
+// order is sorted and the masked output is deterministic.
+func TestAgentRunReconciler_FoldRunResult_Redaction(t *testing.T) {
+	policy := &amv1.AgentPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "redact", Namespace: "tenant-a"},
+		Spec:       pure.AgentPolicySpec{Redaction: &pure.RedactionPolicy{Patterns: []string{`sk-[a-z0-9]+`}}},
+	}
+	rr := agentruntime.RunResult{
+		Phase:  pure.PhaseCompleted,
+		Output: json.RawMessage(`{"key":"sk-deadbeef","n":1}`),
+		Steps: []pure.Step{{Index: 0, Kind: pure.StepToolCall, ToolCalls: []pure.ToolCallRecord{
+			{Tool: "fetch", Result: json.RawMessage(`{"token":"sk-secret99"}`)},
+		}}},
+	}
+
+	// Policy present → secrets masked.
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, policy)
+	run := sampleRun()
+	r.foldRunResult(context.Background(), run, runPodWithTerminationMessage(rr))
+	if got := string(run.Status.Output); got != `{"key":"[REDACTED]","n":1}` {
+		t.Errorf("Output not redacted: %s", got)
+	}
+	if got := string(run.Status.Steps[0].ToolCalls[0].Result); got != `{"token":"[REDACTED]"}` {
+		t.Errorf("Step tool-call result not redacted: %s", got)
+	}
+
+	// No policy → byte-identical fold.
+	r2 := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run2 := sampleRun()
+	r2.foldRunResult(context.Background(), run2, runPodWithTerminationMessage(rr))
+	if got := string(run2.Status.Output); got != `{"key":"sk-deadbeef","n":1}` {
+		t.Errorf("no-policy output must be byte-identical: %s", got)
 	}
 }
 
@@ -280,7 +317,7 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 // markTerminal already set — for a normal Completed run that's the empty
 // string, and the status should land empty.
 func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) {
-	r := &AgentRunReconciler{}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
 	r.markPending(run, "PodPending", "Pod is Pending")
 	r.markTerminal(run, pure.PhaseCompleted, "")
@@ -290,7 +327,7 @@ func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) 
 		Steps:  []pure.Step{{Index: 0, Kind: pure.StepFinal, TokensIn: 60, TokensOut: 40}},
 		Usage:  pure.Usage{Steps: 1, Tokens: 100},
 	})
-	r.foldRunResult(run, pod)
+	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.TerminationReason != "" {
 		t.Errorf("clean success should leave empty terminationReason, got %q", run.Status.TerminationReason)
 	}

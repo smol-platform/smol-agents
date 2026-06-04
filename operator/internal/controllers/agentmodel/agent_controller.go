@@ -12,7 +12,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
@@ -35,7 +37,25 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.Agent{}).
 		Owns(&corev1.ServiceAccount{}).
+		Watches(&amv1.AgentPolicy{}, handler.EnqueueRequestsFromMapFunc(r.agentsInNamespace)).
 		Complete(r)
+}
+
+// agentsInNamespace maps an AgentPolicy event to every Agent in the same
+// namespace, so tightening (or relaxing) a policy re-evaluates its dependents
+// within one reconcile rather than waiting for the next spec bump.
+func (r *AgentReconciler) agentsInNamespace(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list amv1.AgentList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
+			Namespace: list.Items[i].Namespace, Name: list.Items[i].Name,
+		}})
+	}
+	return reqs
 }
 
 // Reconcile is the per-Agent entrypoint.
@@ -107,6 +127,27 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	agent.Status.ResolvedTools = resolved
 	agent.Status.ResolvedProvider = providerName
+
+	// Enforce namespace AgentPolicy allow-lists at reconcile time (the
+	// belt-and-suspenders backstop to the admission webhook): a disallowed
+	// resolved provider or tool flips the Agent to Failed/PolicyViolation. A
+	// transient list error fails open (we don't strand a valid Agent on an
+	// apiserver hiccup); a tightened policy re-enqueues dependents via Watches.
+	if eff, err := effectivePolicyFor(ctx, r.Client, agent.Namespace); err == nil && !eff.Empty {
+		if providerName != "" && !eff.AllowsProvider(agent.Spec.Model.ProviderRef) {
+			r.setStatus(agent, "Failed", "PolicyViolation",
+				fmt.Sprintf("provider %q is not in the AgentPolicy allow-list", agent.Spec.Model.ProviderRef))
+			return ctrl.Result{}, r.Status().Update(ctx, agent)
+		}
+		for _, tool := range resolved {
+			if !eff.AllowsTool(tool) {
+				r.setStatus(agent, "Failed", "PolicyViolation",
+					fmt.Sprintf("tool %q is not in the AgentPolicy allow-list", tool))
+				return ctrl.Result{}, r.Status().Update(ctx, agent)
+			}
+		}
+	}
+
 	r.setStatus(agent, "Ready", "Reconciled", "")
 	logger.Info("agent ready", "tools", len(resolved), "provider", providerName)
 	return ctrl.Result{}, r.Status().Update(ctx, agent)

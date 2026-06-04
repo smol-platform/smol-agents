@@ -237,10 +237,10 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.markRunning(run)
 	case corev1.PodSucceeded:
 		r.markTerminal(run, pure.PhaseCompleted, "")
-		r.foldRunResult(run, pod)
+		r.foldRunResult(ctx, run, pod)
 	case corev1.PodFailed:
 		r.markTerminal(run, pure.PhaseFailed, terminationReason(pod))
-		r.foldRunResult(run, pod)
+		r.foldRunResult(ctx, run, pod)
 	}
 
 	// poll Pod state every 5s until terminal
@@ -395,13 +395,18 @@ func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentR
 // a budget cap, which still exits 0) — the phase itself. The runtime's own
 // reason (e.g. "budget:tokens") is the most specific signal we have and wins
 // over any pod-level reason markTerminal set; a runtime error wins outright.
-func (r *AgentRunReconciler) foldRunResult(run *amv1.AgentRun, pod *corev1.Pod) {
+func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentRun, pod *corev1.Pod) {
 	rr, ok := runResultFromPod(pod)
 	if !ok {
 		return
 	}
-	run.Status.Output = rr.Output
-	run.Status.Steps = rr.Steps
+	// Apply any namespace RedactionPolicy to the cluster-facing record. This is
+	// a disclosure control on Status only — the harness already observed the
+	// raw data, so it is never containment (agentpolicy R1). TerminationReason
+	// is a controlled signal and stays unredacted.
+	pats := compileNamespaceRedaction(ctx, r.Client, run.Namespace)
+	run.Status.Output = pure.RedactJSON(rr.Output, pats)
+	run.Status.Steps = pure.RedactSteps(rr.Steps, pats)
 	run.Status.Usage = rr.Usage
 	switch {
 	case rr.Error != "":

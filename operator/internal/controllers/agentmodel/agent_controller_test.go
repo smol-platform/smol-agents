@@ -47,6 +47,56 @@ func harnessAgent(name, ns string) *amv1.Agent {
 	return a
 }
 
+// loopAgent is a minimal valid loop-mode Agent (has a ModelRef) for policy-gate
+// tests.
+func loopAgent(name, ns, provider string) *amv1.Agent {
+	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+	a.Spec.Model = pure.ModelRef{ProviderRef: provider, Name: "m"}
+	a.Spec.Instructions = "hi"
+	a.Spec.Budget = pure.Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0}
+	return a
+}
+
+func reconcileAgent(t *testing.T, r *AgentReconciler, ns, name string) *amv1.Agent {
+	t.Helper()
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: name}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	got := &amv1.Agent{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, got); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	return got
+}
+
+// M1.5: a namespace AgentPolicy that excludes the Agent's provider flips it to
+// Failed/PolicyViolation at reconcile; a conforming policy leaves it Ready.
+func TestAgentReconciler_PolicyGate_DeniesDisallowedProvider(t *testing.T) {
+	agent := loopAgent("alice", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	policy := &amv1.AgentPolicy{ObjectMeta: metav1.ObjectMeta{Name: "only-openai", Namespace: "tenant-a"},
+		Spec: pure.AgentPolicySpec{AllowedProviders: []string{"openai"}}}
+
+	r := newAgentReconcilerForTest(t, agent, provider, policy)
+	got := reconcileAgent(t, r, "tenant-a", "alice")
+	if got.Status.Phase != "Failed" || got.Status.Reason != "PolicyViolation" {
+		t.Fatalf("want Failed/PolicyViolation, got %q/%q (%s)", got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
+func TestAgentReconciler_PolicyGate_AllowsConformingProvider(t *testing.T) {
+	agent := loopAgent("bob", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	policy := &amv1.AgentPolicy{ObjectMeta: metav1.ObjectMeta{Name: "allow-anthropic", Namespace: "tenant-a"},
+		Spec: pure.AgentPolicySpec{AllowedProviders: []string{"anthropic"}}}
+
+	r := newAgentReconcilerForTest(t, agent, provider, policy)
+	got := reconcileAgent(t, r, "tenant-a", "bob")
+	if got.Status.Phase != "Ready" {
+		t.Fatalf("want Ready, got %q/%q (%s)", got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
 func TestToPure_RoundTrip(t *testing.T) {
 	a := &amv1.Agent{}
 	a.Spec.Model.ProviderRef = "openai"
