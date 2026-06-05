@@ -43,6 +43,8 @@ func main() {
 	var runDeadlineMultiplier float64
 	var defaultApprovalTimeout time.Duration
 	var defaultNamespaceRunConcurrency int
+	var enableAdmissionQueue bool
+	var maxRunPriority int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -60,6 +62,9 @@ func main() {
 		"expiry for an un-decided pre-run approval when the Agent sets none (M5)")
 	flag.IntVar(&defaultNamespaceRunConcurrency, "default-namespace-run-concurrency", 0,
 		"per-namespace cap on Running AgentRuns when no AgentRunQuota sets one (0 = unlimited, M1.12)")
+	flag.BoolVar(&enableAdmissionQueue, "enable-admission-queue", false,
+		"per-namespace priority ordering of queued runs at the concurrency cap (M1.13; off = M1.12 behavior)")
+	flag.IntVar(&maxRunPriority, "max-run-priority", 1000, "clamp for AgentRun.spec.priority (M1.13)")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -117,6 +122,8 @@ func main() {
 		RunDeadlineMultiplier:          runDeadlineMultiplier,
 		DefaultApprovalTimeout:         defaultApprovalTimeout,
 		DefaultNamespaceRunConcurrency: int32(defaultNamespaceRunConcurrency),
+		EnableAdmissionQueue:           enableAdmissionQueue,
+		MaxPriority:                    int32(maxRunPriority),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)

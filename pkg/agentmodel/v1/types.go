@@ -292,6 +292,12 @@ type AgentRunSpec struct {
 	// (nil = inherit). +optional
 	RequireApprovalBeforeRun *bool `json:"requireApprovalBeforeRun,omitempty"`
 
+	// Priority orders this run in the per-namespace admission queue (M1.13) when
+	// the namespace is at its concurrency cap: higher priority is admitted first,
+	// ties broken by creation time (oldest first). Clamped to the operator's
+	// MaxPriority. 0 (default) is normal priority. +optional
+	Priority int32 `json:"priority,omitempty"`
+
 	// MemoryRetrieverRef is the namespace-local name of a MemoryRetriever CR
 	// whose filesystem store should be mounted into the agent pod when
 	// MemoryRetriever.spec.mount.enabled is true (R-MEM-FS-2).
@@ -380,6 +386,12 @@ type RunStatus struct {
 	Usage             Usage           `json:"usage"`
 	TerminationReason string          `json:"terminationReason,omitempty"`
 	Output            json.RawMessage `json:"output,omitempty"`
+
+	// Reason is a short machine-readable cause for the current State (e.g.
+	// "ConcurrencyLimited", "SandboxNotReady"). Set alongside the human message
+	// in TerminationReason; consumed by the M1.13 admission queue to find the
+	// runs queued on concurrency. +optional
+	Reason string `json:"reason,omitempty"`
 
 	// PendingAction is set while State==RequiresAction (M5): it records the
 	// approval token a human must echo in spec.decision. +optional

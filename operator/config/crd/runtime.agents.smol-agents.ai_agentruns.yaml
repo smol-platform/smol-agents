@@ -72,6 +72,7 @@ spec:
                 cancel: { type: boolean, description: 'Set true to request cancellation; the controller deletes the run pod (immediate, no graceful drain).' }
                 placementFallback: { type: string, enum: [Pending, Schedule], description: 'When a kata run finds no matching AgentNodePool: Pending (default, fail-closed) holds until capacity; Schedule runs without node affinity (dev escape hatch). (M1.10)' }
                 requireApprovalBeforeRun: { type: boolean, description: 'Per-run override of the Agent ApprovalPolicy: hold this run in RequiresAction until a human approves (M5).' }
+                priority: { type: integer, format: int32, description: 'Per-namespace admission-queue priority when at the concurrency cap (M1.13): higher admitted first, ties by creation time. Clamped to the operator MaxPriority. 0 = normal.' }
                 decision:
                   type: object
                   description: 'Human pre-run approval verdict, patched onto a run waiting in RequiresAction (M5). Token must match status.pendingAction.token.'
@@ -120,6 +121,7 @@ spec:
                 startedAt: { type: string, format: date-time, description: 'When the run pod started executing.' }
                 endedAt: { type: string, format: date-time, description: 'When the run reached a terminal state.' }
                 terminationReason: { type: string, description: 'Machine-readable reason for a terminal state (e.g. budget exceeded, error).' }
+                reason: { type: string, description: 'Short machine-readable cause for the current State (e.g. ConcurrencyLimited, SandboxNotReady).' }
                 networks: { type: array, items: { type: string }, description: 'AgentNetworks bound to this run (M1.19); empty = default-deny floor only.' }
                 egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }
                 pendingAction:

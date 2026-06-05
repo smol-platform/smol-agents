@@ -110,6 +110,15 @@ type AgentRunReconciler struct {
 	// AgentRunQuota sets one (0 = unlimited). Set from
 	// --default-namespace-run-concurrency.
 	DefaultNamespaceRunConcurrency int32
+	// EnableAdmissionQueue turns on per-namespace priority ordering (M1.13): when
+	// a namespace has free capacity but higher-priority runs are queued, a
+	// lower-priority/newer run waits its turn. Off (default) = M1.12 behavior
+	// (admit any run while under cap). The ordering is computed statelessly from
+	// live cluster state each reconcile, so it survives leader failover with no
+	// in-memory queue to rebuild.
+	EnableAdmissionQueue bool
+	// MaxPriority clamps spec.priority (0 → 1000). Set from --max-run-priority.
+	MaxPriority int32
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -334,6 +343,7 @@ func (r *AgentRunReconciler) updateRunStatus(ctx context.Context, run *amv1.Agen
 
 func (r *AgentRunReconciler) markPending(run *amv1.AgentRun, reason, msg string) {
 	run.Status.State = pure.PhasePending
+	run.Status.Reason = reason
 	run.Status.TerminationReason = msg
 	run.Status.StartedAt = nil
 }
@@ -423,7 +433,7 @@ func (r *AgentRunReconciler) admitRunConcurrency(ctx context.Context, run *amv1.
 	if perAgentCap <= 0 && nsCap <= 0 {
 		return false, ctrl.Result{}, nil
 	}
-	perAgent, total, cErr := r.countLiveRuns(ctx, run.Namespace, run.Name)
+	perAgent, total, queued, cErr := r.namespaceRunState(ctx, run.Namespace, run.Name)
 	if cErr != nil {
 		return false, ctrl.Result{}, nil // fail open
 	}
@@ -433,32 +443,91 @@ func (r *AgentRunReconciler) admitRunConcurrency(ctx context.Context, run *amv1.
 		out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
 		return true, out, e
 	}
-	if nsCap > 0 && total >= nsCap {
-		r.markPending(run, "ConcurrencyLimited",
-			fmt.Sprintf("namespace at concurrency cap %d", nsCap))
-		out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
-		return true, out, e
+	if nsCap > 0 {
+		if total >= nsCap {
+			r.markPending(run, "ConcurrencyLimited",
+				fmt.Sprintf("namespace at concurrency cap %d", nsCap))
+			out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
+			return true, out, e
+		}
+		// Priority ordering (M1.13): even with free capacity, a run waits when
+		// higher-priority (or equal-priority, older) runs are queued ahead of it
+		// for the remaining slots. Stateless — recomputed from the queued set, so
+		// it needs no in-memory queue + survives leader failover.
+		if r.EnableAdmissionQueue {
+			if ahead := r.rankAhead(queued, run); int32(ahead) >= nsCap-total {
+				r.markPending(run, "ConcurrencyLimited",
+					fmt.Sprintf("queued: %d higher-priority run(s) ahead for %d free slot(s)", ahead, nsCap-total))
+				out, e := r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 10 * time.Second})
+				return true, out, e
+			}
+		}
 	}
 	return false, ctrl.Result{}, nil
 }
 
-// countLiveRuns tallies Running AgentRuns in the namespace (excluding self),
-// bucketed by AgentRef and in total. Only Running runs hold a concurrency slot.
-func (r *AgentRunReconciler) countLiveRuns(ctx context.Context, ns, selfName string) (perAgent map[string]int32, total int32, err error) {
+// namespaceRunState lists the namespace's AgentRuns once and returns the
+// per-agent + total Running counts (only Running runs hold a slot, per M1.12)
+// plus the concurrency-queued runs (Pending/ConcurrencyLimited, excluding self)
+// that compete for free slots in the M1.13 priority order.
+func (r *AgentRunReconciler) namespaceRunState(ctx context.Context, ns, selfName string) (perAgent map[string]int32, total int32, queued []amv1.AgentRun, err error) {
 	var list amv1.AgentRunList
 	if err := r.List(ctx, &list, client.InNamespace(ns)); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	perAgent = map[string]int32{}
 	for i := range list.Items {
 		run := &list.Items[i]
-		if run.Name == selfName || run.Status.State != pure.PhaseRunning {
+		if run.Name == selfName {
 			continue
 		}
-		perAgent[run.Spec.AgentRef]++
-		total++
+		switch {
+		case run.Status.State == pure.PhaseRunning:
+			perAgent[run.Spec.AgentRef]++
+			total++
+		case run.Status.State == pure.PhasePending && run.Status.Reason == "ConcurrencyLimited":
+			queued = append(queued, *run)
+		}
 	}
-	return perAgent, total, nil
+	return perAgent, total, queued, nil
+}
+
+// rankAhead counts the queued runs that should be admitted before run: higher
+// effective priority, or equal priority and older (creationTimestamp asc, then
+// name asc for a total order).
+func (r *AgentRunReconciler) rankAhead(queued []amv1.AgentRun, run *amv1.AgentRun) int {
+	selfP := r.clampPriority(run.Spec.Priority)
+	ahead := 0
+	for i := range queued {
+		q := &queued[i]
+		qP := r.clampPriority(q.Spec.Priority)
+		switch {
+		case qP > selfP:
+			ahead++
+		case qP < selfP:
+			// behind
+		case q.CreationTimestamp.Before(&run.CreationTimestamp):
+			ahead++
+		case q.CreationTimestamp.Equal(&run.CreationTimestamp) && q.Name < run.Name:
+			ahead++
+		}
+	}
+	return ahead
+}
+
+// clampPriority bounds spec.priority to [0, MaxPriority] (MaxPriority 0 → 1000).
+func (r *AgentRunReconciler) clampPriority(p int32) int32 {
+	max := r.MaxPriority
+	if max <= 0 {
+		max = 1000
+	}
+	if p < 0 {
+		return 0
+	}
+	if p > max {
+		return max
+	}
+	return p
 }
 
 // resolveNamespaceCap returns the strictest (smallest non-zero) MaxConcurrentRuns
@@ -485,6 +554,7 @@ func (r *AgentRunReconciler) markRunning(run *amv1.AgentRun) {
 		return
 	}
 	run.Status.State = pure.PhaseRunning
+	run.Status.Reason = "" // clear any prior Pending reason (e.g. ConcurrencyLimited)
 	now := metav1.Now()
 	run.Status.StartedAt = &now
 }
