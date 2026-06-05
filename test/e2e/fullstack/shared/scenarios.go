@@ -43,6 +43,7 @@ func All() []Scenario {
 		agentRun,
 		cancel,
 		approvalGate,
+		egressFloor,
 		webhook,
 		kataIsolation,
 		smolAgentPhase,
@@ -615,6 +616,9 @@ func runApprovalGate(t *testing.T, env Env) {
 	defer cancel()
 
 	const run = "approval-test"
+	// Idempotent re-run: drop any prior approval-test (a terminal run from a
+	// reused cluster won't re-enter RequiresAction on re-apply).
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", "tenant-a", "--ignore-not-found")
 	manifest := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentRun
 metadata:
@@ -662,6 +666,40 @@ spec:
 		t.Fatalf("run did not proceed after approval: %v", err)
 	}
 	t.Log("M5 gate: approved run left RequiresAction and proceeded")
+}
+
+var egressFloor = Scenario{
+	ID:       "R-E2E-SCN-EGRESS-FLOOR",
+	Name:     "serving-pod-egress-floor",
+	Requires: CapKubernetes,
+	Run:      runEgressFloor,
+}
+
+// runEgressFloor exercises the M1.17 default-ON serving egress floor: the
+// operator's EgressFloorReconciler must have created an egress NetworkPolicy
+// selecting the served pods of the SmolAgent kind-verify.sh already applied
+// (tenant-a/hello → hello-serving-egress).
+func runEgressFloor(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const np = "hello-serving-egress"
+	if err := env.WaitFor(ctx, "serving-egress-floor", 60*time.Second, func(ctx context.Context) bool {
+		out, err := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.metadata.name}")
+		return err == nil && strings.TrimSpace(string(out)) == np
+	}); err != nil {
+		t.Fatalf("default-ON serving egress NetworkPolicy %q not created: %v", np, err)
+	}
+	pt, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.spec.policyTypes}")
+	if !strings.Contains(string(pt), "Egress") {
+		t.Errorf("policyTypes=%s, want it to include Egress", pt)
+	}
+	sel, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.spec.podSelector.matchLabels}")
+	if !strings.Contains(string(sel), "hello") {
+		t.Errorf("podSelector=%s, want it to select the served (hello) pods", sel)
+	}
+	t.Log("M1.17: default-ON serving egress floor present + selects the served pods")
 }
 
 var webhook = Scenario{
