@@ -189,6 +189,15 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 15 * time.Second})
 		}
 
+		// D3 (M3.15): danger permission/sandbox flags are admission-refused unless
+		// the resolved class is a kata microVM. Fail-closed: a shared-kernel class
+		// (runc/gvisor) must never run --dangerously-skip-permissions / approval
+		// "never" / danger-full-access. No-op for the safe default posture.
+		if reason := dangerFlagViolation(agent, sbClass); reason != "" {
+			r.markTerminal(run, pure.PhaseFailed, "sandbox:"+reason)
+			return r.updateRunStatus(ctx, run, ctrl.Result{})
+		}
+
 		// Resolve node placement for the sandbox class. A KVM class with no
 		// matching AgentNodePool holds the run Pending (fail-closed) rather than
 		// scheduling a kata pod that can never run — unless PlacementFallback is

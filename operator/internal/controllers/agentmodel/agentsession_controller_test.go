@@ -177,6 +177,42 @@ func TestAgentSessionReconcile_RuncFailsClosed(t *testing.T) {
 	}
 }
 
+// M3.15: danger permission flags (claude approvalMode=never) must fail closed on
+// a shared-kernel class EVEN with --allow-host-runtime — runc is permitted as a
+// class there, so the danger-flag microVM gate is the only thing that can (and
+// must) fail it. The same posture on a kata microVM would be allowed.
+func TestAgentSessionReconcile_DangerFlagsFailClosed(t *testing.T) {
+	sch := runtime.NewScheme()
+	_ = corev1.AddToScheme(sch)
+	_ = amv1.AddToScheme(sch)
+	_ = appsv1.AddToScheme(sch)
+	_ = networkingv1.AddToScheme(sch)
+	_ = nodev1.AddToScheme(sch)
+
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessClaudeCode, CLI: &pure.HarnessCLISpec{ApprovalMode: "never"}}
+	agent.Spec.Sandbox.RuntimeClass = "runc"
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s3", Namespace: "t", Generation: 1}}
+	session.Spec.AgentRef = "a"
+
+	c := fake.NewClientBuilder().WithScheme(sch).WithObjects(agent, session).
+		WithStatusSubresource(&amv1.AgentSession{}).Build()
+	r := &AgentSessionReconciler{Client: c, Scheme: sch, AllowHostRuntime: true} // runc permitted as a class
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "t", Name: "s3"}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var got amv1.AgentSession
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3"}, &got)
+	if got.Status.Phase != pure.PhaseFailed {
+		t.Errorf("danger flags on runc must fail closed (D3), phase = %s", got.Status.Phase)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3-session"}, &appsv1.Deployment{}); err == nil {
+		t.Error("no Deployment should be created when danger flags are refused")
+	}
+}
+
 // M1.11: a kata session whose RuntimeClass exists but has NO matching
 // AgentNodePool is held Pending (fail-closed) — no worker Deployment.
 func TestAgentSessionReconcile_NoKataPoolPending(t *testing.T) {

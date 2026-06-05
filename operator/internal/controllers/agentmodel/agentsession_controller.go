@@ -88,6 +88,11 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if sbPending != "" {
 		return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
 	}
+	// D3 (M3.15): refuse danger permission/sandbox flags unless the resolved
+	// class is a kata microVM — the same fail-closed gate as the run datapath.
+	if dangerFlagViolation(agent, sbClass) != "" {
+		return r.writeStatus(ctx, session, pure.PhaseFailed, 0)
+	}
 
 	// A synthetic AgentRun (name+namespace carrier) drives the shared run-pod /
 	// run-spec / broker builders; ownership is the SESSION's, set via ensureOwned.
