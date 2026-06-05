@@ -75,7 +75,8 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	agent := &amv1.Agent{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.AgentRef}, agent); err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
+			return r.writeStatus(ctx, session, pure.PhasePending, "AgentMissing",
+				fmt.Sprintf("agentRef %q not found", session.Spec.AgentRef), 15*time.Second)
 		}
 		return ctrl.Result{}, err
 	}
@@ -83,15 +84,15 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Fail-closed sandbox resolution (same policy as runs).
 	sbClass, sbPending, sbFailed := resolveSandbox(ctx, r.Client, agent.Spec.Sandbox.RuntimeClass, r.DefaultRunRuntimeClass, r.AllowHostRuntime)
 	if sbFailed != "" {
-		return r.writeStatus(ctx, session, pure.PhaseFailed, 0)
+		return r.writeStatus(ctx, session, pure.PhaseFailed, "SandboxFailed", sbFailed, 0)
 	}
 	if sbPending != "" {
-		return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
+		return r.writeStatus(ctx, session, pure.PhasePending, "SandboxNotReady", sbPending, 15*time.Second)
 	}
 	// D3 (M3.15): refuse danger permission/sandbox flags unless the resolved
 	// class is a kata microVM — the same fail-closed gate as the run datapath.
-	if dangerFlagViolation(agent, sbClass) != "" {
-		return r.writeStatus(ctx, session, pure.PhaseFailed, 0)
+	if v := dangerFlagViolation(agent, sbClass); v != "" {
+		return r.writeStatus(ctx, session, pure.PhaseFailed, "DangerFlagsRefused", v, 0)
 	}
 
 	// A synthetic AgentRun (name+namespace carrier) drives the shared run-pod /
@@ -103,7 +104,7 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	provider, brokerValues, err := gatherRunSecrets(ctx, r.Client, agent, session.Namespace, nil)
 	if err != nil {
-		return r.writeStatus(ctx, session, pure.PhasePending, 10*time.Second)
+		return r.writeStatus(ctx, session, pure.PhasePending, "SecretMissing", err.Error(), 10*time.Second)
 	}
 
 	// Run-spec ConfigMap (agent.json + provider.json) the worker reads.
@@ -154,7 +155,8 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, fmt.Errorf("resolve placement: %w", plErr)
 	}
 	if placement == nil && builders.RequiresKVM(sbClass) {
-		return r.writeStatus(ctx, session, pure.PhasePending, 30*time.Second)
+		return r.writeStatus(ctx, session, pure.PhasePending, "NoKVMCapacity",
+			fmt.Sprintf("no AgentNodePool matches kata class %q", sbClass), 30*time.Second)
 	}
 	builders.ApplyRunPodPlacement(pod, placement)
 	if len(brokerValues) > 0 {
@@ -189,8 +191,9 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	phase := pure.PhasePending
+	reason, message := "WorkerStarting", "session worker Deployment not yet Available"
 	if r.deployAvailable(ctx, deploy.Namespace, deploy.Name) {
-		phase = pure.PhaseRunning
+		phase, reason, message = pure.PhaseRunning, "Reconciled", ""
 	}
 	logger.Info("reconciled session", "phase", phase)
 	// Requeue while not yet available so phase advances even without a Deployment
@@ -199,7 +202,7 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if phase == pure.PhasePending {
 		requeue = 15 * time.Second
 	}
-	return r.writeStatus(ctx, session, phase, requeue)
+	return r.writeStatus(ctx, session, phase, reason, message, requeue)
 }
 
 // ensureOwned sets the session as controller-owner and creates obj if absent
@@ -241,8 +244,10 @@ func (r *AgentSessionReconciler) deployAvailable(ctx context.Context, ns, name s
 	return cur.Status.AvailableReplicas > 0
 }
 
-func (r *AgentSessionReconciler) writeStatus(ctx context.Context, session *amv1.AgentSession, phase pure.Phase, requeue time.Duration) (ctrl.Result, error) {
+func (r *AgentSessionReconciler) writeStatus(ctx context.Context, session *amv1.AgentSession, phase pure.Phase, reason, message string, requeue time.Duration) (ctrl.Result, error) {
 	session.Status.Phase = phase
+	session.Status.Reason = reason
+	session.Status.Message = message
 	session.Status.ObservedGeneration = session.Generation
 	if err := r.Status().Update(ctx, session); err != nil {
 		// A conflict means the object advanced; requeue and re-read rather than

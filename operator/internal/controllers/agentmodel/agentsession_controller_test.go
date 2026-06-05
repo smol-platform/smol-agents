@@ -172,6 +172,9 @@ func TestAgentSessionReconcile_RuncFailsClosed(t *testing.T) {
 	if got.Status.Phase != pure.PhaseFailed {
 		t.Errorf("runc session phase = %s, want Failed (R-SBX-1)", got.Status.Phase)
 	}
+	if got.Status.Reason != "SandboxFailed" {
+		t.Errorf("runc session reason = %q, want SandboxFailed (a Failed session must surface why)", got.Status.Reason)
+	}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s2-session"}, &appsv1.Deployment{}); err == nil {
 		t.Error("no Deployment should be created for a fail-closed session")
 	}
@@ -208,6 +211,9 @@ func TestAgentSessionReconcile_DangerFlagsFailClosed(t *testing.T) {
 	if got.Status.Phase != pure.PhaseFailed {
 		t.Errorf("danger flags on runc must fail closed (D3), phase = %s", got.Status.Phase)
 	}
+	if got.Status.Reason != "DangerFlagsRefused" {
+		t.Errorf("danger session reason = %q, want DangerFlagsRefused", got.Status.Reason)
+	}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3-session"}, &appsv1.Deployment{}); err == nil {
 		t.Error("no Deployment should be created when danger flags are refused")
 	}
@@ -242,6 +248,9 @@ func TestAgentSessionReconcile_NoKataPoolPending(t *testing.T) {
 	_ = c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3"}, &got)
 	if got.Status.Phase != pure.PhasePending {
 		t.Errorf("kata session w/o pool → phase %s, want Pending", got.Status.Phase)
+	}
+	if got.Status.Reason != "NoKVMCapacity" {
+		t.Errorf("kata-no-pool session reason = %q, want NoKVMCapacity", got.Status.Reason)
 	}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3-session"}, &appsv1.Deployment{}); err == nil {
 		t.Error("no Deployment should be created when placement can't resolve")

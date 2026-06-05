@@ -507,6 +507,14 @@ type AgentSessionStatus struct {
 	// EgressEnforcement summarizes the session's egress posture: "default-deny"
 	// (the floor only) or "tiered" (a bound AgentNetwork allow-list). +optional
 	EgressEnforcement string `json:"egressEnforcement,omitempty"`
+
+	// Reason is a short machine-readable cause for the current Phase (e.g.
+	// AgentMissing, SandboxNotReady, SecretMissing, NoKVMCapacity, Reconciled) —
+	// parity with AgentRun's status so a Pending/Failed session is not opaque.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// Message is a human-readable elaboration of Reason. +optional
+	Message string `json:"message,omitempty"`
 }
 
 // AgentPolicy — guardrails. R-AM-API-6.
