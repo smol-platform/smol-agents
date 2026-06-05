@@ -53,6 +53,31 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Ephemeral workspace: no S3 destination configured (a storage.agentfs volume
+	// with no backup target — the documented "runs get an ephemeral workspace"
+	// case). The emptyDir mount is the whole workspace, so there is nothing to
+	// restore and nothing to back up, and the S3 client (which requires a bucket)
+	// is never constructed. Without this the init container fail-closes on
+	// "agentfs s3: Bucket is required" and any storage.agentfs pod — e.g. an
+	// AgentSession serve-session worker — can never start.
+	if os.Getenv("AGENTFS_S3_BUCKET") == "" {
+		if err := os.MkdirAll(*mount, 0o755); err != nil {
+			logger.Error("agentfs-sidecar: ensure ephemeral mount", "err", err)
+			os.Exit(2)
+		}
+		switch verb {
+		case "init":
+			logger.Info("ephemeral workspace (no S3 backup): starting fresh", "mount", *mount)
+		case "serve":
+			logger.Info("ephemeral workspace (no S3 backup): no backups; idling until shutdown", "mount", *mount)
+			<-ctx.Done()
+			logger.Info("agentfs-sidecar serve stopped", "reason", ctx.Err())
+		default:
+			fail("unknown verb %q (init|serve)", verb)
+		}
+		return
+	}
+
 	mgr, err := buildManager(ctx, *mount)
 	if err != nil {
 		logger.Error("agentfs-sidecar init", "err", err)
