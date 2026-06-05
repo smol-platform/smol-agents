@@ -44,6 +44,7 @@ func All() []Scenario {
 		cancel,
 		approvalGate,
 		approvalReject,
+		approvalTimeout,
 		egressFloor,
 		policyGate,
 		toolKindGuard,
@@ -740,6 +741,77 @@ spec:
 		t.Errorf("a pod exists for a denied run: %q", out)
 	}
 	t.Log("M5 gate: denied run reached terminal Cancelled (decision:denied) with no pod")
+}
+
+var approvalTimeout = Scenario{
+	ID:       "R-E2E-SCN-APPROVAL-TIMEOUT",
+	Name:     "prerun-approval-timeout",
+	Requires: CapKubernetes,
+	Run:      runApprovalTimeout,
+}
+
+// runApprovalTimeout exercises the M5 gate's TIMEOUT path (the third terminal
+// outcome alongside approve→proceed and reject→Cancelled): an un-decided run
+// whose Agent sets a short spec.approval.approvalTimeoutSeconds must expire to a
+// terminal Expired state (TerminationReason "approval:timeout") with NO pod. This
+// is gated by the AGENT-level approval policy (approvalGate/Reject use the
+// run-level override), so it also covers that branch. Dedicated namespace.
+func runApprovalTimeout(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, run = "e2e-approval-to", "approval-timeout-test"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-approval-to}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: prov, namespace: e2e-approval-to}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: to-agent, namespace: e2e-approval-to}
+spec:
+  model: {providerRef: prov, name: m}
+  instructions: "hi"
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+  approval: {requireApprovalBeforeRun: true, approvalTimeoutSeconds: 2}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata: {name: approval-timeout-test, namespace: e2e-approval-to}
+spec:
+  agentRef: to-agent
+  input:
+    q: "let me expire"
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply approval-timeout manifest: %v", err)
+	}
+
+	// The 2s timeout fires on the controller's requeue; allow generous margin.
+	if err := env.WaitFor(ctx, "run-expired", 75*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+		return strings.TrimSpace(string(st)) == "Expired"
+	}); err != nil {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+		t.Fatalf("un-decided run did not expire (observed state %q): %v", strings.TrimSpace(string(st)), err)
+	}
+	tr, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.terminationReason}")
+	if !strings.Contains(string(tr), "approval:timeout") {
+		t.Errorf("terminationReason=%q, want it to carry approval:timeout", tr)
+	}
+	if out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pod", run, "--ignore-not-found", "-o", "name"); strings.TrimSpace(string(out)) != "" {
+		t.Errorf("a pod exists for an expired run: %q", out)
+	}
+	t.Log("M5 gate: un-decided run expired to terminal Expired (approval:timeout) with no pod")
 }
 
 var egressFloor = Scenario{
