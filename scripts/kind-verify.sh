@@ -49,6 +49,13 @@ step "apply runtime CR chain (Provider → Tool → Agent → AgentRun)"
 # AgentRun Pod admits.
 $KCTL -n tenant-a create serviceaccount researcher-agent \
   --dry-run=client -o yaml | $KCTL apply -f -
+# The openai-prod ModelProvider in agent_full.yaml references secret "openai-key";
+# the broker reads it during run prep (else the run stays Pending/RunPrepPending
+# and never schedules a pod). kind has no real provider key, but the chain-check
+# only verifies the pod is CREATED (not that the LLM call succeeds), so a dummy
+# value suffices for the operator-path e2e.
+$KCTL -n tenant-a create secret generic openai-key \
+  --from-literal=api-key=dummy-kind-e2e --dry-run=client -o yaml | $KCTL apply -f -
 $KCTL apply -f operator/config/samples/agent_full.yaml
 
 step "apply control-plane samples (Platform + SmolAgent)"
