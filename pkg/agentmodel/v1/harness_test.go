@@ -6,6 +6,20 @@ import (
 	"time"
 )
 
+// M4.14: pi is a deprecated alias for the canonical inflection-pi; both
+// validate, and the alias canonicalizes (the registry resolves through it).
+func TestHarnessKind_InflectionPiAlias(t *testing.T) {
+	if !HarnessPi.Valid() || !HarnessInflectionPi.Valid() {
+		t.Fatalf("both pi (deprecated) and inflection-pi must be valid kinds")
+	}
+	if CanonicalHarnessKind(HarnessPi) != HarnessInflectionPi {
+		t.Errorf("pi must canonicalize to inflection-pi")
+	}
+	if CanonicalHarnessKind(HarnessHermes) != HarnessHermes {
+		t.Errorf("non-alias kinds must pass through unchanged")
+	}
+}
+
 func TestHarnessKind_Valid(t *testing.T) {
 	for _, k := range []HarnessKind{
 		HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessAider, HarnessGoose,
@@ -66,6 +80,51 @@ func TestValidateHarness_CLIEnums(t *testing.T) {
 	}
 	if err := ValidateHarness(mk("", "yolo")); err == nil {
 		t.Errorf("bad approvalMode must be rejected")
+	}
+}
+
+// M3.9: the Hermes API discriminator validates its enum and is rejected
+// (responses/runs) on non-Hermes HTTP kinds; default ("") is back-compat.
+func TestValidateHarness_HTTPAPIDiscriminator(t *testing.T) {
+	hermes := func(api string) HarnessSpec {
+		return HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "http://gw", API: api}}
+	}
+	for _, api := range []string{"", "chat", "responses", "runs"} {
+		if err := ValidateHarness(hermes(api)); err != nil {
+			t.Errorf("hermes api=%q must be valid: %v", api, err)
+		}
+	}
+	if err := ValidateHarness(hermes("bogus")); err == nil {
+		t.Errorf("bad api must be rejected")
+	}
+	// responses/runs on a non-Hermes HTTP kind is rejected; chat/"" is fine.
+	gen := func(api string) HarnessSpec {
+		return HarnessSpec{Kind: HarnessGenericHTTP, HTTP: &HarnessHTTPSpec{URL: "http://x", API: api}}
+	}
+	if err := ValidateHarness(gen("responses")); err == nil {
+		t.Errorf("api=responses on generic-http must be rejected")
+	}
+	if err := ValidateHarness(gen("")); err != nil {
+		t.Errorf("api=\"\" on generic-http must pass: %v", err)
+	}
+}
+
+// M3.13: Hermes persistent sessions don't require storage (gateway-side memory,
+// D6); CLI kinds still do.
+func TestValidateAgent_HermesPersistentNoStorage(t *testing.T) {
+	base := func(kind HarnessKind, http *HarnessHTTPSpec) Agent {
+		return Agent{Spec: AgentSpec{
+			Mode:         ModeHarness,
+			Instructions: "x",
+			Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10},
+			Harness:      &HarnessSpec{Kind: kind, HTTP: http, SessionPolicy: SessionPersistent},
+		}}
+	}
+	if err := ValidateAgent(base(HarnessHermes, &HarnessHTTPSpec{URL: "http://gw"})); err != nil {
+		t.Errorf("Hermes persistent without storage must pass: %v", err)
+	}
+	if err := ValidateAgent(base(HarnessClaudeCode, nil)); err == nil {
+		t.Errorf("claude-code persistent without storage must still be rejected")
 	}
 }
 

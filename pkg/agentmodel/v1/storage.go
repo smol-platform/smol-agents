@@ -246,3 +246,32 @@ func validateBackup(b BackupPolicy) []error {
 	}
 	return errs
 }
+
+// ArtifactRule selects files from the agent's workspace to publish to S3 on pod
+// shutdown (M2.23). Collection is best-effort and never affects the run Phase.
+type ArtifactRule struct {
+	// Name is a stable identifier (the S3 key prefix + status-manifest key);
+	// must be unique within the ArtifactSpec.
+	Name string `json:"name"`
+	// Glob is a workspace-relative doublestar pattern (e.g. "out/**/*.json").
+	// A leading "/" or any ".." traversal is rejected at admission.
+	Glob string `json:"glob"`
+	// MaxBytes caps each matched file; an over-budget file is skipped (recorded),
+	// never fatal. 0 = no per-file cap.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxBytes int64 `json:"maxBytes,omitempty"`
+	// ContentType overrides the sniffed type for uploaded objects.
+	// +optional
+	ContentType string `json:"contentType,omitempty"`
+}
+
+// ArtifactSpec declares files to collect from the workspace and upload to S3 on
+// pod shutdown. Requires AgentFS storage (the workspace volume the agentfs
+// sidecar reads + uploads from — the harness container never holds S3 creds).
+type ArtifactSpec struct {
+	Outputs []ArtifactRule `json:"outputs"`
+	// S3 overrides the upload target; defaults to the AgentFS backup target.
+	// +optional
+	S3 *S3BackupSpec `json:"s3,omitempty"`
+}

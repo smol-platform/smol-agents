@@ -40,10 +40,14 @@ const (
 	HarnessClaudeCode HarnessKind = "claude-code"
 	// HarnessCodex runs OpenAI's `codex exec` CLI as a subprocess (CLI kind).
 	HarnessCodex HarnessKind = "codex"
-	// HarnessPi is a FALSE FRIEND: it drives Inflection AI's hosted Pi inference
-	// HTTP API (default https://api.inflection.ai/external/api/inference), NOT
-	// Mario Zechner's pi-mono coding-agent CLI. For pi-mono use HarnessGenericCLI
-	// with a custom image — see docs/design/harness-authoring.md.
+	// HarnessInflectionPi drives Inflection AI's hosted Pi inference HTTP API
+	// (default https://api.inflection.ai/external/api/inference). This is the
+	// canonical name; the old "pi" kind was a FALSE FRIEND for Mario Zechner's
+	// pi-mono coding-agent CLI and is now the deprecated alias HarnessPi (M4.14).
+	HarnessInflectionPi HarnessKind = "inflection-pi"
+	// HarnessPi is the DEPRECATED alias for HarnessInflectionPi — still accepted
+	// (CanonicalHarnessKind maps it) but emits a deprecation path; new specs
+	// should use "inflection-pi".
 	HarnessPi HarnessKind = "pi"
 	// HarnessAider runs the `aider` CLI as a subprocess (CLI kind).
 	HarnessAider HarnessKind = "aider"
@@ -63,11 +67,21 @@ const (
 // at admission so a typo doesn't silently fall through to a no-op.
 func (k HarnessKind) Valid() bool {
 	switch k {
-	case HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessAider, HarnessGoose,
+	case HarnessClaudeCode, HarnessCodex, HarnessInflectionPi, HarnessPi, HarnessAider, HarnessGoose,
 		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes:
 		return true
 	}
 	return false
+}
+
+// CanonicalHarnessKind resolves a deprecated kind alias to its canonical kind
+// ("pi" → "inflection-pi"); all other kinds pass through unchanged. The harness
+// registry resolves through this so a deprecated alias still finds its impl.
+func CanonicalHarnessKind(k HarnessKind) HarnessKind {
+	if k == HarnessPi {
+		return HarnessInflectionPi
+	}
+	return k
 }
 
 // SessionPolicy controls whether a SINGLE harness AgentRun reuses state across
@@ -192,6 +206,13 @@ type HarnessCLISpec struct {
 // HarnessHTTPSpec configures HTTP-based harnesses (pi, generic-http).
 type HarnessHTTPSpec struct {
 	URL string `json:"url"`
+
+	// API selects the Hermes endpoint family: "" / "chat" → /v1/chat/completions
+	// (default, back-compat), "responses" → /v1/responses, "runs" → async
+	// /v1/runs. Only valid for the Hermes kind (M3.9).
+	// +kubebuilder:validation:Enum=chat;responses;runs
+	// +optional
+	API string `json:"api,omitempty"`
 
 	// +optional
 	Method string `json:"method,omitempty"` // POST default
@@ -338,9 +359,19 @@ func ValidateHarness(h HarnessSpec) error {
 		errs = append(errs, fmt.Errorf("harness.sessionPolicy=%q is invalid", h.SessionPolicy))
 	}
 	switch h.Kind {
-	case HarnessGenericHTTP, HarnessPi, HarnessHermes:
+	case HarnessGenericHTTP, HarnessPi, HarnessInflectionPi, HarnessHermes:
 		if h.HTTP == nil || strings.TrimSpace(h.HTTP.URL) == "" {
 			errs = append(errs, errors.New("harness.http.url is required for kind="+string(h.Kind)))
+		}
+		if h.HTTP != nil {
+			switch h.HTTP.API {
+			case "", "chat", "responses", "runs":
+			default:
+				errs = append(errs, fmt.Errorf("harness.http.api=%q is invalid", h.HTTP.API))
+			}
+			if h.HTTP.API != "" && h.HTTP.API != "chat" && h.Kind != HarnessHermes {
+				errs = append(errs, errors.New("harness.http.api (responses/runs) is only valid for kind=hermes"))
+			}
 		}
 		if h.HTTP != nil && h.HTTP.Retry != nil {
 			r := h.HTTP.Retry

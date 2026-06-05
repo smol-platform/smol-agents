@@ -45,9 +45,12 @@ func ValidateAgent(a Agent) error {
 		} else if err := ValidateHarness(*a.Spec.Harness); err != nil {
 			errs = append(errs, fmt.Errorf("spec.harness: %w", err))
 		}
-		// Persistent sessions need persistent storage.
+		// Persistent sessions need persistent storage — EXCEPT Hermes, whose
+		// cross-turn memory lives gateway-side (keyed by a session id), not in a
+		// workspace volume (M3.13 / D6). CLI kinds still require storage.
 		if a.Spec.Harness != nil &&
 			a.Spec.Harness.SessionPolicy == SessionPersistent &&
+			a.Spec.Harness.Kind != HarnessHermes &&
 			(a.Spec.Storage == nil || a.Spec.Storage.Kind == StorageNone) {
 			errs = append(errs, errors.New("harness.sessionPolicy=persistent requires spec.storage"))
 		}
@@ -73,8 +76,36 @@ func ValidateAgent(a Agent) error {
 	if a.Spec.Session != nil && a.Spec.Session.Interactive && !a.Spec.Session.Required {
 		errs = append(errs, errors.New("spec.session.interactive requires session.required=true (an attach plane needs a resident pod)"))
 	}
+	if a.Spec.Artifacts != nil {
+		errs = append(errs, validateArtifacts(a.Spec)...)
+	}
 
 	return errors.Join(errs...)
+}
+
+// validateArtifacts checks the ArtifactSpec: it needs AgentFS storage (the
+// workspace volume the sidecar reads), unique rule names, and workspace-relative
+// globs (no absolute paths or ".." traversal).
+func validateArtifacts(spec AgentSpec) []error {
+	var errs []error
+	if spec.Storage == nil || spec.Storage.Kind != StorageAgentFS {
+		errs = append(errs, errors.New("spec.artifacts requires spec.storage.kind=agentfs"))
+	}
+	seen := map[string]bool{}
+	for i, r := range spec.Artifacts.Outputs {
+		if r.Name == "" {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].name is required", i))
+		} else if seen[r.Name] {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].name %q is duplicated", i, r.Name))
+		}
+		seen[r.Name] = true
+		if r.Glob == "" {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].glob is required", i))
+		} else if strings.HasPrefix(r.Glob, "/") || strings.Contains(r.Glob, "..") {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].glob must be workspace-relative (no leading / or ..)", i))
+		}
+	}
+	return errs
 }
 
 // ValidateTool — R-AM-API-2 + R-AM-TOOL-1.
@@ -104,6 +135,9 @@ func ValidateTool(t Tool) error {
 	case ToolAgent:
 		if t.Spec.Agent == nil || t.Spec.Agent.Ref.Name == "" {
 			errs = append(errs, errors.New("spec.agent.ref.name is required for kind=agent"))
+		}
+		if t.Spec.Agent != nil && (t.Spec.Agent.MaxTokens < 0 || t.Spec.Agent.TimeoutSeconds < 0) {
+			errs = append(errs, errors.New("spec.agent.maxTokens/timeoutSeconds must be >= 0"))
 		}
 	case ToolFunction:
 		if t.Spec.Function == nil || t.Spec.Function.Name == "" {

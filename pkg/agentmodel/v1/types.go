@@ -97,6 +97,10 @@ type AgentSpec struct {
 	// an interactive attach plane (D4). +optional
 	Session *SessionSpec `json:"session,omitempty"`
 
+	// Artifacts declares workspace files to publish to S3 on pod shutdown (M2.23,
+	// requires AgentFS storage). +optional
+	Artifacts *ArtifactSpec `json:"artifacts,omitempty"`
+
 	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
 	// controller; cancel deletes the pod immediately. Slated for removal.
 	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`
@@ -141,6 +145,14 @@ func (k ToolKind) Valid() bool {
 	return false
 }
 
+// SupportedLoopToolKinds is the single source of truth for the tool kinds with
+// a production invoker on the loop-mode datapath (HTTP + MCP). ToolAgent and
+// ToolFunction are reserved and rejected for loop-mode agents until their
+// invokers land — fail-closed (D3) rather than silently no-op'ing the call.
+func SupportedLoopToolKinds() map[ToolKind]bool {
+	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true}
+}
+
 // MCPSpec describes an MCP transport target. R-AM-TOOL-3.
 type MCPSpec struct {
 	URL  string   `json:"url"`            // mcp://… or http(s)://…/mcp
@@ -155,9 +167,17 @@ type HTTPSpec struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// AgentTargetSpec lets one Agent invoke another.
+// AgentTargetSpec lets one Agent invoke another (A2A). MaxTokens/TimeoutSeconds
+// bound each child invocation — the fork-bomb / runaway-delegation guard for
+// multi-tenant A2A (D1); 0 means "inherit the caller's remaining budget".
 type AgentTargetSpec struct {
 	Ref ToolRef `json:"ref"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxTokens int64 `json:"maxTokens,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
 }
 
 // FunctionSpec is for in-process functions (test only).
@@ -240,6 +260,12 @@ type AgentRunSpec struct {
 	// secret payloads instead of inlining them here.
 	Input json.RawMessage `json:"input"`
 
+	// Seed is a best-effort determinism hint forwarded to backends that honor it
+	// (the OpenAI-compatible `seed` field). It is NOT a guarantee of bit-exact
+	// reproduction: providers may ignore it under load, and temperature, model
+	// version drift, and gateway-side loops all reintroduce nondeterminism. For
+	// exact offline reproduction, use record/replay (see
+	// docs/specs/determinism-and-replay.md). 0 omits the field entirely.
 	Seed int64 `json:"seed,omitempty"`
 
 	// BudgetOverride escalates the Agent's budget for THIS run. In harness mode
@@ -358,6 +384,22 @@ type RunStatus struct {
 	// PendingAction is set while State==RequiresAction (M5): it records the
 	// approval token a human must echo in spec.decision. +optional
 	PendingAction *PendingAction `json:"pendingAction,omitempty"`
+
+	// Trace is compact step/tool-call metadata that survives even when the full
+	// Steps are clamped out of the termination message (M2.2). +optional
+	Trace *TraceSummary `json:"trace,omitempty"`
+}
+
+// TraceSummary is compact metadata about a run's step/tool-call trace, surfaced
+// in Status even when the full Steps are clamped out of the bounded termination
+// message (M2.2). OverflowRef points at the full trace offloaded to object
+// storage when one was written (M2.9).
+type TraceSummary struct {
+	StepCount     int32  `json:"stepCount"`
+	ToolCallCount int32  `json:"toolCallCount"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	DroppedBytes  int64  `json:"droppedBytes,omitempty"`
+	OverflowRef   string `json:"overflowRef,omitempty"`
 }
 
 // AgentSession — long-running aggregation. R-AM-API-5.
@@ -374,6 +416,51 @@ type AgentSessionSpec struct {
 	// period so it can scale to zero; 0 (default) keeps it resident.
 	// +optional
 	IdleTimeoutSeconds int32 `json:"idleTimeoutSeconds,omitempty"`
+
+	// Turn-scaling knobs (M2.17). All default-preserve today's behavior (a
+	// serial, unbounded-history worker); read them via the accessors below so 0
+	// means "the default", not "zero".
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxConcurrentTurns int32 `json:"maxConcurrentTurns,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TurnRetentionSeconds int32 `json:"turnRetentionSeconds,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TurnHistoryLimit int32 `json:"turnHistoryLimit,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxTurnInputBytes int32 `json:"maxTurnInputBytes,omitempty"`
+}
+
+// ConcurrentTurns is the turn-processing width (default 1 — the proven serial
+// path, so maxConcurrentTurns is opt-in).
+func (s AgentSessionSpec) ConcurrentTurns() int32 {
+	if s.MaxConcurrentTurns > 0 {
+		return s.MaxConcurrentTurns
+	}
+	return 1
+}
+
+// HistoryLimit is the max retained turns in the worker's in-memory history
+// (0 = unbounded, today's behavior).
+func (s AgentSessionSpec) HistoryLimit() int32 { return s.TurnHistoryLimit }
+
+// RetentionSeconds is the NATS turn-stream retention (default 3600s).
+func (s AgentSessionSpec) RetentionSeconds() int32 {
+	if s.TurnRetentionSeconds > 0 {
+		return s.TurnRetentionSeconds
+	}
+	return 3600
+}
+
+// InputBytesCap is the per-turn input ceiling (default 1 MiB).
+func (s AgentSessionSpec) InputBytesCap() int32 {
+	if s.MaxTurnInputBytes > 0 {
+		return s.MaxTurnInputBytes
+	}
+	return 1 << 20
 }
 
 type AgentSessionStatus struct {

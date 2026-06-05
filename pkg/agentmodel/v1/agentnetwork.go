@@ -278,6 +278,19 @@ func ValidateAgentNetwork(s AgentNetworkSpec) error {
 	return errors.Join(errs...)
 }
 
+// metadataNet is the link-local / instance-metadata range; an egress allow rule
+// may never overlap it.
+var metadataNet = func() *net.IPNet { _, n, _ := net.ParseCIDR("169.254.0.0/16"); return n }()
+
+// metadataOverlap reports whether n intersects the metadata range — either n is
+// inside it (e.g. 169.254.169.254/32) or n contains it (e.g. 0.0.0.0/0).
+func metadataOverlap(n *net.IPNet) bool {
+	if n == nil {
+		return false
+	}
+	return metadataNet.Contains(n.IP) || n.Contains(metadataNet.IP)
+}
+
 func validateIdentityProxy(p IdentityProxySpec) []error {
 	var errs []error
 	if len(p.Resources) == 0 {
@@ -340,8 +353,12 @@ func validateIdentityProxy(p IdentityProxySpec) []error {
 		errs = append(errs, errors.New("identityProxy.tts.jwksUrl is required when a resource sets credential (broker verifies the TraT)"))
 	}
 	for i, rule := range p.Egress.Allow {
-		if _, _, err := net.ParseCIDR(rule.CIDR); err != nil {
+		if _, ipnet, err := net.ParseCIDR(rule.CIDR); err != nil {
 			errs = append(errs, fmt.Errorf("egress.allow[%d].cidr: %w", i, err))
+		} else if metadataOverlap(ipnet) {
+			// The instance-metadata range is the canonical SSRF / cloud-credential
+			// exfil target; an allow rule may never open it (M1.19, D3).
+			errs = append(errs, fmt.Errorf("egress.allow[%d].cidr %q overlaps the metadata range 169.254.0.0/16 (the egress floor is inviolable)", i, rule.CIDR))
 		}
 		if rule.Protocol != "" && rule.Protocol != "tcp" && rule.Protocol != "udp" {
 			errs = append(errs, fmt.Errorf("egress.allow[%d].protocol=%q invalid", i, rule.Protocol))
