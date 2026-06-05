@@ -23,6 +23,10 @@ spec:
         - name: State
           type: string
           jsonPath: .status.state
+        - name: Pending
+          type: string
+          description: The pending human action a run is waiting on (e.g. pre-run), if any (M5).
+          jsonPath: .status.pendingAction.kind
         - name: Steps
           type: integer
           jsonPath: .status.usage.steps
