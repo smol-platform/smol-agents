@@ -1173,6 +1173,21 @@ spec:
 			matches: []string{"denied", "wireguardMesh must be nil"},
 			cleanup: []string{"delete", "agentnetwork", "webhook-bad-anet", "-n", "tenant-a"},
 		},
+		{
+			// M2.22: an AgentSession referencing a non-existent Agent must be
+			// rejected at admission (regression guard for the same webhook-config
+			// gap fixed for the agentpolicy gate — agentsessions was omitted from
+			// the ValidatingWebhookConfiguration, silencing this webhook).
+			name: "agentsession-dangling-agentref",
+			yaml: `apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: {name: webhook-bad-session, namespace: tenant-a}
+spec:
+  agentRef: no-such-agent-xyz
+`,
+			matches: []string{"denied", "no such Agent"},
+			cleanup: []string{"delete", "agentsession", "webhook-bad-session", "-n", "tenant-a"},
+		},
 	}
 
 	for _, tc := range cases {

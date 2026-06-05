@@ -150,3 +150,32 @@ webhooks:
         apiVersions: [v1]
         resources: [agentruns]
         operations: [CREATE, UPDATE]
+---
+# AgentSession admission webhook (M2.22): rejects an AgentSession whose spec.agentRef
+# does not resolve to an Agent in the same namespace, failing fast at apply instead of
+# a 15s Pending limbo. Handler registered by SetupAgentSessionWebhook (cmd/manager/main.go);
+# this config is what makes the apiserver call it (it was previously omitted, so the
+# webhook was silently inactive — same class of gap as the agentpolicy gate above). The
+# reconciler keeps NotFound→Pending as the backstop.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: smol-agents-operator-validating-agentsession
+  annotations:
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
+webhooks:
+  - name: validate.agentsession.runtime.agents.smol-agents.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-runtime-agents-smol-agents-ai-v1-agentsession
+    rules:
+      - apiGroups: [runtime.agents.smol-agents.ai]
+        apiVersions: [v1]
+        resources: [agentsessions]
+        operations: [CREATE, UPDATE]
