@@ -42,6 +42,7 @@ func All() []Scenario {
 		wgClient,
 		agentRun,
 		cancel,
+		approvalGate,
 		webhook,
 		kataIsolation,
 		smolAgentPhase,
@@ -595,6 +596,72 @@ func (s slowLLM) Chat(ctx context.Context, _ agentruntime.ChatRequest) (rt.LLMDe
 			FinalAnswer: &rt.FinalAnswer{Output: json.RawMessage(`{"answer":"never"}`)},
 		}, nil
 	}
+}
+
+var approvalGate = Scenario{
+	ID:       "R-E2E-SCN-APPROVAL",
+	Name:     "prerun-approval-gate",
+	Requires: CapKubernetes,
+	Run:      runApprovalGate,
+}
+
+// runApprovalGate exercises the M5 pre-run human-approval gate end-to-end via the
+// real operator: an AgentRun with requireApprovalBeforeRun=true is held in
+// RequiresAction (a token minted, NO pod) until a matching spec.decision approves
+// it, after which it proceeds. Reuses the researcher Agent kind-verify.sh applied.
+func runApprovalGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const run = "approval-test"
+	manifest := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: approval-test
+  namespace: tenant-a
+spec:
+  agentRef: researcher
+  requireApprovalBeforeRun: true
+  input:
+    q: "approve me"
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply approval-test run: %v", err)
+	}
+
+	// 1. Gate holds the run in RequiresAction with a minted token + no pod.
+	var token string
+	err := env.WaitFor(ctx, "run-requires-action", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		if strings.TrimSpace(string(st)) != "RequiresAction" {
+			return false
+		}
+		tk, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.pendingAction.token}")
+		token = strings.TrimSpace(string(tk))
+		return token != ""
+	})
+	if err != nil {
+		t.Fatalf("run never reached RequiresAction with a token: %v", err)
+	}
+	if out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "pod", run, "--ignore-not-found", "-o", "name"); strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("a pod exists while the run is still awaiting approval: %q", out)
+	}
+	t.Logf("M5 gate: run held in RequiresAction (token=%s), no pod", token)
+
+	// 2. Approve with the matching token → the run leaves RequiresAction.
+	patch := `{"spec":{"decision":{"token":"` + token + `","approve":true}}}`
+	if _, err := env.Exec(ctx, ExecTarget{}, "patch", "-n", "tenant-a", "agentrun", run, "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("apply approval decision: %v", err)
+	}
+	if err := env.WaitFor(ctx, "run-proceeds", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		s := strings.TrimSpace(string(st))
+		return s != "" && s != "RequiresAction"
+	}); err != nil {
+		t.Fatalf("run did not proceed after approval: %v", err)
+	}
+	t.Log("M5 gate: approved run left RequiresAction and proceeded")
 }
 
 var webhook = Scenario{
