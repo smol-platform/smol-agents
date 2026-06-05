@@ -51,9 +51,11 @@ func runAgentRun(args []string) int {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
-	// Register the loop-mode tool invokers (HTTP today; M2.12/M2.13). The tool
-	// catalog itself is loaded from tools.json by RunOnce.
-	toolInvokers := invokers.Default(leaser, nil)
+	// Register the loop-mode tool invokers (HTTP + MCP; M2.12/M2.14). The tool
+	// catalog itself is loaded from tools.json by RunOnce. WireAgentInvoker adds
+	// the kind=agent (A2A) invoker when the pod has in-cluster API access (M3 A1);
+	// without it kind=agent stays fail-closed.
+	toolInvokers := invokers.WireAgentInvoker(invokers.Default(leaser, nil))
 	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser),
 		agentruntime.WithInvokers(toolInvokers))
 	wire := agentruntime.ResultToWire(res, runErr)

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,6 +30,9 @@ func newAgentReconcilerForTest(t *testing.T, initial ...client.Object) *AgentRec
 	}
 	if err := amv1.AddToScheme(sch); err != nil {
 		t.Fatalf("amv1 scheme: %v", err)
+	}
+	if err := rbacv1.AddToScheme(sch); err != nil {
+		t.Fatalf("rbacv1 scheme: %v", err)
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(sch).
@@ -156,23 +160,56 @@ func TestIsStdioMCPTool(t *testing.T) {
 // invoker (agent/function) is failed closed; a harness-mode agent with the same
 // inert tool ref is not false-positived.
 func TestAgentReconciler_ToolKindUnsupported(t *testing.T) {
-	agentTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "delegate", Namespace: "tenant-a"}, Spec: pure.ToolSpec{Kind: pure.ToolAgent}}
+	// kind=function has no production invoker (test-only) and stays reserved even
+	// after A2A (kind=agent) was wired — so it is the canonical fail-closed case.
+	fnTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "fn", Namespace: "tenant-a"}, Spec: pure.ToolSpec{Kind: pure.ToolFunction, Function: &pure.FunctionSpec{Name: "noop"}}}
 	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
 
 	loop := loopAgent("loopy", "tenant-a", "anthropic")
-	loop.Spec.Tools = []pure.ToolRef{{Name: "delegate"}}
-	r := newAgentReconcilerForTest(t, loop, provider, agentTool)
+	loop.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
+	r := newAgentReconcilerForTest(t, loop, provider, fnTool)
 	got := reconcileAgent(t, r, "tenant-a", "loopy")
 	if got.Status.Phase != "Failed" || got.Status.Reason != "ToolKindUnsupported" {
-		t.Fatalf("loop agent w/ kind:agent tool → want Failed/ToolKindUnsupported, got %q/%q", got.Status.Phase, got.Status.Reason)
+		t.Fatalf("loop agent w/ kind:function tool → want Failed/ToolKindUnsupported, got %q/%q", got.Status.Phase, got.Status.Reason)
 	}
 
 	h := harnessAgent("harn", "tenant-a")
-	h.Spec.Tools = []pure.ToolRef{{Name: "delegate"}}
-	r2 := newAgentReconcilerForTest(t, h, agentTool)
+	h.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
+	r2 := newAgentReconcilerForTest(t, h, fnTool)
 	got2 := reconcileAgent(t, r2, "tenant-a", "harn")
 	if got2.Status.Reason == "ToolKindUnsupported" {
 		t.Fatalf("harness-mode inert tool ref must NOT be failed as ToolKindUnsupported (got %q/%q)", got2.Status.Phase, got2.Status.Reason)
+	}
+}
+
+func TestAgentReconciler_A2ARBACGrant(t *testing.T) {
+	// A loop Agent that declares a kind=agent tool is now supported (A2A wired)
+	// and reconciles to Ready, and the operator grants it the namespaced A2A
+	// Role + RoleBinding so its run pods may create child AgentRuns.
+	agentTool := &amv1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "delegate", Namespace: "tenant-a"},
+		Spec:       pure.ToolSpec{Kind: pure.ToolAgent, Agent: &pure.AgentTargetSpec{Ref: pure.ToolRef{Name: "child"}}},
+	}
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	loop := loopAgent("composer", "tenant-a", "anthropic")
+	loop.Spec.Tools = []pure.ToolRef{{Name: "delegate"}}
+
+	r := newAgentReconcilerForTest(t, loop, provider, agentTool)
+	got := reconcileAgent(t, r, "tenant-a", "composer")
+	if got.Status.Phase != "Ready" {
+		t.Fatalf("loop agent w/ kind=agent tool → want Ready, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+	roleName := builders.AgentA2ARoleName("composer")
+	role := &rbacv1.Role{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: roleName}, role); err != nil {
+		t.Fatalf("A2A Role %q not created: %v", roleName, err)
+	}
+	rb := &rbacv1.RoleBinding{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: roleName}, rb); err != nil {
+		t.Fatalf("A2A RoleBinding %q not created: %v", roleName, err)
+	}
+	if len(rb.Subjects) == 0 || rb.Subjects[0].Name != builders.AgentSAName("composer") {
+		t.Errorf("A2A RoleBinding must bind the agent's run SA %q, got %+v", builders.AgentSAName("composer"), rb.Subjects)
 	}
 }
 

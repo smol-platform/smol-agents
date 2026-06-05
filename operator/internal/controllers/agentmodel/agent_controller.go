@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -114,6 +115,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Resolve every referenced Tool.
 	resolved := make([]string, 0, len(agent.Spec.Tools))
+	hasAgentTool := false
 	for _, ref := range agent.Spec.Tools {
 		ns := ref.Namespace
 		if ns == "" {
@@ -144,7 +146,21 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				fmt.Sprintf("tool %q stdio MCP %q is not on the operator allow-list", tool.Name, tool.Spec.MCP.URL))
 			return ctrl.Result{}, r.Status().Update(ctx, agent)
 		}
+		if tool.Spec.Kind == pure.ToolAgent {
+			hasAgentTool = true
+		}
 		resolved = append(resolved, tool.Name)
+	}
+
+	// A2A (M3.6/D1): an Agent that declares a kind=agent tool gets a namespaced
+	// Role+RoleBinding granting its run pods authority to create + observe CHILD
+	// AgentRuns in their OWN namespace only. A non-A2A Agent's pods keep zero
+	// apiserver authority. Created before Ready so the grant exists by the time a
+	// run pod schedules.
+	if hasAgentTool {
+		if err := r.ensureA2ARBAC(ctx, agent); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure A2A RBAC: %w", err)
+		}
 	}
 
 	agent.Status.ResolvedTools = resolved
@@ -189,6 +205,37 @@ func (r *AgentReconciler) ensureServiceAccount(ctx context.Context, agent *amv1.
 		return r.Create(ctx, sa)
 	}
 	return getErr
+}
+
+// ensureA2ARBAC creates (once) the namespaced Role + RoleBinding that let an
+// A2A-capable Agent's run pods create/observe child AgentRuns in their own
+// namespace (M3.6/D1). Both are owned by the Agent (GC'd with it) and bind the
+// Agent's run ServiceAccount. Idempotent; pre-existing objects are left as-is.
+func (r *AgentReconciler) ensureA2ARBAC(ctx context.Context, agent *amv1.Agent) error {
+	role := builders.AgentA2ARole(agent)
+	if err := ctrl.SetControllerReference(agent, role, r.Scheme); err != nil {
+		return err
+	}
+	existingRole := &rbacv1.Role{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: role.Namespace, Name: role.Name}, existingRole); apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, role); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	rb := builders.AgentA2ARoleBinding(agent)
+	if err := ctrl.SetControllerReference(agent, rb, r.Scheme); err != nil {
+		return err
+	}
+	existingRB := &rbacv1.RoleBinding{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: rb.Namespace, Name: rb.Name}, existingRB); apierrors.IsNotFound(err) {
+		return r.Create(ctx, rb)
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // toPure unwraps the K8s wrapper into the pure Agent shape so the

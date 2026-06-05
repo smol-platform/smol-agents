@@ -39,6 +39,25 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	main.Args = nil
 	main.VolumeMounts = append(main.VolumeMounts, runSpecMount())
 
+	// A2A (M3 A1): give a loop run the identity its in-pod AgentRunInvoker needs
+	// to create CHILD AgentRuns — its own namespace (downward API), its run name
+	// (the delegation-tree label), and its depth in that tree (from the
+	// invoker's child label; absent = top-level = 0). Loop mode only; the harness
+	// path has no in-process invoker. The invoker is still gated by the pod's
+	// RBAC (the <agent>-a2a Role) + a healthy in-cluster client, so this env is
+	// inert for a non-A2A run.
+	if mode != pure.ModeHarness {
+		main.Env = append(main.Env,
+			corev1.EnvVar{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+			}},
+			corev1.EnvVar{Name: "RUN_NAME", Value: run.Name},
+		)
+		if d := run.Labels[a2aDepthLabel]; d != "" {
+			main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_DEPTH", Value: d})
+		}
+	}
+
 	labels := map[string]string{
 		"app.kubernetes.io/name":      "smol-agents",
 		"app.kubernetes.io/component": "agent-run",

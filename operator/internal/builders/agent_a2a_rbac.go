@@ -16,6 +16,14 @@ import (
 
 const a2aAPIGroup = "runtime.agents.smol-agents.ai"
 
+// a2aDepthLabel mirrors pkg/agentruntime/invokers.DepthLabel: the depth a child
+// AgentRun sits at in the A2A delegation tree. The parent's invoker stamps it on
+// children; BuildAgentRunPod reads it back into the child pod's A2A_DEPTH env so
+// the child's own invoker enforces the recursion bound. Top-level runs lack it
+// (depth 0). Kept as a literal here to avoid the operator module depending on
+// the root module's invokers package.
+const a2aDepthLabel = "agents.smol-agents.ai/a2a-depth"
+
 // AgentA2ARoleName is the Role/RoleBinding name for an Agent's A2A grant.
 func AgentA2ARoleName(agentName string) string { return agentName + "-a2a" }
 

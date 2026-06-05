@@ -146,11 +146,12 @@ func (k ToolKind) Valid() bool {
 }
 
 // SupportedLoopToolKinds is the single source of truth for the tool kinds with
-// a production invoker on the loop-mode datapath (HTTP + MCP). ToolAgent and
-// ToolFunction are reserved and rejected for loop-mode agents until their
-// invokers land — fail-closed (D3) rather than silently no-op'ing the call.
+// a production invoker on the loop-mode datapath: HTTP + MCP, and ToolAgent
+// (A2A — the AgentRunInvoker spawns a child AgentRun; M3 A1). ToolFunction
+// remains reserved (test-only invoker) and is rejected for loop-mode agents —
+// fail-closed (D3) rather than silently no-op'ing the call.
 func SupportedLoopToolKinds() map[ToolKind]bool {
-	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true}
+	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true}
 }
 
 // MCPSpec describes an MCP transport target. R-AM-TOOL-3.

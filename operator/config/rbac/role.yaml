@@ -28,6 +28,14 @@ rules:
   - apiGroups: [runtime.agents.smol-agents.ai]
     resources: [agents, tools, modelproviders, agentruns, agentsessions, agentpolicies, agentrunquotas, agentnetworks, dynamiccredentialbackends, memorystores, memoryretrievers]
     verbs: [get, list, watch, update, patch]
+  # A2A (M3.6): the operator grants each kind=agent Agent a Role allowing its run
+  # pods to CREATE child AgentRuns. k8s privilege-escalation prevention requires
+  # the granting SA to itself hold every verb it grants — so the operator needs
+  # create on agentruns (it never creates runs itself; this only satisfies the
+  # escalation check for ensureA2ARBAC).
+  - apiGroups: [runtime.agents.smol-agents.ai]
+    resources: [agentruns]
+    verbs: [create]
   - apiGroups: [runtime.agents.smol-agents.ai]
     resources:
       - agents/status
@@ -81,9 +89,11 @@ rules:
     resources: [services]
     verbs: [get, list, watch, create, update, patch, delete]
 
-  # eBPF loader RBAC subjects
+  # eBPF loader RBAC subjects (cluster-scoped) + per-Agent A2A Role/RoleBinding
+  # (namespaced, M3.6). The manager already holds agentruns verbs (above), so
+  # granting an A2A Role that carries the same verbs is not privilege escalation.
   - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterroles, clusterrolebindings]
+    resources: [clusterroles, clusterrolebindings, roles, rolebindings]
     verbs: [get, list, watch, create, update, patch, delete]
 
   # Events
