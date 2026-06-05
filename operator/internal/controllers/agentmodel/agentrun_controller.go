@@ -689,7 +689,11 @@ func (r *AgentRunReconciler) hermesSessionAgent(ctx context.Context, run *amv1.A
 }
 
 func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent, provider *builders.RunProvider) error {
-	cm, err := builders.BuildRunSpecConfigMap(run, r.hermesSessionAgent(ctx, run, agent), provider)
+	tools, err := r.resolveRunTools(ctx, agent)
+	if err != nil {
+		return err
+	}
+	cm, err := builders.BuildRunSpecConfigMapWithTools(run, r.hermesSessionAgent(ctx, run, agent), provider, tools)
 	if err != nil {
 		return err
 	}
@@ -702,6 +706,34 @@ func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentR
 		return r.Create(ctx, cm)
 	}
 	return getErr
+}
+
+// resolveRunTools fetches the Agent's referenced Tool CRs into the pure catalog
+// the executor loads from tools.json (M2.12). Without this the run pod ships no
+// tool definitions and the executor rejects every tool call ("tool not found in
+// catalog"). Loop mode only — harness agents drive their own tools. A missing
+// Tool is skipped (the Agent reconciler already gates readiness on resolution),
+// so a transient race can't strand the run.
+func (r *AgentRunReconciler) resolveRunTools(ctx context.Context, agent *amv1.Agent) ([]pure.Tool, error) {
+	if agent.Spec.Mode == pure.ModeHarness {
+		return nil, nil
+	}
+	tools := make([]pure.Tool, 0, len(agent.Spec.Tools))
+	for _, ref := range agent.Spec.Tools {
+		ns := ref.Namespace
+		if ns == "" {
+			ns = agent.Namespace
+		}
+		t := &amv1.Tool{}
+		if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, t); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		tools = append(tools, pure.Tool{Name: t.Name, Spec: t.Spec})
+	}
+	return tools, nil
 }
 
 // foldRunResult parses the run container's termination message (the RunResult
