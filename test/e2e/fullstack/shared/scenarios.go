@@ -43,6 +43,7 @@ func All() []Scenario {
 		agentRun,
 		cancel,
 		approvalGate,
+		approvalReject,
 		egressFloor,
 		policyGate,
 		toolKindGuard,
@@ -669,6 +670,76 @@ spec:
 		t.Fatalf("run did not proceed after approval: %v", err)
 	}
 	t.Log("M5 gate: approved run left RequiresAction and proceeded")
+}
+
+var approvalReject = Scenario{
+	ID:       "R-E2E-SCN-APPROVAL-REJECT",
+	Name:     "prerun-approval-reject",
+	Requires: CapKubernetes,
+	Run:      runApprovalReject,
+}
+
+// runApprovalReject exercises the M5 pre-run gate's DENY half through the real
+// operator (the approve half is runApprovalGate): an AgentRun held in
+// RequiresAction that receives a matching spec.decision with approve:false must
+// be driven to a terminal Cancelled state (TerminationReason carrying
+// "decision:denied") with NO pod ever created. Reuses the researcher Agent;
+// distinct run name so it can't collide with the approve scenario.
+func runApprovalReject(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const run = "approval-reject-test"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", "tenant-a", "--ignore-not-found")
+	manifest := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: approval-reject-test
+  namespace: tenant-a
+spec:
+  agentRef: researcher
+  requireApprovalBeforeRun: true
+  input:
+    q: "reject me"
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply approval-reject run: %v", err)
+	}
+
+	// 1. Gate holds the run in RequiresAction with a minted token.
+	var token string
+	if err := env.WaitFor(ctx, "reject-requires-action", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		if strings.TrimSpace(string(st)) != "RequiresAction" {
+			return false
+		}
+		tk, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.pendingAction.token}")
+		token = strings.TrimSpace(string(tk))
+		return token != ""
+	}); err != nil {
+		t.Fatalf("run never reached RequiresAction with a token: %v", err)
+	}
+
+	// 2. Deny with the matching token → terminal Cancelled, no pod.
+	patch := `{"spec":{"decision":{"token":"` + token + `","approve":false,"reason":"e2e-reject"}}}`
+	if _, err := env.Exec(ctx, ExecTarget{}, "patch", "-n", "tenant-a", "agentrun", run, "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("apply reject decision: %v", err)
+	}
+	if err := env.WaitFor(ctx, "run-cancelled", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		return strings.TrimSpace(string(st)) == "Cancelled"
+	}); err != nil {
+		t.Fatalf("denied run did not reach Cancelled: %v", err)
+	}
+	tr, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.terminationReason}")
+	if !strings.Contains(string(tr), "decision:denied") {
+		t.Errorf("terminationReason=%q, want it to carry decision:denied", tr)
+	}
+	if out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "pod", run, "--ignore-not-found", "-o", "name"); strings.TrimSpace(string(out)) != "" {
+		t.Errorf("a pod exists for a denied run: %q", out)
+	}
+	t.Log("M5 gate: denied run reached terminal Cancelled (decision:denied) with no pod")
 }
 
 var egressFloor = Scenario{
