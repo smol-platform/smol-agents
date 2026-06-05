@@ -168,6 +168,46 @@ module agent_execution {
     sawIllegalCall' = sawIllegalCall,
   }
 
+  // ---- Pre-run / mid-run human approval pause (M5.5) ----
+  // A gated run parks in RequiresAction with ALL budget counters frozen, then
+  // resumes (approve) or terminates (deny/expire). No budget is consumed while
+  // paused — the counter-equality below is the formal encoding of the freeze.
+
+  action awaitApproval = all {
+    phase == Running,
+    phase' = RequiresAction,
+    steps' = steps,
+    tokens' = tokens,
+    toolCalls' = toolCalls,
+    wall' = wall,
+    lastTool' = lastTool,
+    sawIllegalCall' = sawIllegalCall,
+  }
+
+  action approve = all {
+    phase == RequiresAction,
+    phase' = Running,
+    steps' = steps,
+    tokens' = tokens,
+    toolCalls' = toolCalls,
+    wall' = wall,
+    lastTool' = lastTool,
+    sawIllegalCall' = sawIllegalCall,
+  }
+
+  action denyOrExpire =
+    nondet term = oneOf(Set(Cancelled, Expired, Failed))
+    all {
+      phase == RequiresAction,
+      phase' = term,
+      steps' = steps,
+      tokens' = tokens,
+      toolCalls' = toolCalls,
+      wall' = wall,
+      lastTool' = lastTool,
+      sawIllegalCall' = sawIllegalCall,
+    }
+
   action step =
     nondet dt = oneOf(Set(0, 1, 5, 10, 25))
     nondet t  = oneOf(Set(TA, TB, TC, TIntruder))
@@ -182,6 +222,9 @@ module agent_execution {
       cancel,
       fail_,
       stay,
+      awaitApproval,
+      approve,
+      denyOrExpire,
     }
 
   // ------------------------------ Invariants ----------------------------
@@ -225,5 +268,17 @@ module agent_execution {
 
   run rejectsIntruder = {
     init.then(begin).then(toolReject(TIntruder)).then(complete)
+  }
+
+  // M5.5: a gated run pauses for approval with budget frozen, then resumes and
+  // completes — Safety (incl. BudgetNeverExceeded) holds across the pause.
+  run humanInTheLoop = {
+    init.then(begin).then(plan(5)).then(awaitApproval).then(approve).then(toolGood(TA)).then(complete)
+  }
+
+  // A denied/expired approval terminates from RequiresAction without consuming
+  // further budget.
+  run approvalDenied = {
+    init.then(begin).then(awaitApproval).then(denyOrExpire)
   }
 }

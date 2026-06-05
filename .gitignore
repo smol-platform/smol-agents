@@ -63,3 +63,6 @@ Thumbs.db
 
 # agentbench results
 bench/results/
+
+# stray go-build binary at repo root (the agentbench source lives in operator/cmd/agentbench)
+/agentbench
