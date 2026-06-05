@@ -97,6 +97,61 @@ func TestAgentReconciler_PolicyGate_AllowsConformingProvider(t *testing.T) {
 	}
 }
 
+// M2.15: a loop agent with a kind=mcp tool on a stdio (non-http) URL is failed
+// closed unless the URL is on the operator allow-list; http(s) MCP is unaffected.
+func TestAgentReconciler_StdioMCPAllowList(t *testing.T) {
+	provider := func() *amv1.ModelProvider {
+		return &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	}
+	stdioTool := func() *amv1.Tool {
+		return &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "stdio-mcp", Namespace: "tenant-a"},
+			Spec: pure.ToolSpec{Kind: pure.ToolMCP, MCP: &pure.MCPSpec{URL: "mcp://local-server"}}}
+	}
+	loopMCP := func(name string) *amv1.Agent {
+		a := loopAgent(name, "tenant-a", "anthropic")
+		a.Spec.Tools = []pure.ToolRef{{Name: "stdio-mcp"}}
+		return a
+	}
+
+	// Not allow-listed → Failed/StdioMCPNotAllowed.
+	r := newAgentReconcilerForTest(t, loopMCP("loopy"), provider(), stdioTool())
+	if got := reconcileAgent(t, r, "tenant-a", "loopy"); got.Status.Phase != "Failed" || got.Status.Reason != "StdioMCPNotAllowed" {
+		t.Fatalf("un-allow-listed stdio MCP → want Failed/StdioMCPNotAllowed, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+
+	// Allow-listed → passes the stdio gate.
+	r2 := newAgentReconcilerForTest(t, loopMCP("loopy2"), provider(), stdioTool())
+	r2.AllowedStdioMCP = map[string]bool{"mcp://local-server": true}
+	if got := reconcileAgent(t, r2, "tenant-a", "loopy2"); got.Status.Reason == "StdioMCPNotAllowed" {
+		t.Errorf("allow-listed stdio MCP must pass the gate, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+
+	// http(s) MCP is unaffected by the stdio gate, even with an empty allow-list.
+	httpTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "http-mcp", Namespace: "tenant-a"},
+		Spec: pure.ToolSpec{Kind: pure.ToolMCP, MCP: &pure.MCPSpec{URL: "https://mcp.example/mcp"}}}
+	loopH := loopAgent("httpy", "tenant-a", "anthropic")
+	loopH.Spec.Tools = []pure.ToolRef{{Name: "http-mcp"}}
+	rH := newAgentReconcilerForTest(t, loopH, provider(), httpTool)
+	if got := reconcileAgent(t, rH, "tenant-a", "httpy"); got.Status.Reason == "StdioMCPNotAllowed" {
+		t.Errorf("http MCP must not hit the stdio gate, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+func TestIsStdioMCPTool(t *testing.T) {
+	mcp := func(url string) pure.ToolSpec { return pure.ToolSpec{Kind: pure.ToolMCP, MCP: &pure.MCPSpec{URL: url}} }
+	if !isStdioMCPTool(mcp("mcp://x")) {
+		t.Error("mcp:// must be stdio")
+	}
+	for _, u := range []string{"https://x/mcp", "http://x/mcp", ""} {
+		if isStdioMCPTool(mcp(u)) {
+			t.Errorf("%q must not be stdio", u)
+		}
+	}
+	if isStdioMCPTool(pure.ToolSpec{Kind: pure.ToolHTTP, HTTP: &pure.HTTPSpec{URL: "mcp://x"}}) {
+		t.Error("non-mcp kind must not be stdio-mcp")
+	}
+}
+
 // M2.16: a loop-mode agent referencing a tool whose kind has no production
 // invoker (agent/function) is failed closed; a harness-mode agent with the same
 // inert tool ref is not false-positived.

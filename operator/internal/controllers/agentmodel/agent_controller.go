@@ -5,6 +5,7 @@ package agentmodel
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,6 +29,11 @@ import (
 type AgentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// AllowedStdioMCP is the operator's cluster allow-list of approved stdio MCP
+	// server URLs (D7/D11, M2.15). A kind=mcp tool with a stdio (non-http) URL is
+	// admission-refused unless its URL is in this set — arbitrary tenant stdio is
+	// denied fail-closed. http(s) MCP is unaffected. Empty = no stdio permitted.
+	AllowedStdioMCP map[string]bool
 }
 
 // SetupWithManager wires the controller. We Own ServiceAccount so the
@@ -130,6 +136,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				fmt.Sprintf("tool %q kind %q has no loop-mode invoker", tool.Name, tool.Spec.Kind))
 			return ctrl.Result{}, r.Status().Update(ctx, agent)
 		}
+		// Fail closed (D7/D11, M2.15): a kind=mcp tool with a stdio (non-http) URL
+		// must resolve to an operator-approved server; arbitrary tenant stdio is
+		// denied. http(s) MCP is unaffected.
+		if agent.Spec.Mode != pure.ModeHarness && isStdioMCPTool(tool.Spec) && !r.AllowedStdioMCP[tool.Spec.MCP.URL] {
+			r.setStatus(agent, "Failed", "StdioMCPNotAllowed",
+				fmt.Sprintf("tool %q stdio MCP %q is not on the operator allow-list", tool.Name, tool.Spec.MCP.URL))
+			return ctrl.Result{}, r.Status().Update(ctx, agent)
+		}
 		resolved = append(resolved, tool.Name)
 	}
 
@@ -188,4 +202,15 @@ func (r *AgentReconciler) setStatus(a *amv1.Agent, phase, reason, msg string) {
 	a.Status.Reason = reason
 	a.Status.Message = msg
 	a.Status.ObservedGeneration = a.Generation
+}
+
+// isStdioMCPTool reports whether a tool is a kind=mcp tool targeting a stdio
+// (non-http) MCP server — the subject of the M2.15 operator allow-list gate.
+// http(s) MCP URLs (handled by MCPInvoker) are not stdio.
+func isStdioMCPTool(spec pure.ToolSpec) bool {
+	if spec.Kind != pure.ToolMCP || spec.MCP == nil || spec.MCP.URL == "" {
+		return false
+	}
+	u := spec.MCP.URL
+	return !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://")
 }

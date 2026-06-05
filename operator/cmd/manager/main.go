@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -45,6 +46,7 @@ func main() {
 	var defaultNamespaceRunConcurrency int
 	var enableAdmissionQueue bool
 	var maxRunPriority int
+	var allowedStdioMCP string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -65,6 +67,8 @@ func main() {
 	flag.BoolVar(&enableAdmissionQueue, "enable-admission-queue", false,
 		"per-namespace priority ordering of queued runs at the concurrency cap (M1.13; off = M1.12 behavior)")
 	flag.IntVar(&maxRunPriority, "max-run-priority", 1000, "clamp for AgentRun.spec.priority (M1.13)")
+	flag.StringVar(&allowedStdioMCP, "allowed-stdio-mcp", "",
+		"comma-separated allow-list of approved stdio MCP server URLs (M2.15; empty = deny all stdio MCP)")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -110,6 +114,7 @@ func main() {
 	// runtime.agents.smol-agents.ai/v1 — agent-model CRDs.
 	if err := (&agentmodel.AgentReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		AllowedStdioMCP: parseAllowList(allowedStdioMCP),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register Agent controller")
 		os.Exit(1)
@@ -197,4 +202,15 @@ func main() {
 		setupLog.Error(err, "manager exit")
 		os.Exit(1)
 	}
+}
+
+// parseAllowList turns a comma-separated flag value into a set, trimming blanks.
+func parseAllowList(csv string) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range strings.Split(csv, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out[e] = true
+		}
+	}
+	return out
 }
