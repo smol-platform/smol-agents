@@ -46,6 +46,7 @@ func All() []Scenario {
 		egressFloor,
 		policyGate,
 		toolKindGuard,
+		stdioMCPGate,
 		webhook,
 		kataIsolation,
 		smolAgentPhase,
@@ -812,6 +813,64 @@ spec:
 	}
 	assertAgentFailedClosed(t, env, ctx, ns, agent, "ToolKindUnsupported")
 	t.Log("M2.16: loop Agent with an unwired kind=agent Tool was failed closed (ToolKindUnsupported)")
+}
+
+var stdioMCPGate = Scenario{
+	ID:       "R-E2E-SCN-STDIO-MCP",
+	Name:     "stdio-mcp-not-allowlisted-failclosed",
+	Requires: CapKubernetes,
+	Run:      runStdioMCPGate,
+}
+
+// runStdioMCPGate exercises the M2.15 stdio-MCP allow-list gate through the real
+// operator: a loop-mode Agent referencing a kind=mcp Tool whose URL is a stdio
+// (mcp://) endpoint NOT on the operator allow-list must be flipped to
+// Failed/StdioMCPNotAllowed (arbitrary tenant stdio is denied; http(s) MCP is
+// unaffected). The L1 operator ships an empty allow-list, so the deny path needs
+// no extra flag. Dedicated namespace for isolation.
+func runStdioMCPGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, agent = "e2e-mcp", "mcpy"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-mcp}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: prov, namespace: e2e-mcp}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: {name: stdio-mcp, namespace: e2e-mcp}
+spec:
+  kind: mcp
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  mcp: {url: "mcp://local-server"}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: mcpy, namespace: e2e-mcp}
+spec:
+  model: {providerRef: prov, name: m}
+  instructions: "hi"
+  tools:
+    - name: stdio-mcp
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply stdio-mcp manifest: %v", err)
+	}
+	assertAgentFailedClosed(t, env, ctx, ns, agent, "StdioMCPNotAllowed")
+	t.Log("M2.15: loop Agent with an un-allow-listed stdio (mcp://) MCP Tool was failed closed (StdioMCPNotAllowed)")
 }
 
 // assertAgentFailedClosed waits for an Agent to reach Failed/<reason> via the
