@@ -39,6 +39,10 @@ spec:
                   type: integer
                   minimum: 0
                   description: Seconds idle before the worker parks and exits for scale-to-zero; 0 (default) keeps it resident.
+                maxConcurrentTurns: { type: integer, minimum: 0, description: 'Turn-processing width (0/1 = serial; >1 opt-in concurrency, M2.17).' }
+                turnRetentionSeconds: { type: integer, minimum: 0, description: 'NATS turn-stream retention (0 = 3600s default).' }
+                turnHistoryLimit: { type: integer, minimum: 0, description: 'Max retained in-memory turns (0 = unbounded).' }
+                maxTurnInputBytes: { type: integer, minimum: 0, description: 'Per-turn input ceiling (0 = 1 MiB default).' }
               required: [agentRef]
             status:
               type: object

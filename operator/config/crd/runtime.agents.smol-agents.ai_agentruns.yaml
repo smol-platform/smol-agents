@@ -70,6 +70,17 @@ spec:
                     maxWallClockSeconds: { type: integer, minimum: 1, description: 'Override for maximum run wall-clock duration in seconds.' }
                     maxToolCalls: { type: integer, minimum: 0, description: 'Override for maximum total tool invocations.' }
                 cancel: { type: boolean, description: 'Set true to request cancellation; the controller deletes the run pod (immediate, no graceful drain).' }
+                placementFallback: { type: string, enum: [Pending, Schedule], description: 'When a kata run finds no matching AgentNodePool: Pending (default, fail-closed) holds until capacity; Schedule runs without node affinity (dev escape hatch). (M1.10)' }
+                requireApprovalBeforeRun: { type: boolean, description: 'Per-run override of the Agent ApprovalPolicy: hold this run in RequiresAction until a human approves (M5).' }
+                decision:
+                  type: object
+                  description: 'Human pre-run approval verdict, patched onto a run waiting in RequiresAction (M5). Token must match status.pendingAction.token.'
+                  properties:
+                    token: { type: string, description: 'Must match status.pendingAction.token; a stale token is ignored.' }
+                    approve: { type: boolean, description: 'true to proceed; false denies (run becomes Cancelled).' }
+                    reason: { type: string, description: 'Optional human note.' }
+                    decidedBy: { type: string, description: 'Optional identity of the approver.' }
+                  required: [token]
                 memoryRetrieverRef:
                   type: string
                   description: |-
@@ -109,6 +120,23 @@ spec:
                 startedAt: { type: string, format: date-time, description: 'When the run pod started executing.' }
                 endedAt: { type: string, format: date-time, description: 'When the run reached a terminal state.' }
                 terminationReason: { type: string, description: 'Machine-readable reason for a terminal state (e.g. budget exceeded, error).' }
+                pendingAction:
+                  type: object
+                  description: 'Set while state==RequiresAction: the approval the run is waiting on (M5).'
+                  properties:
+                    kind: { type: string, description: 'Why the run is paused (currently "pre-run").' }
+                    token: { type: string, description: 'Token a human must echo in spec.decision.token to act.' }
+                    requestedAt: { type: string, format: date-time, description: 'When the pause began (drives the approval TTL).' }
+                    reason: { type: string, description: 'Human-readable pause reason.' }
+                trace:
+                  type: object
+                  description: 'Compact step/tool-call metadata that survives when full steps are clamped from the termination message (M2.2).'
+                  properties:
+                    stepCount: { type: integer, description: 'Number of execution steps.' }
+                    toolCallCount: { type: integer, description: 'Total tool calls across steps.' }
+                    truncated: { type: boolean, description: 'True when step detail was dropped from the termination message.' }
+                    droppedBytes: { type: integer, format: int64, description: 'Bytes of step detail dropped.' }
+                    overflowRef: { type: string, description: 'Object-store ref to the full trace when offloaded (M2.9).' }
                 output:
                   description: |-
                     The run's answer as arbitrary JSON — a structured object for

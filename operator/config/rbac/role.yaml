@@ -26,7 +26,7 @@ rules:
 
   # CR access — runtime CRs (Agent, AgentRun, AgentNetwork, Memory*, etc).
   - apiGroups: [runtime.agents.smol-agents.ai]
-    resources: [agents, tools, modelproviders, agentruns, agentsessions, agentpolicies, agentnetworks, memorystores, memoryretrievers]
+    resources: [agents, tools, modelproviders, agentruns, agentsessions, agentpolicies, agentrunquotas, agentnetworks, memorystores, memoryretrievers]
     verbs: [get, list, watch, update, patch]
   - apiGroups: [runtime.agents.smol-agents.ai]
     resources:
@@ -34,6 +34,7 @@ rules:
       - agentruns/status
       - agentsessions/status
       - agentpolicies/status
+      - agentrunquotas/status
       - agentnetworks/status
       - memoryretrievers/status
     verbs: [get, update, patch]
