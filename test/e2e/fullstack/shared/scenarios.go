@@ -47,6 +47,7 @@ func All() []Scenario {
 		approvalTimeout,
 		egressFloor,
 		policyGate,
+		policyReconcileGate,
 		toolKindGuard,
 		stdioMCPGate,
 		webhook,
@@ -849,27 +850,31 @@ func runEgressFloor(t *testing.T, env Env) {
 }
 
 var policyGate = Scenario{
-	ID:       "R-E2E-SCN-POLICY-GATE",
-	Name:     "agentpolicy-denies-provider",
-	Requires: CapKubernetes,
+	ID:       "R-E2E-SCN-POLICY-WEBHOOK",
+	Name:     "agentpolicy-webhook-denies-provider",
+	Requires: CapKubernetes | CapWebhook,
 	Run:      runPolicyGate,
 }
 
-// runPolicyGate exercises the M1.5 namespace AgentPolicy reconcile gate through
-// the real operator: an AgentPolicy whose allow-list excludes an Agent's
-// resolved provider must flip that Agent to Failed/PolicyViolation. Runs in a
-// dedicated namespace so the namespace-wide policy can't contaminate the shared
-// tenant-a/researcher other scenarios reuse.
+// runPolicyGate exercises the M1.6 AgentPolicy ADMISSION webhook (failurePolicy=Fail)
+// through the real operator: with a namespace AgentPolicy whose allow-list excludes a
+// provider, applying an Agent referencing it must be REJECTED AT ADMISSION (kubectl
+// apply fails) — the primary fail-closed enforcement, distinct from the M1.5 reconcile
+// backstop (runPolicyReconcileGate). Regression guard for a real wiring gap fixed here:
+// the webhook handlers were registered in main.go but the ValidatingWebhookConfiguration
+// omitted agents/agentruns, so the webhook silently never fired. Dedicated namespace.
 func runPolicyGate(t *testing.T, env Env) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	const ns, agent = "e2e-policy", "denied-agent"
-	// Idempotent re-run on a reused cluster: drop the asserted Agent so it is
-	// freshly reconciled against the policy below.
+	// Reset for idempotency: drop any prior denied-agent (a pre-fix run may have left
+	// one admitted+Failed before the webhook was wired).
 	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
-	manifest := []byte(`apiVersion: v1
+	// 1. Prerequisites (namespace + provider + the excluding policy) must persist
+	//    BEFORE the Agent is admitted, so the webhook's policy list sees them.
+	prereq := []byte(`apiVersion: v1
 kind: Namespace
 metadata: {name: e2e-policy}
 ---
@@ -886,8 +891,12 @@ kind: AgentPolicy
 metadata: {name: only-openai, namespace: e2e-policy}
 spec:
   allowedProviders: ["openai-prov"]
----
-apiVersion: runtime.agents.smol-agents.ai/v1
+`)
+	if err := env.Apply(ctx, prereq); err != nil {
+		t.Fatalf("apply policy prerequisites: %v", err)
+	}
+	// 2. The violating Agent must be REJECTED at admission by the M1.6 webhook.
+	deniedAgent := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Agent
 metadata: {name: denied-agent, namespace: e2e-policy}
 spec:
@@ -895,11 +904,85 @@ spec:
   instructions: "hi"
   budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
 `)
-	if err := env.Apply(ctx, manifest); err != nil {
-		t.Fatalf("apply policy-gate manifest: %v", err)
+	err := env.Apply(ctx, deniedAgent)
+	if err == nil {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+		t.Fatal("M1.6 webhook FAILED to reject a policy-violating Agent at admission (apply succeeded)")
+	}
+	if !strings.Contains(err.Error(), "AgentPolicy allow-list") {
+		t.Errorf("admission rejection message missing %q: %v", "AgentPolicy allow-list", err)
+	}
+	t.Log("M1.6: AgentPolicy admission webhook rejected the disallowed-provider Agent at apply (fail-closed)")
+}
+
+var policyReconcileGate = Scenario{
+	ID:       "R-E2E-SCN-POLICY-RECONCILE",
+	Name:     "agentpolicy-reconcile-backstop",
+	Requires: CapKubernetes,
+	Run:      runPolicyReconcileGate,
+}
+
+// runPolicyReconcileGate exercises the M1.5 reconcile backstop (the layer behind the
+// M1.6 admission webhook): an Agent admitted under a CONFORMING policy is later flipped
+// to Failed/PolicyViolation when the policy is TIGHTENED to exclude its provider. The
+// webhook doesn't re-admit an existing Agent, so the AgentPolicy→Agent watch + reconcile
+// gate (agent_controller SetupWithManager) is what catches a post-hoc policy change.
+func runPolicyReconcileGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	const ns, agent, policy = "e2e-policy-reconcile", "tighten-agent", "prov-policy"
+	// Reset: drop the Agent + (re-apply below) reset the policy to MATCHING so the
+	// conforming Agent admits cleanly on a reused cluster (a prior run leaves it tightened).
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	prereq := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-policy-reconcile}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: anthropic-prov, namespace: e2e-policy-reconcile}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentPolicy
+metadata: {name: prov-policy, namespace: e2e-policy-reconcile}
+spec:
+  allowedProviders: ["anthropic-prov"]
+`)
+	if err := env.Apply(ctx, prereq); err != nil {
+		t.Fatalf("apply matching-policy prerequisites: %v", err)
+	}
+	// Conforming Agent admits under the matching policy and reconciles Ready.
+	conforming := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: tighten-agent, namespace: e2e-policy-reconcile}
+spec:
+  model: {providerRef: anthropic-prov, name: m}
+  instructions: "hi"
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, conforming); err != nil {
+		t.Fatalf("conforming agent rejected unexpectedly (webhook over-broad?): %v", err)
+	}
+	if err := env.WaitFor(ctx, "agent-ready", 60*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", agent, "-o", "jsonpath={.status.phase}")
+		return strings.TrimSpace(string(ph)) == "Ready"
+	}); err != nil {
+		t.Fatalf("conforming agent never reached Ready: %v", err)
+	}
+	// Tighten the policy to exclude the provider → the AgentPolicy watch re-enqueues
+	// the Agent → the reconcile gate flips it to Failed/PolicyViolation (no re-admission).
+	patch := `{"spec":{"allowedProviders":["openai-prov"]}}`
+	if _, err := env.Exec(ctx, ExecTarget{}, "patch", "-n", ns, "agentpolicy", policy, "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("tighten policy: %v", err)
 	}
 	assertAgentFailedClosed(t, env, ctx, ns, agent, "PolicyViolation")
-	t.Log("M1.5: AgentPolicy allow-list flipped the disallowed-provider Agent to Failed/PolicyViolation")
+	t.Log("M1.5: tightening the AgentPolicy flipped the already-admitted Agent to Failed/PolicyViolation via the reconcile backstop")
 }
 
 var toolKindGuard = Scenario{
