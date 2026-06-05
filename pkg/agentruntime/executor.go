@@ -230,8 +230,8 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			continue
 		}
 
-		// Validate args vs input schema.
-		if err := v1.MatchesSchema(tool.Spec.InputSchema, tc.Arguments); err != nil {
+		// Validate args vs input schema (real JSON-Schema validation, M2.11).
+		if err := ValidateAgainstSchema(tool.Spec.InputSchema, tc.Arguments); err != nil {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
@@ -283,8 +283,8 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			continue
 		}
 
-		// Validate observation vs output schema.
-		if err := v1.MatchesSchema(tool.Spec.OutputSchema, obs.Output); err != nil {
+		// Validate observation vs output schema (real JSON-Schema validation, M2.11).
+		if err := ValidateAgainstSchema(tool.Spec.OutputSchema, obs.Output); err != nil {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepObservationRejected,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),

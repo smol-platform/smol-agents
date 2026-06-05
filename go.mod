@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.301.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.6
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/cilium/ebpf v0.21.0
 	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/google/uuid v1.6.0
@@ -20,6 +21,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/qdrant/go-client v1.18.1
 	github.com/redis/go-redis/v9 v9.19.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/spiffe/go-spiffe/v2 v2.6.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.43.0
@@ -42,6 +44,7 @@ require (
 	sigs.k8s.io/controller-runtime v0.24.0
 	sigs.k8s.io/kustomize/api v0.21.1
 	sigs.k8s.io/kustomize/kyaml v0.21.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -128,5 +131,4 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )

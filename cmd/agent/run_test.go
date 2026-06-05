@@ -87,6 +87,7 @@ func TestClampForTerminationMessage(t *testing.T) {
 		Output: json.RawMessage(`{"answer":42}`),
 		Steps:  steps,
 		Usage:  v1.Usage{Steps: 50},
+		Trace:  &v1.TraceSummary{StepCount: 50, ToolCallCount: 100},
 	}
 	got := clampForTerminationMessage(fat)
 	b := marshalRunResult(got)
@@ -98,5 +99,12 @@ func TestClampForTerminationMessage(t *testing.T) {
 	}
 	if got.Phase != "Completed" || string(got.Output) != `{"answer":42}` {
 		t.Errorf("clamp must preserve phase/output: %+v", got)
+	}
+	// M2.3: when steps are dropped, the trace must survive + mark the loss honestly.
+	if len(got.Steps) != 0 {
+		t.Errorf("fat steps should be dropped, got %d", len(got.Steps))
+	}
+	if got.Trace == nil || !got.Trace.Truncated || got.Trace.DroppedBytes == 0 || got.Trace.StepCount != 50 {
+		t.Errorf("dropped trace must stay honest: %+v", got.Trace)
 	}
 }

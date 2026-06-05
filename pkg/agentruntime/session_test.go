@@ -26,6 +26,64 @@ func TestSessionState_Append(t *testing.T) {
 	}
 }
 
+// M2.18: TotalTurns is monotonic (drives Index so it survives future history
+// compaction), and FailedTurns counts turns that ended Failed or carried an
+// error — both independent of how many turns remain in the in-memory log.
+func TestSessionState_TurnCounters(t *testing.T) {
+	s := &SessionState{Phase: v1.PhaseRunning}
+	now := time.Unix(2000, 0)
+	s.Append(SessionTurn{Phase: v1.PhaseCompleted}, now)
+	s.Append(SessionTurn{Phase: v1.PhaseFailed}, now)
+	s.Append(SessionTurn{Phase: v1.PhaseCompleted, Error: "tool timeout"}, now)
+
+	if s.TotalTurns != 3 {
+		t.Errorf("TotalTurns = %d, want 3", s.TotalTurns)
+	}
+	if s.FailedTurns != 2 {
+		t.Errorf("FailedTurns = %d, want 2 (one Failed phase + one carrying Error)", s.FailedTurns)
+	}
+
+	// Simulate compaction dropping the oldest turn: TotalTurns must NOT regress,
+	// and the next index must keep climbing past the compacted length.
+	s.Turns = s.Turns[1:]
+	s.Append(SessionTurn{Phase: v1.PhaseCompleted}, now)
+	if s.TotalTurns != 4 {
+		t.Errorf("TotalTurns after compaction = %d, want 4 (monotonic)", s.TotalTurns)
+	}
+	if last := s.Turns[len(s.Turns)-1]; last.Index != 3 {
+		t.Errorf("post-compaction turn Index = %d, want 3 (from TotalTurns, not len)", last.Index)
+	}
+}
+
+// M2.19: Summary mirrors CumulativeUsage verbatim (NOT via Usage.Add), reports
+// the monotonic turn count + failures, and points LastTurnTime at the most
+// recent retained turn.
+func TestSessionState_Summary(t *testing.T) {
+	s := &SessionState{Phase: v1.PhaseRunning}
+	now := time.Unix(3000, 0)
+	s.Append(SessionTurn{Phase: v1.PhaseCompleted, Usage: v1.Usage{Steps: 1, Tokens: 100, ToolCalls: 2}, EndedAt: now}, now)
+	s.Append(SessionTurn{Phase: v1.PhaseFailed, Usage: v1.Usage{Steps: 1, Tokens: 5}, EndedAt: now.Add(time.Minute)}, now.Add(time.Minute))
+
+	sum := s.Summary()
+	if sum.Usage != s.CumulativeUsage {
+		t.Errorf("Summary.Usage = %+v, want CumulativeUsage %+v (field-wise, verbatim)", sum.Usage, s.CumulativeUsage)
+	}
+	if sum.Turns != 2 || sum.FailedTurns != 1 {
+		t.Errorf("Summary turns=%d failed=%d, want 2/1", sum.Turns, sum.FailedTurns)
+	}
+	if sum.Phase != v1.PhaseRunning {
+		t.Errorf("Summary.Phase = %q, want Running", sum.Phase)
+	}
+	if sum.LastTurnTime == nil || !sum.LastTurnTime.Equal(now.Add(time.Minute)) {
+		t.Errorf("Summary.LastTurnTime = %v, want last turn EndedAt %v", sum.LastTurnTime, now.Add(time.Minute))
+	}
+
+	// A fresh, turnless session has no LastTurnTime.
+	if (&SessionState{}).Summary().LastTurnTime != nil {
+		t.Error("turnless session must have nil LastTurnTime")
+	}
+}
+
 func TestSessionStore_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "work", ".smol-session", "state.json")
 	st := SessionStore{Path: path}

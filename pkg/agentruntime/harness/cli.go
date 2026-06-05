@@ -154,6 +154,32 @@ func cliExtraFlags(req Request) []string {
 	return nil
 }
 
+// claudePermArgs maps the typed CLI permission posture (M3.14 fields) to claude
+// flags (M3.17): ApprovalMode "acceptEdits" → --permission-mode acceptEdits;
+// "never" → --dangerously-skip-permissions (the opt-in danger flag, which the
+// operator admission gate refuses on a non-microVM runtime, D3); "" / "safe"
+// keep the default headless posture. AllowedTools/DisallowedTools map to the
+// claude permission allow/deny lists.
+func claudePermArgs(req Request) []string {
+	if req.Spec.CLI == nil {
+		return nil
+	}
+	var args []string
+	switch req.Spec.CLI.ApprovalMode {
+	case "acceptEdits":
+		args = append(args, "--permission-mode", "acceptEdits")
+	case "never":
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	for _, t := range req.Spec.CLI.AllowedTools {
+		args = append(args, "--allowedTools", t)
+	}
+	for _, t := range req.Spec.CLI.DisallowedTools {
+		args = append(args, "--disallowedTools", t)
+	}
+	return args
+}
+
 // ClaudeCodeHarness invokes `claude --print "<prompt>"`.
 type ClaudeCodeHarness struct {
 	Cmd commandFunc // nil → exec.CommandContext
@@ -170,9 +196,24 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	if req.Instructions != "" {
 		prompt = req.Instructions + "\n\n" + prompt
 	}
-	args := append([]string{flag}, cliExtraFlags(req)...)
+	// --output-format json lets us parse real tokens/cost/session-id (M2.5); the
+	// flag goes before ExtraFlags + the prompt so a tenant override can't drop it.
+	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
+	args := []string{flag}
+	if jsonOut {
+		args = append(args, "--output-format", "json")
+	}
+	args = append(args, claudePermArgs(req)...)
+	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
-	return runCLI(ctx, req, "claude", args, h.Cmd)
+
+	resp, err := runCLI(ctx, req, "claude", args, h.Cmd)
+	if err != nil || !jsonOut {
+		return resp, err
+	}
+	out, in, outTok, costMilli, _ := parseClaudeJSON(resp.Output)
+	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli = out, in, outTok, costMilli
+	return resp, nil
 }
 
 // CodexHarness invokes `codex exec "<prompt>"`.
@@ -187,9 +228,21 @@ func (h *CodexHarness) Run(ctx context.Context, req Request) (Response, error) {
 	if req.Instructions != "" {
 		prompt = req.Instructions + "\n\n" + prompt
 	}
-	args := append([]string{"exec"}, cliExtraFlags(req)...)
+	args := append([]string{"exec"}, codexApprovalArgs(req)...)
+	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
 	return runCLI(ctx, req, "codex", args, h.Cmd)
+}
+
+// codexApprovalArgs maps the shared ApprovalMode to codex's approval policy
+// (M3.21): "never" → --ask-for-approval never, the opt-in headless posture
+// (microVM-gated at admission, D3). Other modes leave codex's default approval
+// policy in place. Codex's sandbox flag is a separate codex-spec concern.
+func codexApprovalArgs(req Request) []string {
+	if req.Spec.CLI != nil && req.Spec.CLI.ApprovalMode == "never" {
+		return []string{"--ask-for-approval", "never"}
+	}
+	return nil
 }
 
 // AiderHarness invokes `aider --message "<prompt>" --no-pretty --yes`.

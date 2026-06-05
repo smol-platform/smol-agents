@@ -63,6 +63,11 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	if spec == nil || strings.TrimSpace(spec.URL) == "" {
 		return Response{}, errors.New("harness: hermes requires spec.http.url (the gateway /v1/chat/completions endpoint)")
 	}
+	// The Responses API (M3.10) is a distinct request/response shape; handle it
+	// in its own path so the chat-completions path below stays byte-identical.
+	if spec.API == "responses" {
+		return h.runResponses(ctx, req, spec)
+	}
 	client := h.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -261,6 +266,136 @@ func jsonOrString(v string) any {
 		return out
 	}
 	return v
+}
+
+// runResponses drives the OpenAI Responses API (/v1/responses, M3.10):
+// instructions → "instructions", the prompt → "input", and the output[] array
+// is parsed for the final text + the gateway's internal tool calls. Usage is
+// read via the dual-shape parseUsage (M2.7), which handles the Responses
+// input/output_tokens. Isolated from the chat path so that stays byte-identical.
+func (h *HermesHarness) runResponses(ctx context.Context, req Request, spec *v1.HarnessHTTPSpec) (Response, error) {
+	client := h.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	env := effectiveEnv(req)
+	body := map[string]any{
+		"model": hermesModel(env),
+		"input": promptFromInput(req.Input),
+	}
+	if strings.TrimSpace(req.Instructions) != "" {
+		body["instructions"] = req.Instructions
+	}
+	if req.Budget.MaxTokens > 0 {
+		body["max_output_tokens"] = req.Budget.MaxTokens
+	}
+	if req.Seed != 0 {
+		body["seed"] = req.Seed
+	}
+	for k, v := range env {
+		if field, ok := strings.CutPrefix(k, "BODY_"); ok && field != "" {
+			body[field] = jsonOrString(v)
+		}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return Response{}, fmt.Errorf("harness: marshal: %w", err)
+	}
+
+	ctx, cancel := budgetTimeout(ctx, req.Budget)
+	defer cancel()
+
+	reqHeaders := map[string]string{"Content-Type": "application/json"}
+	for k, v := range spec.Headers {
+		reqHeaders[k] = v
+	}
+	for k, v := range env {
+		if name, ok := strings.CutPrefix(k, "HEADER_"); ok && v != "" {
+			reqHeaders[name] = v
+		}
+	}
+	switch req.Spec.SessionPolicy {
+	case v1.SessionPersistent:
+		if sid := env["HERMES_SESSION_ID"]; sid != "" {
+			reqHeaders["X-Hermes-Session-Id"] = sid
+		}
+	default:
+		reqHeaders["X-Hermes-Session-Id"] = newEphemeralSessionID()
+	}
+
+	newReq := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, spec.URL, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range reqHeaders {
+			r.Header.Set(k, v)
+		}
+		return r, nil
+	}
+	res, err := doWithRetry(ctx, client, newReq, spec.Retry)
+	if err != nil {
+		return Response{DurationMs: res.DurationMs}, err
+	}
+	output, toolCalls := parseResponsesOutput(res.Body)
+	in, out, costMilli := parseUsage(res.Body)
+	return Response{
+		Output:       output,
+		ToolCalls:    toolCalls,
+		TokensIn:     in,
+		TokensOut:    out,
+		CostUSDMilli: costMilli,
+		DurationMs:   res.DurationMs,
+	}, nil
+}
+
+// parseResponsesOutput walks the /v1/responses output[] array: it concatenates
+// message output_text into the answer and pairs function_call /
+// function_call_output (by call_id) into ToolCallRecords (the gateway's INTERNAL
+// tool log — audit, not schema-validated StepToolCalls). A malformed body
+// degrades to empty output.
+func parseResponsesOutput(body []byte) ([]byte, []v1.ToolCallRecord) {
+	var r struct {
+		Output []struct {
+			Type      string          `json:"type"`
+			CallID    string          `json:"call_id"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+			Output    json.RawMessage `json:"output"`
+			Content   []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, nil
+	}
+	var sb strings.Builder
+	calls := map[string]*v1.ToolCallRecord{}
+	var order []string
+	for _, o := range r.Output {
+		switch o.Type {
+		case "message":
+			for _, c := range o.Content {
+				if c.Type == "output_text" {
+					sb.WriteString(c.Text)
+				}
+			}
+		case "function_call":
+			calls[o.CallID] = &v1.ToolCallRecord{Tool: o.Name, Arguments: o.Arguments}
+			order = append(order, o.CallID)
+		case "function_call_output":
+			if tc, ok := calls[o.CallID]; ok {
+				tc.Result = o.Output
+			}
+		}
+	}
+	recs := make([]v1.ToolCallRecord, 0, len(order))
+	for _, id := range order {
+		recs = append(recs, *calls[id])
+	}
+	return []byte(sb.String()), recs
 }
 
 // parseUsage extracts token usage from a response body, accepting BOTH the chat

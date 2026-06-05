@@ -35,13 +35,58 @@ type RunResult struct {
 	Usage             v1.Usage  `json:"usage"`
 	TerminationReason string    `json:"terminationReason,omitempty"`
 	Error             string    `json:"error,omitempty"`
+	// Trace is compact step/tool-call metadata computed from Steps before any
+	// clamp, so the counts survive even when Steps are elided (M2.2).
+	Trace *v1.TraceSummary `json:"trace,omitempty"`
 }
 
 // RunOnce loads the Agent + AgentRunSpec from dir and executes one bounded run.
 // The harness registry is always wired; leaser (optional) resolves harness env
 // secretRef via the broker; llm (optional) backs Mode=loop agents (nil is fine
 // for Mode=harness — the Hermes path).
-func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM) (Result, error) {
+// ToolsSpecFile is the resolved loop-mode tool catalog the operator ships into
+// the run-spec dir (must match builders.runSpecToolsFile).
+const ToolsSpecFile = "tools.json"
+
+// RunOption configures a run/turn — e.g. the loop-mode tool catalog + invokers
+// (injected by cmd/agent, which can import the invokers package; the runtime
+// itself must not, to avoid an import cycle). Variadic so existing callers are
+// unaffected.
+type RunOption func(*runConfig)
+
+type runConfig struct {
+	tools    []v1.Tool
+	invokers map[v1.ToolKind]ToolInvoker
+}
+
+// WithTools sets the loop-mode tool catalog visible to the executor.
+func WithTools(tools []v1.Tool) RunOption {
+	return func(c *runConfig) { c.tools = tools }
+}
+
+// WithInvokers sets the per-kind tool invokers the executor dispatches to.
+func WithInvokers(inv map[v1.ToolKind]ToolInvoker) RunOption {
+	return func(c *runConfig) { c.invokers = inv }
+}
+
+// LoadTools reads the resolved tool catalog (tools.json) from dir. A missing
+// file is not an error (an agent with no tools), returning nil.
+func LoadTools(dir string) ([]v1.Tool, error) {
+	b, err := os.ReadFile(filepath.Join(dir, ToolsSpecFile))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var tools []v1.Tool
+	if err := json.Unmarshal(b, &tools); err != nil {
+		return nil, fmt.Errorf("load tools: %w", err)
+	}
+	return tools, nil
+}
+
+func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM, opts ...RunOption) (Result, error) {
 	var agent v1.Agent
 	if err := readJSONFile(filepath.Join(dir, AgentSpecFile), &agent); err != nil {
 		return Result{}, fmt.Errorf("load agent spec: %w", err)
@@ -50,7 +95,14 @@ func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM) (Res
 	if err := readJSONFile(filepath.Join(dir, RunSpecFile), &run); err != nil {
 		return Result{}, fmt.Errorf("load run spec: %w", err)
 	}
-	return RunTurn(ctx, agent, run, leaser, llm)
+	// Ship the resolved tool catalog into the executor alongside any
+	// caller-supplied invokers (cmd/agent injects invokers.Default).
+	tools, err := LoadTools(dir)
+	if err != nil {
+		return Result{}, err
+	}
+	opts = append(opts, WithTools(tools))
+	return RunTurn(ctx, agent, run, leaser, llm, opts...)
 }
 
 // RunTurn executes one turn of an in-memory agent against a run/turn spec. It is
@@ -58,22 +110,29 @@ func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM) (Res
 // worker (many turns against one long-lived agent + workspace): budget override,
 // input materialization into the agent's workspace (so files persist across a
 // session's turns), then one bounded executor run.
-func RunTurn(ctx context.Context, agent v1.Agent, run v1.AgentRunSpec, leaser SecretLeaser, llm LLM) (Result, error) {
+func RunTurn(ctx context.Context, agent v1.Agent, run v1.AgentRunSpec, leaser SecretLeaser, llm LLM, opts ...RunOption) (Result, error) {
 	if run.BudgetOverride != nil {
 		agent.Spec.Budget = *run.BudgetOverride
+	}
+	var cfg runConfig
+	for _, o := range opts {
+		o(&cfg)
 	}
 	exec := New()
 	exec.Harness = NewRegistryRunner(harness.Default())
 	exec.Secrets = leaser
 	exec.LLM = llm
 
-	// NOTE: exec.Tools and exec.Invokers are EMPTY in production. The operator
-	// resolves Agent.Spec.Tools refs by name but never materializes Tool specs
-	// into the run ConfigMap (operator/internal/builders/runspec.go), and no
-	// MCP/HTTP invoker is registered — so a loop agent's tool call is rejected at
-	// runtime. Loop-mode tool invocation is future work; see
-	// docs/design/tool-kinds-roadmap.md. (Harness-mode agents are unaffected:
-	// their tool loop runs inside the harness.)
+	// Loop-mode tool catalog + invokers (M2.13): the operator ships resolved Tool
+	// specs as tools.json (LoadTools) and cmd/agent injects invokers.Default
+	// (HTTP today). Empty when an agent declares no tools / harness mode — those
+	// runs are unaffected.
+	for _, t := range cfg.tools {
+		exec.Tools[t.Name] = t
+	}
+	if cfg.invokers != nil {
+		exec.Invokers = cfg.invokers
+	}
 
 	// Seed declared input files into the workspace before execution, so a harness
 	// or loop can work on "the files I gave you".
@@ -86,12 +145,17 @@ func RunTurn(ctx context.Context, agent v1.Agent, run v1.AgentRunSpec, leaser Se
 // ResultToWire converts an executor Result (+ any run error) into the compact
 // RunResult the controller consumes.
 func ResultToWire(res Result, runErr error) RunResult {
+	var toolCalls int32
+	for _, s := range res.Steps {
+		toolCalls += int32(len(s.ToolCalls))
+	}
 	w := RunResult{
 		Phase:             res.Phase,
 		Output:            res.Output,
 		Steps:             res.Steps,
 		Usage:             res.Usage,
 		TerminationReason: res.TerminationReason,
+		Trace:             &v1.TraceSummary{StepCount: int32(len(res.Steps)), ToolCallCount: toolCalls},
 	}
 	if runErr != nil {
 		w.Error = runErr.Error()

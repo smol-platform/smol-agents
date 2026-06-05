@@ -25,7 +25,9 @@ type ChatRequest struct {
 	Tools        []v1.Tool
 	History      []v1.Step
 	Input        json.RawMessage
-	Seed         int64
+	// Seed is a best-effort determinism hint (OpenAI-compatible `seed`); not a
+	// bit-exact guarantee. 0 omits it. See docs/specs/determinism-and-replay.md.
+	Seed int64
 }
 
 // ToolInvoker is the abstract tool transport. The runtime resolves the

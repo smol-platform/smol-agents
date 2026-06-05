@@ -12,6 +12,7 @@ import (
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/invokers"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime/openaillm"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
@@ -50,7 +51,11 @@ func runAgentRun(args []string) int {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
-	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser))
+	// Register the loop-mode tool invokers (HTTP today; M2.12/M2.13). The tool
+	// catalog itself is loaded from tools.json by RunOnce.
+	toolInvokers := invokers.Default(leaser, nil)
+	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser),
+		agentruntime.WithInvokers(toolInvokers))
 	wire := agentruntime.ResultToWire(res, runErr)
 
 	// Full result to stdout for log-based debugging.
@@ -110,6 +115,14 @@ func clampForTerminationMessage(wire agentruntime.RunResult) agentruntime.RunRes
 	if termMessageFits(wire) {
 		return wire
 	}
+	// Drop the steps entirely, but keep the trace summary honest about it (M2.3):
+	// the step/tool-call counts already survive in wire.Trace.
+	if wire.Trace != nil {
+		if b, err := json.Marshal(wire.Steps); err == nil {
+			wire.Trace.DroppedBytes = int64(len(b))
+		}
+		wire.Trace.Truncated = true
+	}
 	wire.Steps = nil
 	return wire
 }
@@ -131,6 +144,10 @@ func elideStepPayloads(steps []v1.Step) []v1.Step {
 		if len(s.ToolCalls) > 0 {
 			tcs := make([]v1.ToolCallRecord, len(s.ToolCalls))
 			for j, tc := range s.ToolCalls {
+				// Record the elided sizes before dropping payloads, so the trace
+				// stays honest about what was removed (M2.3).
+				tc.ArgsBytes = int64(len(tc.Arguments))
+				tc.ResultBytes = int64(len(tc.Result))
 				tc.Arguments = nil
 				tc.Result = nil
 				tcs[j] = tc

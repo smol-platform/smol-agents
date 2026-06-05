@@ -38,18 +38,67 @@ type SessionState struct {
 	CumulativeUsage v1.Usage      `json:"cumulativeUsage"`
 	CreatedAt       time.Time     `json:"createdAt"`
 	UpdatedAt       time.Time     `json:"updatedAt"`
+
+	// TotalTurns is the monotonic count of turns ever appended — the source of a
+	// turn's Index, so indices stay correct (and status counts stay monotonic)
+	// even after history compaction drops old entries from Turns (M2.18/M2.19).
+	TotalTurns int `json:"totalTurns,omitempty"`
+	// FailedTurns counts turns that ended Failed or carried an error.
+	FailedTurns int `json:"failedTurns,omitempty"`
 }
 
 // Append records a completed turn, advancing its index, cumulative usage, and
 // UpdatedAt. now is injected so callers (and tests) control the clock.
 func (s *SessionState) Append(t SessionTurn, now time.Time) {
-	t.Index = len(s.Turns)
+	t.Index = s.TotalTurns // monotonic — survives history compaction
+	s.TotalTurns++
+	if t.Phase == v1.PhaseFailed || t.Error != "" {
+		s.FailedTurns++
+	}
 	s.Turns = append(s.Turns, t)
 	s.CumulativeUsage.Steps += t.Usage.Steps
 	s.CumulativeUsage.Tokens += t.Usage.Tokens
 	s.CumulativeUsage.ToolCalls += t.Usage.ToolCalls
 	s.CumulativeUsage.WallClockUsed += t.Usage.WallClockUsed
 	s.UpdatedAt = now
+}
+
+// SessionSummary is the compact, status-shaped projection of a session that the
+// worker checkpoints alongside the full state so the operator can mirror it into
+// AgentSession.status without reading (or RBAC for) the whole turn log. Usage is
+// CumulativeUsage verbatim — field-wise roll-up done in Append, never Usage.Add
+// (which phantom-increments Steps). Turns is monotonic (TotalTurns), so it keeps
+// climbing even after history compaction drops entries from the in-memory log.
+type SessionSummary struct {
+	Phase        v1.Phase   `json:"phase"`
+	Usage        v1.Usage   `json:"usage"`
+	Turns        int        `json:"turns"`
+	FailedTurns  int        `json:"failedTurns,omitempty"`
+	LastTurnTime *time.Time `json:"lastTurnTime,omitempty"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+}
+
+// Summary projects the session into its status-shaped form. LastTurnTime is the
+// EndedAt of the most recent retained turn (nil before any turn completes).
+func (s *SessionState) Summary() SessionSummary {
+	sum := SessionSummary{
+		Phase:       s.Phase,
+		Usage:       s.CumulativeUsage,
+		Turns:       s.TotalTurns,
+		FailedTurns: s.FailedTurns,
+		UpdatedAt:   s.UpdatedAt,
+	}
+	if n := len(s.Turns); n > 0 {
+		t := s.Turns[n-1].EndedAt
+		sum.LastTurnTime = &t
+	}
+	return sum
+}
+
+// DefaultSessionSummaryPath is where the worker checkpoints the status summary
+// within the workspace, beside the full state checkpoint.
+func DefaultSessionSummaryPath(workspace string) string {
+	return filepath.Join(workspace, ".smol-session", "status-summary.json")
 }
 
 // SessionStore persists SessionState to Path atomically. Path should live under

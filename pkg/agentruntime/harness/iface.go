@@ -37,7 +37,11 @@ type Request struct {
 	// enforces hard timeouts independently via ctx.
 	Budget v1.Budget
 
-	// Seed is forwarded where the harness exposes one.
+	// Seed is forwarded where the harness exposes one, as a best-effort
+	// determinism hint — bit-exact reproduction is NOT guaranteed (providers may
+	// ignore it under load; temperature/model drift and gateway-side loops defeat
+	// it). For exact reproduction use record/replay. See
+	// docs/specs/determinism-and-replay.md.
 	Seed int64
 }
 
@@ -114,9 +118,10 @@ func (r *Registry) Register(h Harness) {
 	r.impls[h.Kind()] = h
 }
 
-// For returns the Harness for kind.
+// For returns the Harness for kind, resolving deprecated aliases first (e.g.
+// "pi" → "inflection-pi") so an alias still finds its implementation.
 func (r *Registry) For(kind v1.HarnessKind) (Harness, error) {
-	h, ok := r.impls[kind]
+	h, ok := r.impls[v1.CanonicalHarnessKind(kind)]
 	if !ok {
 		return nil, fmt.Errorf("harness: no implementation for kind %q", kind)
 	}

@@ -111,3 +111,28 @@ func TestClient_RequestShape(t *testing.T) {
 		t.Errorf("tools = %v", got["tools"])
 	}
 }
+
+// M2.27: a zero seed omits the `seed` field entirely (best-effort determinism is
+// opt-in; an unset seed leaves the backend's default sampling untouched). The
+// set case (seed=42) is covered by TestClient_RequestShape.
+func TestClient_SeedOmittedWhenZero(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{Endpoint: srv.URL, APIKey: "sk-x", HTTP: srv.Client()}
+	if _, err := c.Chat(context.Background(), agentruntime.ChatRequest{
+		Model: v1.ModelRef{Name: "m1"},
+		Input: json.RawMessage(`{"q":"?"}`),
+		// Seed left zero.
+	}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, ok := got["seed"]; ok {
+		t.Errorf("seed must be omitted when zero, body had seed=%v", got["seed"])
+	}
+}

@@ -32,6 +32,9 @@ func runServeSession(args []string) int {
 	socket := fs.String("secret-socket", "/run/secret-broker/secret-broker.sock", "secret broker UDS")
 	poll := fs.Duration("poll", 2*time.Second, "turn poll interval")
 	idle := fs.Duration("idle-timeout", 0, "exit (scale-to-zero) after this idle; 0 = never")
+	maxConcurrent := fs.Int("max-concurrent-turns", 0, "turn-processing width; 0/1 = serial (FIFO), >1 = opt-in concurrency")
+	turnTimeout := fs.Duration("turn-timeout", 0, "per-turn wall-clock cap; 0 = none (budget still applies)")
+	historyLimit := fs.Int("history-limit", 0, "max in-memory turns retained; 0 = unbounded")
 	natsURL := fs.String("nats-url", os.Getenv("AGENTSESSION_NATS_URL"), "NATS JetStream URL for turn delivery; empty uses the on-disk inbox")
 	sessionKey := fs.String("session-key", os.Getenv("AGENTSESSION_KEY"), "session queue key (namespace.name); required with --nats-url")
 	_ = fs.Parse(args)
@@ -62,14 +65,17 @@ func runServeSession(args []string) int {
 	}
 
 	w := &agentruntime.SessionWorker{
-		Agent:        agent,
-		AgentRef:     *agentRef,
-		Workspace:    ws,
-		Leaser:       leaser,
-		LLM:          buildLoopLLM(ctx, *dir, leaser),
-		PollInterval: *poll,
-		IdleTimeout:  *idle,
-		Logger:       logger,
+		Agent:              agent,
+		AgentRef:           *agentRef,
+		Workspace:          ws,
+		Leaser:             leaser,
+		LLM:                buildLoopLLM(ctx, *dir, leaser),
+		PollInterval:       *poll,
+		IdleTimeout:        *idle,
+		MaxConcurrentTurns: *maxConcurrent,
+		TurnTimeout:        *turnTimeout,
+		HistoryLimit:       *historyLimit,
+		Logger:             logger,
 	}
 
 	// NATS turn transport (gateway path); default is the on-disk inbox.
