@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 01 — Quickstart: a loop agent that calls an HTTP tool  (milestone M2)
+#
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#     kubectl apply -f docs/examples/01-quickstart-tool.yaml
+#     kubectl -n tenant-a get agentrun research-001 -w
+#
+# A `mode: loop` Agent runs the plan-act-observe loop: the LLM plans, the
+# executor invokes a tool, feeds the observation back, and the LLM finalizes.
+# The operator resolves the Agent's Tool CRs into the run pod (tools.json) so
+# the executor can actually dispatch the call.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata:
+  name: web-search
+  namespace: tenant-a
+spec:
+  kind: http                        # generic HTTP+JSON tool (M2.12 invoker)
+  description: "Search the web and return ranked results."
+  http:
+    url: https://api.tavily.com/search
+    method: POST
+    auth:
+      secretName: tavily-key        # broker-leased; the agent never reads it
+  # JSON Schemas the LLM sees (what it may send / will get back).
+  inputSchema:
+    type: object
+    required: [query]
+    properties:
+      query: { type: string, description: "the search query" }
+  outputSchema:
+    type: object
+    properties:
+      results:
+        type: array
+        items: { type: object }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: researcher
+  namespace: tenant-a
+spec:
+  # mode defaults to "loop" (the native plan-act-observe Executor).
+  model:
+    providerRef: openai             # → the ModelProvider from 00-prerequisites
+    name: gpt-4o
+    temperature: 0.2
+  instructions: |
+    You are a careful research assistant. Use the web-search tool, then answer
+    in two sentences and cite every source.
+  tools:
+    - name: web-search              # resolved into the run pod's tools.json
+  # Hard ceilings enforced by the executor; the run fails closed when exceeded.
+  budget:
+    maxSteps: 8
+    maxTokens: 50000
+    maxWallClockSeconds: 120
+    maxToolCalls: 6
+---
+# An AgentRun is one execution of an Agent. The controller renders a sandboxed
+# pod (kata-fc by default), runs `agent run`, and folds the result into status.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: research-001
+  namespace: tenant-a
+spec:
+  agentRef: researcher
+  input:
+    question: "What were the top three open-source agent frameworks of 2025?"
+  seed: 42                          # best-effort determinism hint

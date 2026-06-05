@@ -191,6 +191,10 @@ spec:
 On a laptop without `/dev/kvm`, override the sandbox to `runc` (dev only) or use
 the gVisor preset — see [docs/INSTALL.md §4.2](docs/INSTALL.md).
 
+For worked, runnable scenarios — loop tools, agent-to-agent composition, durable
+sessions, human approval, the governance floor, and secretless egress — with a
+field-by-field walkthrough, see **[docs/examples/](docs/examples/README.md)**.
+
 ---
 
 ## Documentation

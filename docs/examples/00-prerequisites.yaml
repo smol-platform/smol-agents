@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Prerequisites shared by every example in this directory.
+#
+# Apply this first:
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#
+# It creates the tenant namespace, a model-provider credential, and the
+# ModelProvider CR the example Agents reference. The cluster-scoped
+# SmolAgentPlatform singleton (operator/config/samples/smolagentplatform.yaml)
+# and — for the kata examples — an AgentNodePool
+# (operator/config/samples/agentnodepool_kata_arm64.yaml) are assumed already
+# installed by the platform operator.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    # Tenancy label the operator uses for per-tenant policy + NATS ACLs (D1).
+    smol-agents.smol-agents.ai/tenant: a
+---
+# The provider API key. In production this is created out-of-band (sealed-secret,
+# ExternalSecret, …) and the agent NEVER sees it — the secret broker leases it
+# into the run pod over a UDS. Here it is inlined for the example.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openai-key
+  namespace: tenant-a
+type: Opaque
+stringData:
+  # Replace with a real key, or point the ModelProvider.endpoint below at any
+  # OpenAI-compatible gateway (vLLM, LiteLLM, z.ai, Ollama, …).
+  apiKey: "sk-REPLACE-ME"
+---
+# A ModelProvider is the cluster-resolvable handle for an LLM backend. Agents
+# reference it by name (spec.model.providerRef); the operator resolves the
+# endpoint + secret and writes a provider.json into the run pod's spec mount.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata:
+  name: openai
+  namespace: tenant-a
+spec:
+  kind: openai                      # wire dialect; the loop client speaks /v1/chat/completions
+  endpoint: https://api.openai.com  # any OpenAI-compatible base URL
+  secretRef:
+    secretName: openai-key          # the broker leases this; single-key secrets need no `key`

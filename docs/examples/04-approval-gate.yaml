@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 04 — Human-in-the-loop pre-run approval gate  (milestone M5)
+#
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#     kubectl apply -f docs/examples/04-approval-gate.yaml
+#
+#     # The run parks in RequiresAction with a minted token and NO pod yet:
+#     kubectl -n tenant-a get agentrun deploy-bot-001 \
+#       -o jsonpath='{.status.state} {.status.pendingAction.token}{"\n"}'
+#
+#     # Approve it (paste the token):
+#     TOKEN=...
+#     kubectl -n tenant-a patch agentrun deploy-bot-001 --type=merge \
+#       -p "{\"spec\":{\"decision\":{\"token\":\"$TOKEN\",\"approve\":true,\"reason\":\"LGTM\",\"decidedBy\":\"alice\"}}}"
+#     # …or deny with approve:false → terminal Cancelled, still no pod.
+#
+# A gated run is held in RequiresAction until a human patches spec.decision with
+# the matching token. Approve → it proceeds to a normal run; deny → terminal
+# Cancelled; no decision before approvalTimeoutSeconds → Expired. In every
+# rejected/expired case NO run pod is ever created.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: deploy-bot
+  namespace: tenant-a
+spec:
+  model:
+    providerRef: openai
+    name: gpt-4o
+  instructions: "You roll out deployments. Be precise and reversible."
+  budget:
+    maxSteps: 6
+    maxTokens: 20000
+    maxWallClockSeconds: 300
+    maxToolCalls: 8
+  # Agent-level policy: hold EVERY run for this Agent behind human approval.
+  approval:
+    requireApprovalBeforeRun: true
+    approvalTimeoutSeconds: 3600     # un-decided runs Expire after 1h (0 = operator default)
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: deploy-bot-001
+  namespace: tenant-a
+spec:
+  agentRef: deploy-bot
+  input:
+    action: "promote build 1f2e3d to production"
+  # Per-run override of the Agent's ApprovalPolicy (nil = inherit). Set false to
+  # let a specific low-risk run skip the gate even when the Agent requires it:
+  # requireApprovalBeforeRun: false
+  #
+  # The human verdict is patched in later (see the header), not set up front:
+  # decision:
+  #   token: "<minted token from status.pendingAction.token>"
+  #   approve: true
+  #   reason: "approved by on-call"
+  #   decidedBy: "alice"
