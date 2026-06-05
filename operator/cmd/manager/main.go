@@ -137,6 +137,12 @@ func main() {
 		setupLog.Error(err, "unable to register AgentNetwork controller")
 		os.Exit(1)
 	}
+	if err := (&agentmodel.DynamicCredentialBackendReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register DynamicCredentialBackend controller")
+		os.Exit(1)
+	}
 
 	// runtime.agents.smol-agents.ai/v1 — memory CRDs.
 	if err := (&memoryctrl.MemoryRetrieverReconciler{
