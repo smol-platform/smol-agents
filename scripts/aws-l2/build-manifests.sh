@@ -94,6 +94,10 @@ if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
   sed -i.bak \
     -e "s|smol-agents/fake-llm:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/fake-llm:${TAG}|g" \
     -e "s|smol-agents/fake-gateway:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/fake-gateway:${TAG}|g" \
+    -e "s|smol-agents/fake-github:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/fake-github:${TAG}|g" \
+    -e "s|smol-agents/fake-tts:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/fake-tts:${TAG}|g" \
+    -e "s|smol-agents/memory-mcp:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/memory-mcp:${TAG}|g" \
+    -e "s|smol-agents/memory-worker:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/memory-worker:${TAG}|g" \
     -e "s|smol-agents/spiffe-probe:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/spiffe-probe:${TAG}|g" \
     -e "s|imagePullPolicy: Never|imagePullPolicy: IfNotPresent|g" \
     "$WORK/tenant/10-fakes.yaml"
