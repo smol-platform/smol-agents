@@ -65,6 +65,21 @@ if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
     -e "s|smol-agents/operator:[A-Za-z0-9._-]*|${L2_ECR_REGISTRY}/smol-agents/operator:${TAG}|g" \
     "$WORK/operator/00-operator.yaml"
   rm "$WORK/operator/00-operator.yaml.bak"
+
+  # Point the operator's CHILD-image resolution (Image("agent"),
+  # Image("secret-proxy"), Image("agentfs-sidecar"), Image("ebpf-loader"))
+  # at the same ECR tag. Without this the operator schedules run/session
+  # worker pods from the default ghcr registry, which on L2 are unpullable
+  # (or the wrong commit) — so any operator-scheduled pod (e.g. an
+  # AgentSession serve-session worker) never reaches Running. The default
+  # registry already appends "/<component>", so the value carries the
+  # smol-agents namespace prefix to match the ECR repo layout.
+  yq -i '(select(.kind == "Deployment" and .metadata.name == "smol-agents-operator")
+          | .spec.template.spec.containers[] | select(.name == "manager").env) |=
+          ((. // []) + [
+            {"name": "SMOL_AGENTS_IMAGE_REGISTRY", "value": "'"${L2_ECR_REGISTRY}"'/smol-agents"},
+            {"name": "SMOL_AGENTS_IMAGE_TAG", "value": "'"${TAG}"'"}
+          ])' "$WORK/operator/00-operator.yaml"
 fi
 
 # 3. Tenant namespace + fake services + researcher-agent SA. L1's

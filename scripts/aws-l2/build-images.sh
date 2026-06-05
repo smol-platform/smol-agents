@@ -46,6 +46,7 @@ images=(
   "agent        deploy/docker/agent.Dockerfile           ."
   "ebpf-loader  deploy/docker/ebpf-loader.Dockerfile     ."
   "secret-proxy deploy/docker/secret-proxy.Dockerfile    ."
+  "agentfs-sidecar deploy/docker/agentfs-sidecar.Dockerfile ."
   "fake-llm     deploy/docker/fake-llm.Dockerfile        ."
   "fake-gateway deploy/docker/fake-gateway.Dockerfile    ."
   "fake-github  deploy/docker/fake-github.Dockerfile     ."

@@ -2,14 +2,17 @@ package shared
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +58,9 @@ func All() []Scenario {
 		smolAgentPhase,
 		secretlessEgress,
 		memoryAccess,
+		agentSession,
+		agentSessionRunning,
+		a2aComposition,
 	}
 }
 
@@ -1018,9 +1024,10 @@ spec:
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
 kind: Tool
-metadata: {name: delegate, namespace: e2e-toolkind}
+metadata: {name: fn, namespace: e2e-toolkind}
 spec:
-  kind: agent
+  kind: function
+  function: {name: noop}
   inputSchema: {type: object}
   outputSchema: {type: object}
 ---
@@ -1031,14 +1038,17 @@ spec:
   model: {providerRef: prov, name: m}
   instructions: "hi"
   tools:
-    - name: delegate
+    - name: fn
   budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
 `)
 	if err := env.Apply(ctx, manifest); err != nil {
 		t.Fatalf("apply tool-kind manifest: %v", err)
 	}
+	// kind=function has no production invoker (test-only) and stays reserved even
+	// after A2A (kind=agent) was wired, so it remains the canonical fail-closed
+	// case: a loop Agent referencing it must flip Failed/ToolKindUnsupported.
 	assertAgentFailedClosed(t, env, ctx, ns, agent, "ToolKindUnsupported")
-	t.Log("M2.16: loop Agent with an unwired kind=agent Tool was failed closed (ToolKindUnsupported)")
+	t.Log("M2.16: loop Agent with an unwired kind=function Tool was failed closed (ToolKindUnsupported)")
 }
 
 var stdioMCPGate = Scenario{
@@ -1414,6 +1424,407 @@ func todo(message string) func(t *testing.T, env Env) {
 		t.Helper()
 		t.Skipf("scenario not yet implemented: %s", message)
 	}
+}
+
+// agentSession (R-E2E-SCN-AGENTSESSION) exercises the M4 long-running session
+// control plane. It applies a minimal loop Agent (provider + single-key secret,
+// kata-fc default sandbox, no tools) and an AgentSession, then asserts the
+// AgentSessionReconciler drives it through agent-lookup -> sandbox-resolve ->
+// secret-gather -> run-spec ConfigMap + egress policy and FAIL-CLOSES at the
+// node-placement gate: a single-node cluster with no AgentNodePool matching the
+// kata class yields Pending/NoKVMCapacity (R-PROV-2). Reaching that reason
+// proves the whole pre-placement pipeline ran (any earlier failure returns a
+// different reason or an error), so it is real e2e of the M4 controller without
+// requiring node-pool autoscaling, the agentfs-sidecar image, or a live
+// serve-session worker (the happy-path turn datapath is a separate concern).
+var agentSession = Scenario{
+	ID:       "R-E2E-SCN-AGENTSESSION",
+	Name:     "agentsession-reconcile-failclosed-placement",
+	Requires: CapKubernetes,
+	Run:      runAgentSession,
+}
+
+func runAgentSession(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	const ns = "tenant-a"
+	for _, d := range [][]string{
+		{"agentsession", "e2e-sess"},
+		{"agent", "e2e-sess-agent"},
+		{"modelprovider", "e2e-sess-prov"},
+		{"secret", "e2e-sess-key"},
+	} {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
+	}
+
+	// Single-key secret: resolveSecret with an empty key returns the value only
+	// when the secret has exactly one data key (gatherRunSecrets/readSecretKey).
+	setup := []byte(`apiVersion: v1
+kind: Secret
+metadata: { name: e2e-sess-key, namespace: tenant-a }
+stringData: { apiKey: "dummy-unused-pre-placement" }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: { name: e2e-sess-prov, namespace: tenant-a }
+spec:
+  kind: openai
+  endpoint: http://fake-llm.tenant-a.svc.cluster.local:8080
+  secretRef: { secretName: e2e-sess-key }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-sess-agent, namespace: tenant-a }
+spec:
+  model: { providerRef: e2e-sess-prov, name: glm-4.6 }
+  instructions: "M4 session reconcile e2e"
+  budget: { maxSteps: 4, maxTokens: 2000, maxWallClockSeconds: 60, maxToolCalls: 2 }
+`)
+	if err := env.Apply(ctx, setup); err != nil {
+		t.Fatalf("apply session agent + provider + secret: %v", err)
+	}
+	if err := env.Apply(ctx, []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: { name: e2e-sess, namespace: tenant-a }
+spec:
+  agentRef: e2e-sess-agent
+`)); err != nil {
+		t.Fatalf("apply agentsession: %v", err)
+	}
+
+	if err := env.WaitFor(ctx, "agentsession-nokvmcapacity", 90*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.reason}")
+		return strings.TrimSpace(string(ph)) == "Pending" && strings.TrimSpace(string(rs)) == "NoKVMCapacity"
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.reason}")
+		t.Fatalf("AgentSession never reached Pending/NoKVMCapacity (observed %q/%q): %v",
+			strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err)
+	}
+	t.Log("M4: AgentSession reconciled agent->sandbox->secret->configmap/egress then fail-closed at placement (NoKVMCapacity)")
+}
+
+// agentSessionRunning (R-E2E-SCN-AGENTSESSION-RUN) is the M4 happy path: a live
+// long-running session worker reaching Running. It provisions a kata-fc
+// AgentNodePool and labels the (single) node so the placement gate resolves,
+// applies a loop Agent with an ephemeral AgentFS workspace (serve-session
+// requires a workspace) + provider/secret, and an AgentSession — then asserts
+// the AgentSessionReconciler brings the worker Deployment to Available and
+// reports status.phase=Running.
+//
+// This exercises the FULL M4 datapath on real kata metal: the operator renders
+// the session run-pod (SMOL_AGENTS_IMAGE_REGISTRY/_TAG → ECR images), schedules
+// it on the kata-fc node, the AgentFS restore init + serve sidecars come up
+// (ephemeral: no S3 backup configured → fresh workspace, no-op backups), the
+// secret broker serves the provider key, and `agent serve-session` loads the
+// spec, opens the workspace, and blocks on its on-disk inbox — so the pod is
+// Ready and the Deployment Available. The ephemeral path depends on the
+// agentfs-sidecar gracefully skipping S3 when no bucket is configured.
+var agentSessionRunning = Scenario{
+	ID:       "R-E2E-SCN-AGENTSESSION-RUN",
+	Name:     "agentsession-worker-reaches-running",
+	Requires: CapKubernetes | CapKata,
+	Run:      runAgentSessionRunning,
+}
+
+func runAgentSessionRunning(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	const ns = "tenant-a"
+	const pool = "e2e-sessr-pool"
+	for _, d := range [][]string{
+		{"agentsession", "e2e-sessr"}, {"agent", "e2e-sessr-agent"},
+		{"modelprovider", "e2e-sessr-prov"}, {"secret", "e2e-sessr-key"},
+	} {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
+	}
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentnodepool", pool, "--ignore-not-found")
+
+	// 1. kata-fc AgentNodePool (ResolvePlacementForClass matches by isolation) +
+	//    label the single node with the pool label the placement affinity needs.
+	//    The Karpenter NodePool the operator tries to render is harmless here —
+	//    placement only Lists AgentNodePool CRs.
+	if err := env.Apply(ctx, []byte(`apiVersion: agents.smol-agents.ai/v1
+kind: AgentNodePool
+metadata: { name: e2e-sessr-pool }
+spec:
+  isolation: kata-fc
+  arch: arm64
+  bootstrap: { mode: UserData, distro: al2023 }
+`)); err != nil {
+		t.Fatalf("apply AgentNodePool: %v", err)
+	}
+	nodeOut, err := env.Exec(ctx, ExecTarget{}, "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}")
+	node := strings.TrimSpace(string(nodeOut))
+	if err != nil || node == "" {
+		t.Fatalf("get node name: %v (out=%q)", err, nodeOut)
+	}
+	if _, err := env.Exec(ctx, ExecTarget{}, "label", "node", node, "agents.smol-agents.ai/pool="+pool, "--overwrite"); err != nil {
+		t.Fatalf("label node %s: %v", node, err)
+	}
+
+	// 2. Minimal loop Agent: ephemeral AgentFS workspace + provider/secret.
+	if err := env.Apply(ctx, []byte(`apiVersion: v1
+kind: Secret
+metadata: { name: e2e-sessr-key, namespace: tenant-a }
+stringData: { apiKey: "dummy-session-running" }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: { name: e2e-sessr-prov, namespace: tenant-a }
+spec:
+  kind: openai
+  endpoint: http://fake-llm.tenant-a.svc.cluster.local:8080
+  secretRef: { secretName: e2e-sessr-key }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-sessr-agent, namespace: tenant-a }
+spec:
+  model: { providerRef: e2e-sessr-prov, name: glm-4.6 }
+  instructions: "M4 session worker e2e"
+  budget: { maxSteps: 4, maxTokens: 2000, maxWallClockSeconds: 120, maxToolCalls: 2 }
+  storage:
+    kind: agentfs
+    agentfs: { sizeGiB: 1, mountPath: /workspace }
+`)); err != nil {
+		t.Fatalf("apply session agent: %v", err)
+	}
+	if err := env.Apply(ctx, []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: { name: e2e-sessr, namespace: tenant-a }
+spec:
+  agentRef: e2e-sessr-agent
+`)); err != nil {
+		t.Fatalf("apply agentsession: %v", err)
+	}
+
+	// 3. The reconciler schedules the worker on the kata node (operator-resolved
+	//    ECR images), the AgentFS + broker sidecars and serve-session come up, the
+	//    Deployment goes Available -> controller sets phase=Running.
+	if err := env.WaitFor(ctx, "agentsession-running", 3*time.Minute, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sessr", "-o", "jsonpath={.status.phase}")
+		return strings.TrimSpace(string(ph)) == "Running"
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sessr", "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sessr", "-o", "jsonpath={.status.reason}")
+		pods, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods", "-o", "wide")
+		t.Fatalf("AgentSession never reached Running (phase=%q reason=%q): %v\npods:\n%s",
+			strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err, pods)
+	}
+	// Confirm the worker really landed on kata-fc with operator-resolved ECR images
+	// (not a fallback) so "Running" reflects the full datapath, not a shortcut.
+	rc, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods",
+		"-l", "agents.smol-agents.ai/run=e2e-sessr-session", "-o", "jsonpath={.items[0].spec.runtimeClassName}")
+	if got := strings.TrimSpace(string(rc)); got != "kata-fc" {
+		t.Errorf("session worker runtimeClassName=%q, want kata-fc", got)
+	}
+	t.Log("M4: AgentSession worker Deployment Available -> phase=Running (serve-session live on kata-fc)")
+}
+
+// a2aComposition (R-E2E-SCN-A2A) is the M3 positive-path: one agent invokes
+// another. A parent loop Agent has a kind=agent Tool targeting a child Agent.
+// Both run as operator-scheduled kata pods against a deterministic OpenAI-wire
+// mock scripted per-agent (keyed on sha256 of each Agent's instructions, which
+// the executor sends verbatim as the system message): the PARENT is scripted to
+// emit the kind=agent tool call then finalize; the CHILD to finalize directly.
+// At runtime the parent's in-pod AgentRunInvoker creates a CHILD AgentRun, polls
+// it to terminal, and folds its output. Asserts: (1) a child AgentRun is created
+// carrying the parent-run label, and (2) the parent run reaches Completed — i.e.
+// the full A2A datapath (loop pod -> agent-call -> child AgentRun -> fold) works.
+var a2aComposition = Scenario{
+	ID:       "R-E2E-SCN-A2A",
+	Name:     "agent-to-agent-composition",
+	Requires: CapKubernetes | CapKata,
+	Run:      runA2AComposition,
+}
+
+func runA2AComposition(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	const ns, pool = "tenant-a", "e2e-a2a-pool"
+	const parentRun = "e2e-a2a-run"
+	const parentInstr = "e2e-a2a PARENT: call the delegate tool, then finish."
+	const childInstr = "e2e-a2a CHILD: return the answer."
+	sha := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+
+	for _, d := range [][]string{
+		{"agentrun", parentRun}, {"agent", "e2e-a2a-parent"}, {"agent", "e2e-a2a-child"},
+		{"tool", "delegate"}, {"modelprovider", "a2a-prov"}, {"secret", "a2a-key"},
+		{"configmap", "a2a-plans"}, {"deployment", "a2a-llm"}, {"service", "a2a-llm"},
+	} {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
+	}
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", "-n", ns, "-l", "agents.smol-agents.ai/parent-run="+parentRun, "--ignore-not-found")
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentnodepool", pool, "--ignore-not-found")
+
+	// kata placement (single-node L2): a kata-fc AgentNodePool + the pool label
+	// on the node, so both parent and child run pods schedule.
+	if err := env.Apply(ctx, []byte(`apiVersion: agents.smol-agents.ai/v1
+kind: AgentNodePool
+metadata: { name: e2e-a2a-pool }
+spec: { isolation: kata-fc, arch: arm64, bootstrap: { mode: UserData, distro: al2023 } }
+`)); err != nil {
+		t.Fatalf("apply AgentNodePool: %v", err)
+	}
+	nodeOut, err := env.Exec(ctx, ExecTarget{}, "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}")
+	node := strings.TrimSpace(string(nodeOut))
+	if err != nil || node == "" {
+		t.Fatalf("get node: %v (%q)", err, nodeOut)
+	}
+	if _, err := env.Exec(ctx, ExecTarget{}, "label", "node", node, "agents.smol-agents.ai/pool="+pool, "--overwrite"); err != nil {
+		t.Fatalf("label node: %v", err)
+	}
+
+	// Deterministic OpenAI-wire mock: parent → [toolCall(delegate), final]; child → [final].
+	plans := fmt.Sprintf(`{"plans":{
+  %q:{"sequence":[{"toolCall":{"tool":"delegate","arguments":{}}},{"finalAnswer":{"output":{"composed":"by-parent"}}}]},
+  %q:{"plan":{"finalAnswer":{"output":{"child":"result"}}}}
+}}`, sha(parentInstr), sha(childInstr))
+	cm := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata: { name: a2a-plans, namespace: tenant-a }
+data:
+  plans.json: |
+%s
+`, indent(plans, "    "))
+	if err := env.Apply(ctx, []byte(cm)); err != nil {
+		t.Fatalf("apply plans ConfigMap: %v", err)
+	}
+
+	// Scripted fake-llm (OpenAI-wire endpoint) + Service, from the L2 ECR.
+	llm := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata: { name: a2a-llm, namespace: tenant-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: a2a-llm } }
+  template:
+    metadata: { labels: { app: a2a-llm } }
+    spec:
+      containers:
+        - name: fake-llm
+          image: %s
+          env: [{ name: PLANS_FILE, value: /plans/plans.json }]
+          ports: [{ containerPort: 8080 }]
+          volumeMounts: [{ name: plans, mountPath: /plans }]
+      volumes: [{ name: plans, configMap: { name: a2a-plans } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: a2a-llm, namespace: tenant-a }
+spec:
+  selector: { app: a2a-llm }
+  ports: [{ port: 8080, targetPort: 8080 }]
+`, ecrImage("fake-llm"))
+	if err := env.Apply(ctx, []byte(llm)); err != nil {
+		t.Fatalf("apply scripted fake-llm: %v", err)
+	}
+	if err := env.WaitFor(ctx, "a2a-llm-available", 90*time.Second, func(ctx context.Context) bool {
+		out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "deploy", "a2a-llm", "-o", "jsonpath={.status.availableReplicas}")
+		return strings.TrimSpace(string(out)) == "1"
+	}); err != nil {
+		t.Fatalf("scripted fake-llm not Available: %v", err)
+	}
+
+	// Provider + secret + child Agent + delegate Tool + parent Agent.
+	setup := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata: { name: a2a-key, namespace: tenant-a }
+stringData: { apiKey: "dummy" }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: { name: a2a-prov, namespace: tenant-a }
+spec: { kind: openai, endpoint: "http://a2a-llm.tenant-a.svc.cluster.local:8080", secretRef: { secretName: a2a-key } }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-a2a-child, namespace: tenant-a }
+spec:
+  model: { providerRef: a2a-prov, name: m }
+  instructions: %q
+  budget: { maxSteps: 2, maxTokens: 2000, maxWallClockSeconds: 120, maxToolCalls: 1 }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: { name: delegate, namespace: tenant-a }
+spec:
+  kind: agent
+  agent: { ref: { name: e2e-a2a-child } }
+  inputSchema: { type: object }
+  outputSchema: { type: object }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-a2a-parent, namespace: tenant-a }
+spec:
+  model: { providerRef: a2a-prov, name: m }
+  instructions: %q
+  tools: [{ name: delegate }]
+  budget: { maxSteps: 4, maxTokens: 4000, maxWallClockSeconds: 180, maxToolCalls: 2 }
+`, childInstr, parentInstr)
+	if err := env.Apply(ctx, []byte(setup)); err != nil {
+		t.Fatalf("apply A2A agents/tool/provider: %v", err)
+	}
+
+	// Run the parent. Its in-pod invoker creates a child AgentRun and folds it.
+	if err := env.Apply(ctx, []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata: { name: e2e-a2a-run, namespace: tenant-a }
+spec: { agentRef: e2e-a2a-parent, input: {} }
+`)); err != nil {
+		t.Fatalf("apply parent AgentRun: %v", err)
+	}
+
+	// 1. A child AgentRun is created carrying the parent-run label.
+	if err := env.WaitFor(ctx, "a2a-child-created", 4*time.Minute, func(ctx context.Context) bool {
+		out, _ := env.Exec(ctx, ExecTarget{}, "get", "agentruns", "-n", ns,
+			"-l", "agents.smol-agents.ai/parent-run="+parentRun, "-o", "name")
+		return strings.TrimSpace(string(out)) != ""
+	}); err != nil {
+		pods, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods,agentruns", "-o", "wide")
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", parentRun, "-o", "jsonpath={.status.state}:{.status.terminationReason}")
+		t.Fatalf("no child AgentRun created by the parent's A2A invoker: %v\nparent=%s\n%s", err, st, pods)
+	}
+
+	// 2. The parent run reaches a terminal Completed (folded the child's output).
+	if err := env.WaitFor(ctx, "a2a-parent-completed", 3*time.Minute, func(ctx context.Context) bool {
+		out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", parentRun, "-o", "jsonpath={.status.state}")
+		return strings.TrimSpace(string(out)) == "Completed"
+	}); err != nil {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", parentRun, "-o", "jsonpath={.status.state}:{.status.terminationReason}")
+		t.Fatalf("parent A2A run did not Complete (%s): %v", st, err)
+	}
+	t.Log("M3: parent loop pod emitted agent-call -> child AgentRun created (parent-run label) -> parent Completed folding child output")
+}
+
+// indent prefixes every line of s with pad (for embedding a JSON blob under a
+// YAML block scalar).
+func indent(s, pad string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = pad + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ecrImage returns the full image ref for a platform component: the L2 ECR copy
+// when L2_ECR_REGISTRY/L2_IMAGE_TAG are set (the L2 ring, where scenarios deploy
+// their own workloads), else the kind-loaded dev tag (L0/L1).
+func ecrImage(component string) string {
+	reg, tag := os.Getenv("L2_ECR_REGISTRY"), os.Getenv("L2_IMAGE_TAG")
+	if reg == "" || tag == "" {
+		return "smol-agents/" + component + ":dev"
+	}
+	return reg + "/smol-agents/" + component + ":" + tag
 }
 
 // silence "imported and not used" if a future refactor drops one of

@@ -53,6 +53,13 @@ resource "aws_ecr_repository" "secret_proxy" {
   image_tag_mutability = "MUTABLE"
 }
 
+# agentfs-sidecar is the operator-spawned AgentFS restore init container +
+# serving sidecar (durable session/run workspace; S3 backup/WAL when configured).
+resource "aws_ecr_repository" "agentfs_sidecar" {
+  name                 = "smol-agents/agentfs-sidecar"
+  image_tag_mutability = "MUTABLE"
+}
+
 resource "aws_ecr_repository" "fake_llm" {
   name                 = "smol-agents/fake-llm"
   image_tag_mutability = "MUTABLE"
@@ -132,6 +139,7 @@ resource "aws_ecr_lifecycle_policy" "trim" {
     aws_ecr_repository.fake_tts.name,
     aws_ecr_repository.memory_mcp.name,
     aws_ecr_repository.memory_worker.name,
+    aws_ecr_repository.agentfs_sidecar.name,
   ])
   repository = each.value
   policy = jsonencode({
