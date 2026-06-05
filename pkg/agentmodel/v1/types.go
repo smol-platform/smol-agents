@@ -393,6 +393,13 @@ type RunStatus struct {
 	// the agentfs-sidecar reported plus per-file refs. Observability-only; nil
 	// when the Agent declares no spec.artifacts. +optional
 	Artifacts *ArtifactsStatus `json:"artifacts,omitempty"`
+
+	// Networks are the AgentNetworks bound to this run (M1.19), empty when only
+	// the default-deny egress floor applies. +optional
+	Networks []string `json:"networks,omitempty"`
+	// EgressEnforcement summarizes the run's egress posture: "default-deny" (the
+	// floor only) or "tiered" (a bound AgentNetwork allow-list layered on). +optional
+	EgressEnforcement string `json:"egressEnforcement,omitempty"`
 }
 
 // TraceSummary is compact metadata about a run's step/tool-call trace, surfaced
@@ -481,6 +488,13 @@ type AgentSessionStatus struct {
 	// Runs are the names of AgentRuns this session aggregated (legacy field).
 	// +optional
 	Runs []string `json:"runs,omitempty"`
+
+	// Networks are the AgentNetworks bound to this session (M1.19), empty when
+	// only the default-deny egress floor applies. +optional
+	Networks []string `json:"networks,omitempty"`
+	// EgressEnforcement summarizes the session's egress posture: "default-deny"
+	// (the floor only) or "tiered" (a bound AgentNetwork allow-list). +optional
+	EgressEnforcement string `json:"egressEnforcement,omitempty"`
 }
 
 // AgentPolicy — guardrails. R-AM-API-6.

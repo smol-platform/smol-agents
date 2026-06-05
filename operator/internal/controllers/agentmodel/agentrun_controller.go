@@ -552,6 +552,10 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 	if err != nil {
 		return err
 	}
+	// Surface the egress posture for observability (M1.19): the bound network
+	// names + whether a tightened allow-list applies on top of the floor.
+	run.Status.Networks = netPlan.Networks
+	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
 	np := builders.BuildAgentRunEgressPolicyWithPlan(run, netPlan)
 	if err := ctrl.SetControllerReference(run, np, r.Scheme); err != nil {
 		return err

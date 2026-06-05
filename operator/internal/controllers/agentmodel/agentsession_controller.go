@@ -132,6 +132,9 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("resolve bound networks: %w", err)
 	}
+	// Surface the egress posture for observability (M1.19).
+	session.Status.Networks = netPlan.Networks
+	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
 	np := builders.BuildAgentSessionEgressPolicyWithPlan(synthetic.Name, session.Namespace,
 		map[string]string{"agents.smol-agents.ai/run": synthetic.Name}, netPlan)
 	if err := r.ensureOwned(ctx, session, np); err != nil {

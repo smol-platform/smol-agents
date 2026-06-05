@@ -40,3 +40,13 @@ func resolveBoundNetworks(ctx context.Context, c client.Client, agent *amv1.Agen
 	p.Networks = names
 	return p, nil
 }
+
+// egressEnforcementLabel summarizes a plan's egress posture for status (M1.19):
+// "tiered" when a bound AgentNetwork layers an allow-list on top of the floor,
+// else "default-deny" (the floor only).
+func egressEnforcementLabel(p plan.NetworkPlan) string {
+	if len(p.AllowRules) > 0 {
+		return "tiered"
+	}
+	return "default-deny"
+}

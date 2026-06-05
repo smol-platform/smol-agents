@@ -54,3 +54,5 @@ spec:
                   type: array
                   description: LEGACY/DEAD — never written by the reconciler; do not rely on it.
                   items: { type: string }
+                networks: { type: array, items: { type: string }, description: 'AgentNetworks bound to this session (M1.19); empty = default-deny floor only.' }
+                egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }

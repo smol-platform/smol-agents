@@ -120,6 +120,8 @@ spec:
                 startedAt: { type: string, format: date-time, description: 'When the run pod started executing.' }
                 endedAt: { type: string, format: date-time, description: 'When the run reached a terminal state.' }
                 terminationReason: { type: string, description: 'Machine-readable reason for a terminal state (e.g. budget exceeded, error).' }
+                networks: { type: array, items: { type: string }, description: 'AgentNetworks bound to this run (M1.19); empty = default-deny floor only.' }
+                egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }
                 pendingAction:
                   type: object
                   description: 'Set while state==RequiresAction: the approval the run is waiting on (M5).'
