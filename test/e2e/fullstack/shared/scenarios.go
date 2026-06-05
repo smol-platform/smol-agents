@@ -44,6 +44,8 @@ func All() []Scenario {
 		cancel,
 		approvalGate,
 		egressFloor,
+		policyGate,
+		toolKindGuard,
 		webhook,
 		kataIsolation,
 		smolAgentPhase,
@@ -700,6 +702,132 @@ func runEgressFloor(t *testing.T, env Env) {
 		t.Errorf("podSelector=%s, want it to select the served (hello) pods", sel)
 	}
 	t.Log("M1.17: default-ON serving egress floor present + selects the served pods")
+}
+
+var policyGate = Scenario{
+	ID:       "R-E2E-SCN-POLICY-GATE",
+	Name:     "agentpolicy-denies-provider",
+	Requires: CapKubernetes,
+	Run:      runPolicyGate,
+}
+
+// runPolicyGate exercises the M1.5 namespace AgentPolicy reconcile gate through
+// the real operator: an AgentPolicy whose allow-list excludes an Agent's
+// resolved provider must flip that Agent to Failed/PolicyViolation. Runs in a
+// dedicated namespace so the namespace-wide policy can't contaminate the shared
+// tenant-a/researcher other scenarios reuse.
+func runPolicyGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, agent = "e2e-policy", "denied-agent"
+	// Idempotent re-run on a reused cluster: drop the asserted Agent so it is
+	// freshly reconciled against the policy below.
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-policy}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: anthropic-prov, namespace: e2e-policy}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentPolicy
+metadata: {name: only-openai, namespace: e2e-policy}
+spec:
+  allowedProviders: ["openai-prov"]
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: denied-agent, namespace: e2e-policy}
+spec:
+  model: {providerRef: anthropic-prov, name: m}
+  instructions: "hi"
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply policy-gate manifest: %v", err)
+	}
+	assertAgentFailedClosed(t, env, ctx, ns, agent, "PolicyViolation")
+	t.Log("M1.5: AgentPolicy allow-list flipped the disallowed-provider Agent to Failed/PolicyViolation")
+}
+
+var toolKindGuard = Scenario{
+	ID:       "R-E2E-SCN-TOOL-KIND",
+	Name:     "unwired-tool-kind-failclosed",
+	Requires: CapKubernetes,
+	Run:      runToolKindGuard,
+}
+
+// runToolKindGuard exercises the M2.16 fail-closed tool-kind guard through the
+// real operator: a loop-mode Agent referencing a Tool whose kind has no
+// production loop invoker (kind=agent) must be flipped to
+// Failed/ToolKindUnsupported rather than silently scheduled. Dedicated namespace
+// for isolation.
+func runToolKindGuard(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, agent = "e2e-toolkind", "loopy"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-toolkind}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: prov, namespace: e2e-toolkind}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: {name: delegate, namespace: e2e-toolkind}
+spec:
+  kind: agent
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: loopy, namespace: e2e-toolkind}
+spec:
+  model: {providerRef: prov, name: m}
+  instructions: "hi"
+  tools:
+    - name: delegate
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply tool-kind manifest: %v", err)
+	}
+	assertAgentFailedClosed(t, env, ctx, ns, agent, "ToolKindUnsupported")
+	t.Log("M2.16: loop Agent with an unwired kind=agent Tool was failed closed (ToolKindUnsupported)")
+}
+
+// assertAgentFailedClosed waits for an Agent to reach Failed/<reason> via the
+// real reconciler, failing the test (with the observed phase/reason for a
+// precise pointer) if it does not converge in time.
+func assertAgentFailedClosed(t *testing.T, env Env, ctx context.Context, ns, name, reason string) {
+	t.Helper()
+	if err := env.WaitFor(ctx, "agent-failclosed-"+reason, 60*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.reason}")
+		return strings.TrimSpace(string(ph)) == "Failed" && strings.TrimSpace(string(rs)) == reason
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.reason}")
+		t.Fatalf("agent %s/%s never reached Failed/%s (observed %q/%q): %v", ns, name, reason, strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err)
+	}
 }
 
 var webhook = Scenario{
