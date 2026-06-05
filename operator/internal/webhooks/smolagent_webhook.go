@@ -40,6 +40,15 @@ func ValidateAgent(cr *v1.SmolAgent, platform *v1.SmolAgentPlatform) error {
 	// Unknown runtimeClass that ParseKind couldn't resolve also triggers
 	// the runc fallback above, so the same error fires.
 
+	// Terminal/attach is a serving-path feature (M4.7): an SSH entry point needs
+	// a stable pod and a WebSocket terminal must not traverse the Knative
+	// activator, so terminal.ssh is rejected on a Knative deployment.
+	if cr.Spec.Features.Terminal.Enabled && cr.Spec.Features.Terminal.SSH {
+		if dk := cr.Spec.DeploymentKind; dk == "" || dk == "knative" {
+			errs = append(errs, errors.New("features.terminal.ssh requires spec.deploymentKind=deployment or statefulset (not knative)"))
+		}
+	}
+
 	if platform != nil {
 		errs = append(errs, validatePolicy(cr, platform)...)
 	}

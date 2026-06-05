@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -39,6 +40,9 @@ func main() {
 	var allowHostRuntime bool
 	var sessionNATSURL string
 	var maxConcurrentReconciles int
+	var runDeadlineMultiplier float64
+	var defaultApprovalTimeout time.Duration
+	var defaultNamespaceRunConcurrency int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -50,6 +54,12 @@ func main() {
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
 		"max parallel reconciles per agent-model controller (AgentRun/AgentSession)")
+	flag.Float64Var(&runDeadlineMultiplier, "run-deadline-multiplier", 1.5,
+		"scales an AgentRun's wall-clock budget into the pod ActiveDeadlineSeconds hard backstop (M1.10)")
+	flag.DurationVar(&defaultApprovalTimeout, "default-approval-timeout", time.Hour,
+		"expiry for an un-decided pre-run approval when the Agent sets none (M5)")
+	flag.IntVar(&defaultNamespaceRunConcurrency, "default-namespace-run-concurrency", 0,
+		"per-namespace cap on Running AgentRuns when no AgentRunQuota sets one (0 = unlimited, M1.12)")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -101,9 +111,12 @@ func main() {
 	}
 	if err := (&agentmodel.AgentRunReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
-		AllowHostRuntime:        allowHostRuntime,
-		MaxConcurrentReconciles: maxConcurrentReconciles,
+		DefaultRunRuntimeClass:         defaultRunRuntimeClass,
+		AllowHostRuntime:               allowHostRuntime,
+		MaxConcurrentReconciles:        maxConcurrentReconciles,
+		RunDeadlineMultiplier:          runDeadlineMultiplier,
+		DefaultApprovalTimeout:         defaultApprovalTimeout,
+		DefaultNamespaceRunConcurrency: int32(defaultNamespaceRunConcurrency),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)
@@ -149,6 +162,10 @@ func main() {
 		}
 		if err := webhooks.SetupAgentPolicyGateWebhook(mgr); err != nil {
 			setupLog.Error(err, "unable to register AgentPolicy gate webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupAgentSessionWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentSession webhook")
 			os.Exit(1)
 		}
 	}

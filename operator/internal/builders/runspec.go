@@ -29,6 +29,13 @@ const (
 	runSpecAgentFile    = "agent.json"
 	runSpecRunFile      = "run.json"
 	runSpecProviderFile = "provider.json"
+	// runSpecToolsFile carries the resolved loop-mode tool catalog (must match
+	// agentruntime.ToolsSpecFile, which the run entrypoint LoadTools reads).
+	runSpecToolsFile = "tools.json"
+
+	// runSpecToolsMaxBytes guards tools.json against the ~1 MiB ConfigMap ceiling
+	// (a ConfigMap maxes at 1 MiB across all keys; keep tools well under it).
+	runSpecToolsMaxBytes = 768 << 10
 )
 
 // RunProvider is the resolved ModelProvider a Mode=loop run pod needs to build
@@ -47,6 +54,14 @@ func RunSpecConfigMapName(runName string) string { return runName + "-runspec" }
 // BuildRunSpecConfigMap renders the Agent + AgentRunSpec the run pod executes.
 // The Agent is marshalled as the pure (CRD-free) v1.Agent the executor loads.
 func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent, provider *RunProvider) (*corev1.ConfigMap, error) {
+	return BuildRunSpecConfigMapWithTools(run, agent, provider, nil)
+}
+
+// BuildRunSpecConfigMapWithTools is BuildRunSpecConfigMap plus the resolved
+// loop-mode tool catalog written as tools.json (omitted when empty, so the
+// nil-tools path is byte-identical to the original). The marshaled catalog is
+// guarded against the ConfigMap size ceiling.
+func BuildRunSpecConfigMapWithTools(run *amv1.AgentRun, agent *amv1.Agent, provider *RunProvider, tools []pure.Tool) (*corev1.ConfigMap, error) {
 	agentJSON, err := json.Marshal(pure.Agent{Spec: agent.Spec})
 	if err != nil {
 		return nil, fmt.Errorf("marshal agent spec: %w", err)
@@ -65,6 +80,16 @@ func BuildRunSpecConfigMap(run *amv1.AgentRun, agent *amv1.Agent, provider *RunP
 			return nil, fmt.Errorf("marshal provider: %w", err)
 		}
 		data[runSpecProviderFile] = string(pj)
+	}
+	if len(tools) > 0 {
+		tj, err := json.Marshal(tools)
+		if err != nil {
+			return nil, fmt.Errorf("marshal tools: %w", err)
+		}
+		if len(tj) > runSpecToolsMaxBytes {
+			return nil, fmt.Errorf("tools.json is %d bytes, exceeds the %d ceiling (ToolSpecTooLarge)", len(tj), runSpecToolsMaxBytes)
+		}
+		data[runSpecToolsFile] = string(tj)
 	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},

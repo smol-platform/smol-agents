@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	opv1 "github.com/smol-platform/smol-agents/operator/api/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
@@ -23,7 +24,7 @@ import (
 func TestAgentSessionReconcile_LaunchesDurableWorker(t *testing.T) {
 	sch := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
-		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme,
+		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme, opv1.AddToScheme,
 	} {
 		if err := add(sch); err != nil {
 			t.Fatalf("scheme: %v", err)
@@ -39,9 +40,12 @@ func TestAgentSessionReconcile_LaunchesDurableWorker(t *testing.T) {
 	session.Spec.AgentRef = "sess-a"
 
 	kataRC := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+	// A kata AgentNodePool so the worker placement resolves (M1.11) instead of
+	// holding the session Pending/NoKVMCapacity.
+	kataPool := &opv1.AgentNodePool{ObjectMeta: metav1.ObjectMeta{Name: "kata-pool"}, Spec: opv1.AgentNodePoolSpec{Isolation: "kata-fc"}}
 
 	c := fake.NewClientBuilder().WithScheme(sch).
-		WithObjects(agent, session, kataRC).
+		WithObjects(agent, session, kataRC, kataPool).
 		WithStatusSubresource(&amv1.AgentSession{}).
 		Build()
 	r := &AgentSessionReconciler{Client: c, Scheme: sch}
@@ -92,6 +96,54 @@ func TestAgentSessionReconcile_LaunchesDurableWorker(t *testing.T) {
 	}
 }
 
+// M2.18: when the AgentSession opts into turn scaling, the controller renders
+// the worker's --max-concurrent-turns / --history-limit flags from the spec
+// accessors; an unset session (above) renders neither (serial default).
+func TestAgentSessionReconcile_RendersTurnScaling(t *testing.T) {
+	sch := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme, opv1.AddToScheme,
+	} {
+		if err := add(sch); err != nil {
+			t.Fatalf("scheme: %v", err)
+		}
+	}
+
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "sess-a", Namespace: "t"}}
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessGenericHTTP, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
+	agent.Spec.Storage = &pure.StorageSpec{Kind: pure.StorageAgentFS, AgentFS: &pure.AgentFSSpec{SizeGiB: 1, MountPath: "/var/agentfs"}}
+
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "t", Generation: 1}}
+	session.Spec.AgentRef = "sess-a"
+	session.Spec.MaxConcurrentTurns = 4
+	session.Spec.TurnHistoryLimit = 50
+
+	kataRC := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+	kataPool := &opv1.AgentNodePool{ObjectMeta: metav1.ObjectMeta{Name: "kata-pool"}, Spec: opv1.AgentNodePoolSpec{Isolation: "kata-fc"}}
+
+	c := fake.NewClientBuilder().WithScheme(sch).
+		WithObjects(agent, session, kataRC, kataPool).
+		WithStatusSubresource(&amv1.AgentSession{}).
+		Build()
+	r := &AgentSessionReconciler{Client: c, Scheme: sch}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "t", Name: "s1"}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var dep appsv1.Deployment
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s1-session"}, &dep); err != nil {
+		t.Fatalf("session Deployment not created: %v", err)
+	}
+	got := strings.Join(dep.Spec.Template.Spec.Containers[0].Command, " ")
+	if !strings.Contains(got, "--max-concurrent-turns=4") {
+		t.Errorf("command = %q, want --max-concurrent-turns=4", got)
+	}
+	if !strings.Contains(got, "--history-limit=50") {
+		t.Errorf("command = %q, want --history-limit=50", got)
+	}
+}
+
 // runc without --allow-host-runtime is a fail-closed policy violation for a session too.
 func TestAgentSessionReconcile_RuncFailsClosed(t *testing.T) {
 	sch := runtime.NewScheme()
@@ -122,5 +174,40 @@ func TestAgentSessionReconcile_RuncFailsClosed(t *testing.T) {
 	}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s2-session"}, &appsv1.Deployment{}); err == nil {
 		t.Error("no Deployment should be created for a fail-closed session")
+	}
+}
+
+// M1.11: a kata session whose RuntimeClass exists but has NO matching
+// AgentNodePool is held Pending (fail-closed) — no worker Deployment.
+func TestAgentSessionReconcile_NoKataPoolPending(t *testing.T) {
+	sch := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme, opv1.AddToScheme,
+	} {
+		_ = add(sch)
+	}
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "ka", Namespace: "t"}}
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessGenericHTTP, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
+	agent.Spec.Storage = &pure.StorageSpec{Kind: pure.StorageAgentFS, AgentFS: &pure.AgentFSSpec{SizeGiB: 1, MountPath: "/var/agentfs"}}
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s3", Namespace: "t", Generation: 1}}
+	session.Spec.AgentRef = "ka"
+	kataRC := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+
+	c := fake.NewClientBuilder().WithScheme(sch).
+		WithObjects(agent, session, kataRC). // RuntimeClass present, but NO AgentNodePool
+		WithStatusSubresource(&amv1.AgentSession{}).Build()
+	r := &AgentSessionReconciler{Client: c, Scheme: sch}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "t", Name: "s3"}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var got amv1.AgentSession
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3"}, &got)
+	if got.Status.Phase != pure.PhasePending {
+		t.Errorf("kata session w/o pool → phase %s, want Pending", got.Status.Phase)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s3-session"}, &appsv1.Deployment{}); err == nil {
+		t.Error("no Deployment should be created when placement can't resolve")
 	}
 }

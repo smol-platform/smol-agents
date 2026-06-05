@@ -1,0 +1,44 @@
+package webhooks
+
+import (
+	"context"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+)
+
+func sessionWebhookWith(t *testing.T, objs ...client.Object) *agentSessionWebhook {
+	t.Helper()
+	sch := runtime.NewScheme()
+	if err := amv1.AddToScheme(sch); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	return &agentSessionWebhook{client: fake.NewClientBuilder().WithScheme(sch).WithObjects(objs...).Build()}
+}
+
+func TestAgentSessionWebhook_AgentRefMustExist(t *testing.T) {
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "t"}}
+	w := sessionWebhookWith(t, agent)
+
+	good := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	good.Spec.AgentRef = "alice"
+	if _, err := w.ValidateCreate(context.Background(), good); err != nil {
+		t.Errorf("existing agentRef must pass: %v", err)
+	}
+
+	dangling := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	dangling.Spec.AgentRef = "ghost"
+	if _, err := w.ValidateCreate(context.Background(), dangling); err == nil {
+		t.Errorf("dangling agentRef must be rejected")
+	}
+
+	empty := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	if _, err := w.ValidateCreate(context.Background(), empty); err == nil {
+		t.Errorf("empty agentRef must be rejected")
+	}
+}

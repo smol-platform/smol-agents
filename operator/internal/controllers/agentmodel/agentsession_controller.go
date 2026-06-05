@@ -22,6 +22,7 @@ import (
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
 )
@@ -136,12 +137,32 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// a long-running session worker: serve-session command, microVM class, broker.
 	pod := builders.BuildAgentRunPod(synthetic, agent)
 	builders.ApplyRunSandbox(pod, sbClass)
+	// Bind the resident session worker to its kata node pool (M1.11). A KVM class
+	// with no matching AgentNodePool holds the session Pending (fail-closed)
+	// rather than scheduling a pod that can never run. No deadline — the idle
+	// timeout, not a wall-clock budget, bounds a session worker.
+	placement, _, plErr := features.ResolvePlacementForClass(ctx, r.Client, sbClass)
+	if plErr != nil {
+		return ctrl.Result{}, fmt.Errorf("resolve placement: %w", plErr)
+	}
+	if placement == nil && builders.RequiresKVM(sbClass) {
+		return r.writeStatus(ctx, session, pure.PhasePending, 30*time.Second)
+	}
+	builders.ApplyRunPodPlacement(pod, placement)
 	if len(brokerValues) > 0 {
 		builders.AttachSecretBroker(pod, synthetic.Name)
 	}
 	cmd := []string{"/agent", "serve-session", "--dir=" + builders.RunSpecMountPath, "--agent-ref=" + session.Spec.AgentRef}
 	if session.Spec.IdleTimeoutSeconds > 0 {
 		cmd = append(cmd, fmt.Sprintf("--idle-timeout=%ds", session.Spec.IdleTimeoutSeconds))
+	}
+	// Turn-scaling knobs (M2.18). Accessors default-preserve serial behavior, so
+	// only render when the operator actually opted into concurrency / a bound.
+	if n := session.Spec.ConcurrentTurns(); n > 1 {
+		cmd = append(cmd, fmt.Sprintf("--max-concurrent-turns=%d", n))
+	}
+	if h := session.Spec.HistoryLimit(); h > 0 {
+		cmd = append(cmd, fmt.Sprintf("--history-limit=%d", h))
 	}
 	pod.Spec.Containers[0].Command = cmd
 	// NATS turn transport (gateway path); without it the worker uses its on-disk

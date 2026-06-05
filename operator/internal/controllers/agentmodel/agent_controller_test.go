@@ -97,6 +97,30 @@ func TestAgentReconciler_PolicyGate_AllowsConformingProvider(t *testing.T) {
 	}
 }
 
+// M2.16: a loop-mode agent referencing a tool whose kind has no production
+// invoker (agent/function) is failed closed; a harness-mode agent with the same
+// inert tool ref is not false-positived.
+func TestAgentReconciler_ToolKindUnsupported(t *testing.T) {
+	agentTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "delegate", Namespace: "tenant-a"}, Spec: pure.ToolSpec{Kind: pure.ToolAgent}}
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+
+	loop := loopAgent("loopy", "tenant-a", "anthropic")
+	loop.Spec.Tools = []pure.ToolRef{{Name: "delegate"}}
+	r := newAgentReconcilerForTest(t, loop, provider, agentTool)
+	got := reconcileAgent(t, r, "tenant-a", "loopy")
+	if got.Status.Phase != "Failed" || got.Status.Reason != "ToolKindUnsupported" {
+		t.Fatalf("loop agent w/ kind:agent tool → want Failed/ToolKindUnsupported, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+
+	h := harnessAgent("harn", "tenant-a")
+	h.Spec.Tools = []pure.ToolRef{{Name: "delegate"}}
+	r2 := newAgentReconcilerForTest(t, h, agentTool)
+	got2 := reconcileAgent(t, r2, "tenant-a", "harn")
+	if got2.Status.Reason == "ToolKindUnsupported" {
+		t.Fatalf("harness-mode inert tool ref must NOT be failed as ToolKindUnsupported (got %q/%q)", got2.Status.Phase, got2.Status.Reason)
+	}
+}
+
 func TestToPure_RoundTrip(t *testing.T) {
 	a := &amv1.Agent{}
 	a.Spec.Model.ProviderRef = "openai"

@@ -62,6 +62,27 @@ func TestValidateAgent_RuncRequiresAllowHostEscape(t *testing.T) {
 	}
 }
 
+// M4.7: terminal.ssh requires a non-Knative deployment (stable pod, no activator).
+func TestValidateAgent_TerminalSSHRequiresNonKnative(t *testing.T) {
+	cr := validCR()
+	cr.Spec.DeploymentKind = "knative"
+	cr.Spec.Features.Terminal.Enabled = true
+	cr.Spec.Features.Terminal.SSH = true
+	if err := ValidateAgent(cr, nil); err == nil || !strings.Contains(err.Error(), "terminal.ssh") {
+		t.Errorf("terminal.ssh on knative must be rejected, got: %v", err)
+	}
+	cr.Spec.DeploymentKind = "statefulset"
+	if err := ValidateAgent(cr, nil); err != nil {
+		t.Errorf("terminal.ssh on statefulset must pass: %v", err)
+	}
+	// web-only terminal is fine on knative.
+	cr.Spec.DeploymentKind = "knative"
+	cr.Spec.Features.Terminal.SSH = false
+	if err := ValidateAgent(cr, nil); err != nil {
+		t.Errorf("web-only terminal on knative must pass: %v", err)
+	}
+}
+
 func TestValidateAgent_ForbiddenFeatureRejected(t *testing.T) {
 	cr := validCR()
 	cr.Spec.Features.EBPF.Enabled = true

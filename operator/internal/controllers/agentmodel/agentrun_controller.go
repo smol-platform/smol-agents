@@ -499,6 +499,14 @@ func (r *AgentRunReconciler) deletePod(ctx context.Context, run *amv1.AgentRun) 
 }
 
 func terminationReason(pod *corev1.Pod) string {
+	// Pod-level reason first: the kubelet sets pod.Status.Reason (e.g.
+	// "DeadlineExceeded" from activeDeadlineSeconds, "Evicted") when it kills the
+	// pod before any container records its own terminated reason — so a run that
+	// blew its wall-clock deadline (M1.10) surfaces as pod:DeadlineExceeded
+	// rather than a generic pod:Failed (M4.18).
+	if pod.Status.Reason != "" {
+		return "pod:" + pod.Status.Reason
+	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Terminated != nil && cs.State.Terminated.Reason != "" {
 			return "pod:" + cs.State.Terminated.Reason
@@ -571,8 +579,31 @@ func (r *AgentRunReconciler) ensureBrokerConfig(ctx context.Context, run *amv1.A
 // Agent + AgentRunSpec the `agent run` entrypoint executes. Owned by the run so
 // it is garbage-collected with it. The spec is immutable per run, so an existing
 // ConfigMap is left as-is.
+// hermesSessionAgent injects a stable Hermes provider session id when the run
+// belongs to an AgentSession and the harness is Hermes — the cross-turn memory
+// rail for HTTP harnesses (D6, M3.12): memory lives gateway-side keyed by a
+// session id derived from the AgentSession UID (immutable, no cross-tenant
+// bleed). It deep-copies so the stored Agent is never mutated; non-Hermes or
+// non-session runs are returned unchanged.
+func (r *AgentRunReconciler) hermesSessionAgent(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) *amv1.Agent {
+	if run.Spec.SessionRef == "" || agent.Spec.Harness == nil || agent.Spec.Harness.Kind != pure.HarnessHermes {
+		return agent
+	}
+	var session amv1.AgentSession
+	if err := r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Spec.SessionRef}, &session); err != nil {
+		return agent // unresolvable session → no injection (run still works, just unscoped)
+	}
+	out := agent.DeepCopy()
+	out.Spec.Harness.SessionPolicy = pure.SessionPersistent
+	out.Spec.Harness.Env = append(out.Spec.Harness.Env, pure.HarnessEnvVar{
+		Name:  "HERMES_SESSION_ID",
+		Value: "sess-" + string(session.UID),
+	})
+	return out
+}
+
 func (r *AgentRunReconciler) ensureRunSpec(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent, provider *builders.RunProvider) error {
-	cm, err := builders.BuildRunSpecConfigMap(run, agent, provider)
+	cm, err := builders.BuildRunSpecConfigMap(run, r.hermesSessionAgent(ctx, run, agent), provider)
 	if err != nil {
 		return err
 	}
@@ -606,6 +637,7 @@ func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentR
 	run.Status.Output = pure.RedactJSON(rr.Output, pats)
 	run.Status.Steps = pure.RedactSteps(rr.Steps, pats)
 	run.Status.Usage = rr.Usage
+	run.Status.Trace = rr.Trace // compact trace metadata (M2.2)
 	switch {
 	case rr.Error != "":
 		run.Status.TerminationReason = rr.Error

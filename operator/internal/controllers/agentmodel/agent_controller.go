@@ -122,6 +122,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}
 			return ctrl.Result{}, err
 		}
+		// Fail closed (D3) on a loop-mode tool whose kind has no production
+		// invoker yet (agent/function). Harness-mode tool refs are inert — don't
+		// false-positive them.
+		if agent.Spec.Mode != pure.ModeHarness && !pure.SupportedLoopToolKinds()[tool.Spec.Kind] {
+			r.setStatus(agent, "Failed", "ToolKindUnsupported",
+				fmt.Sprintf("tool %q kind %q has no loop-mode invoker", tool.Name, tool.Spec.Kind))
+			return ctrl.Result{}, r.Status().Update(ctx, agent)
+		}
 		resolved = append(resolved, tool.Name)
 	}
 

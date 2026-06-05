@@ -125,6 +125,38 @@ type ObservabilityFeature struct {
 	ServiceName string `json:"serviceName,omitempty"`
 }
 
+// TerminalFeature exposes an interactive terminal / attach plane for a
+// SmolAgent (M4.7). It is only meaningful on the hardened serving path
+// (Deployment/StatefulSet) — a WebSocket terminal must not traverse the Knative
+// activator, and SSH requires a stable pod, so the admission webhook rejects
+// terminal.ssh on a Knative deployment. All scalar fields, so it is value-copied
+// by Features.DeepCopyInto.
+type TerminalFeature struct {
+	FeatureBase `json:",inline"`
+
+	// Web serves the ttyd web terminal (loopback sidecar, gateway-fronted).
+	// +kubebuilder:default:=true
+	Web bool `json:"web,omitempty"`
+	// SSH serves an SSH entry point (sshpiper → in-pod sshd); StatefulSet only.
+	// +optional
+	SSH bool `json:"ssh,omitempty"`
+	// Multiplex runs the agent inside tmux so a session persists across
+	// disconnects and supports multiple viewers.
+	// +kubebuilder:default:=true
+	Multiplex bool `json:"multiplex,omitempty"`
+	// Record streams an asciinema cast of the session to AgentFS.
+	// +kubebuilder:default:=true
+	Record bool `json:"record,omitempty"`
+	// ReadOnlyDefault makes a bare attach read-only; driving requires a driver
+	// AttachGrant.
+	// +kubebuilder:default:=true
+	ReadOnlyDefault bool `json:"readOnlyDefault,omitempty"`
+	// IdleTimeoutSeconds parks an idle attach session.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default:=1800
+	IdleTimeoutSeconds int32 `json:"idleTimeoutSeconds,omitempty"`
+}
+
 // Features groups all per-feature configuration.
 type Features struct {
 	Identity      IdentityFeature      `json:"identity,omitempty"`
@@ -134,6 +166,7 @@ type Features struct {
 	EBPF          EBPFFeature          `json:"ebpf,omitempty"`
 	Knative       KnativeFeature       `json:"knative,omitempty"`
 	Observability ObservabilityFeature `json:"observability,omitempty"`
+	Terminal      TerminalFeature      `json:"terminal,omitempty"`
 }
 
 // FeaturePolicyRow declares whether a feature is allowed cluster-wide

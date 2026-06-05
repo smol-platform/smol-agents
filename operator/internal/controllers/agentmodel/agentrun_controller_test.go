@@ -239,6 +239,58 @@ func TestAgentRunReconciler_MarkTerminal_ClearsStaleReason(t *testing.T) {
 // The runtime's own reason ("budget:tokens" for an Expired run that still
 // exits 0) is the most specific signal and must win over whatever pod-level
 // reason markTerminal left behind.
+// M3.12: a Hermes run that belongs to an AgentSession gets a stable
+// HERMES_SESSION_ID (sess-<session UID>) + persistent session policy injected
+// into a COPY of the agent; the stored Agent is never mutated.
+func TestHermesSessionAgent_InjectsSessionID(t *testing.T) {
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "sess-1", Namespace: "tenant-a", UID: "uid-xyz"}}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, session)
+	hermes := harnessAgent("alice", "tenant-a") // HarnessHermes
+
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	run.Spec.SessionRef = "sess-1"
+	out := r.hermesSessionAgent(context.Background(), run, hermes)
+	if out.Spec.Harness.SessionPolicy != pure.SessionPersistent {
+		t.Errorf("sessionPolicy not set to persistent")
+	}
+	var got string
+	for _, e := range out.Spec.Harness.Env {
+		if e.Name == "HERMES_SESSION_ID" {
+			got = e.Value
+		}
+	}
+	if got != "sess-uid-xyz" {
+		t.Errorf("HERMES_SESSION_ID = %q, want sess-uid-xyz", got)
+	}
+	if len(hermes.Spec.Harness.Env) != 0 {
+		t.Errorf("original agent env mutated: %+v", hermes.Spec.Harness.Env)
+	}
+
+	noSess := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	if r.hermesSessionAgent(context.Background(), noSess, hermes) != hermes {
+		t.Errorf("no sessionRef must return the agent unchanged")
+	}
+}
+
+// M4.18: a pod killed by activeDeadlineSeconds carries the reason at the POD
+// level — terminationReason must surface it (pod:DeadlineExceeded), preferring
+// the pod-level reason over container status, and falling back to pod:Failed.
+func TestTerminationReason_PrefersPodLevel(t *testing.T) {
+	deadline := &corev1.Pod{Status: corev1.PodStatus{Reason: "DeadlineExceeded"}}
+	if got := terminationReason(deadline); got != "pod:DeadlineExceeded" {
+		t.Errorf("deadline pod → %q, want pod:DeadlineExceeded", got)
+	}
+	container := &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+		{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled"}}},
+	}}}
+	if got := terminationReason(container); got != "pod:OOMKilled" {
+		t.Errorf("container-terminated pod → %q, want pod:OOMKilled", got)
+	}
+	if got := terminationReason(&corev1.Pod{}); got != "pod:Failed" {
+		t.Errorf("bare failed pod → %q, want pod:Failed", got)
+	}
+}
+
 func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
 	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
@@ -490,6 +542,20 @@ func TestAgentRunReconciler_FoldRunResult_Redaction(t *testing.T) {
 	r2.foldRunResult(context.Background(), run2, runPodWithTerminationMessage(rr))
 	if got := string(run2.Status.Output); got != `{"key":"sk-deadbeef","n":1}` {
 		t.Errorf("no-policy output must be byte-identical: %s", got)
+	}
+}
+
+// M2.2: the run's trace summary folds into Status.Trace.
+func TestAgentRunReconciler_FoldRunResult_Trace(t *testing.T) {
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run := sampleRun()
+	pod := runPodWithTerminationMessage(agentruntime.RunResult{
+		Phase: pure.PhaseCompleted,
+		Trace: &pure.TraceSummary{StepCount: 3, ToolCallCount: 5, Truncated: true},
+	})
+	r.foldRunResult(context.Background(), run, pod)
+	if run.Status.Trace == nil || run.Status.Trace.StepCount != 3 || run.Status.Trace.ToolCallCount != 5 || !run.Status.Trace.Truncated {
+		t.Fatalf("Status.Trace = %+v, want {3,5,truncated}", run.Status.Trace)
 	}
 }
 
