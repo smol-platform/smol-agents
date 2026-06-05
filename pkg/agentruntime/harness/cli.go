@@ -211,9 +211,26 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	if err != nil || !jsonOut {
 		return resp, err
 	}
-	out, in, outTok, costMilli, _ := parseClaudeJSON(resp.Output)
+	out, in, outTok, costMilli, _, isErr := parseClaudeJSON(resp.Output)
 	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli = out, in, outTok, costMilli
+	// claude --print exits 0 even when the turn errored (is_error). Surface it as
+	// a harness error so the run is folded Failed, not a silent success (M3.16).
+	// resp (with usage) is returned too, so token/cost accounting still lands.
+	if isErr {
+		return resp, fmt.Errorf("claude-code reported is_error: %s", errSnippet(out))
+	}
 	return resp, nil
+}
+
+// errSnippet trims harness output to a short, single-line diagnostic for an
+// error message (the full output is already captured in the step).
+func errSnippet(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
 }
 
 // CodexHarness invokes `codex exec "<prompt>"`.

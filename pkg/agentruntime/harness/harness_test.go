@@ -648,6 +648,30 @@ func TestRunCLI_StderrSurfacedOnError(t *testing.T) {
 	}
 }
 
+// M3.16: claude --print exits 0 even when the turn errored (is_error in the JSON
+// envelope). The harness must surface that as an error so the run is folded
+// Failed — not reported as a silent success — while still parsing usage.
+func TestClaudeCodeHarness_IsErrorSurfaced(t *testing.T) {
+	envelope := `{"result":"tool failed: permission denied","is_error":true,"usage":{"input_tokens":10,"output_tokens":3},"total_cost_usd":0.001}`
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", "printf '%s' '"+envelope+"'")
+	}}
+	resp, err := h.Run(context.Background(), Request{
+		Spec:   v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{OutputFormat: "json"}},
+		Input:  json.RawMessage(`"hi"`),
+		Budget: v1.Budget{MaxWallClockSeconds: 30},
+	})
+	if err == nil {
+		t.Fatal("is_error:true must surface as an error, not a silent success")
+	}
+	if !strings.Contains(err.Error(), "is_error") {
+		t.Errorf("error must name is_error, got %v", err)
+	}
+	if resp.TokensIn != 10 || resp.TokensOut != 3 {
+		t.Errorf("usage must survive the error (folded into the failed run): %d/%d", resp.TokensIn, resp.TokensOut)
+	}
+}
+
 // TestMergeEnv_InheritsParentEnv guards the fix for CLI harnesses crashing on a
 // missing HOME/PATH: the subprocess env must inherit the parent process env
 // (image HOME/PATH) with harness vars overriding on duplicate keys.
