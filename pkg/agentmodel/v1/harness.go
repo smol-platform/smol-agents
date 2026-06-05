@@ -49,6 +49,11 @@ const (
 	// (CanonicalHarnessKind maps it) but emits a deprecation path; new specs
 	// should use "inflection-pi".
 	HarnessPi HarnessKind = "pi"
+	// HarnessPiMono drives Mario Zechner's `pi-mono` coding-agent CLI via an
+	// in-pod pi-bridge HTTP server (M4.14/M4.15) — distinct from the hosted
+	// Inflection Pi above. Kind registration only here; the HTTP harness impl +
+	// bridge land in M4.15/M4.16.
+	HarnessPiMono HarnessKind = "pi-mono"
 	// HarnessAider runs the `aider` CLI as a subprocess (CLI kind).
 	HarnessAider HarnessKind = "aider"
 	// HarnessGoose runs Block's `goose run` CLI as a subprocess (CLI kind).
@@ -67,7 +72,7 @@ const (
 // at admission so a typo doesn't silently fall through to a no-op.
 func (k HarnessKind) Valid() bool {
 	switch k {
-	case HarnessClaudeCode, HarnessCodex, HarnessInflectionPi, HarnessPi, HarnessAider, HarnessGoose,
+	case HarnessClaudeCode, HarnessCodex, HarnessInflectionPi, HarnessPi, HarnessPiMono, HarnessAider, HarnessGoose,
 		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes:
 		return true
 	}

@@ -18,12 +18,20 @@ func TestHarnessKind_InflectionPiAlias(t *testing.T) {
 	if CanonicalHarnessKind(HarnessHermes) != HarnessHermes {
 		t.Errorf("non-alias kinds must pass through unchanged")
 	}
+	// pi-mono is a DISTINCT kind (Mario Zechner's CLI), NOT an alias of the
+	// hosted Inflection pi — it must be valid and canonicalize to itself.
+	if !HarnessPiMono.Valid() {
+		t.Errorf("pi-mono must be a valid kind")
+	}
+	if CanonicalHarnessKind(HarnessPiMono) != HarnessPiMono {
+		t.Errorf("pi-mono must NOT canonicalize to inflection-pi (it is a separate harness)")
+	}
 }
 
 func TestHarnessKind_Valid(t *testing.T) {
 	for _, k := range []HarnessKind{
-		HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessAider, HarnessGoose,
-		HarnessGenericCLI, HarnessGenericHTTP,
+		HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessPiMono, HarnessInflectionPi, HarnessAider, HarnessGoose,
+		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes,
 	} {
 		if !k.Valid() {
 			t.Errorf("%s should be valid", k)
