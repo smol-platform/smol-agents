@@ -89,6 +89,9 @@ func main() {
 		if m, ok := collectArtifactsOnShutdown(*mount, mgr.S3); ok {
 			b, _ := json.Marshal(m)
 			logger.Info("artifacts collected", "state", m.State, "count", len(m.Refs), "manifest", string(b))
+			// Record the manifest where the operator folds it into AgentRun.status
+			// (M2.26) — the sidecar's termination message, read from pod status.
+			writeArtifactTerminationMessage(m)
 		}
 	default:
 		fail("unknown verb %q (init|serve)", verb)

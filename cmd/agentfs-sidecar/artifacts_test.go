@@ -37,3 +37,35 @@ func TestCollectArtifactsOnShutdown(t *testing.T) {
 		t.Errorf("malformed rules → want Failed, got ok=%v %s", ok, m.State)
 	}
 }
+
+// M2.26: the termination-message manifest fits under the cap by dropping refs
+// from the tail, while always preserving State (the files stay in S3).
+func TestCapArtifactManifest(t *testing.T) {
+	// Small manifest passes through whole.
+	small := agentfs.ArtifactManifest{State: agentfs.ArtifactComplete, Refs: []agentfs.ArtifactRef{{Name: "a", S3Key: "k/a"}}}
+	if b := capArtifactManifest(small); len(b) == 0 || len(b) > terminationMsgCap {
+		t.Fatalf("small manifest: len=%d (cap %d)", len(b), terminationMsgCap)
+	}
+
+	// A manifest with many bulky refs is capped; refs drop but State survives.
+	big := agentfs.ArtifactManifest{State: agentfs.ArtifactPartial}
+	for i := 0; i < 400; i++ {
+		big.Refs = append(big.Refs, agentfs.ArtifactRef{
+			Name: "file-with-a-fairly-long-name", Path: "/workspace/outputs/dir", S3Key: "artifacts/ns/run/file-with-a-fairly-long-name", SHA256: "0123456789abcdef0123456789abcdef",
+		})
+	}
+	b := capArtifactManifest(big)
+	if len(b) == 0 || len(b) > terminationMsgCap {
+		t.Fatalf("big manifest not capped: len=%d (cap %d)", len(b), terminationMsgCap)
+	}
+	var got agentfs.ArtifactManifest
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("capped manifest must stay valid JSON: %v", err)
+	}
+	if got.State != agentfs.ArtifactPartial {
+		t.Errorf("State must survive capping, got %q", got.State)
+	}
+	if len(got.Refs) >= len(big.Refs) {
+		t.Errorf("expected refs dropped to fit, kept %d of %d", len(got.Refs), len(big.Refs))
+	}
+}

@@ -20,6 +20,7 @@ import (
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
@@ -326,6 +327,54 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.TerminationReason != "harness: http 502: upstream refused" {
 		t.Errorf("error should win, got %q", run.Status.TerminationReason)
+	}
+}
+
+// M2.26: foldArtifacts maps the sidecar's termination-message manifest into
+// Status.Artifacts; egress-requested-but-unreported folds to Failed; an
+// unconfigured pod leaves Status.Artifacts nil.
+func TestAgentRunReconciler_FoldArtifacts(t *testing.T) {
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	sidecar := builders.StorageFSSidecarName
+	artifactEnv := []corev1.EnvVar{{Name: "AGENTFS_ARTIFACTS", Value: `[{"Name":"out","Glob":"out/*"}]`}}
+
+	mb, _ := json.Marshal(agentfs.ArtifactManifest{
+		State: agentfs.ArtifactComplete,
+		Refs:  []agentfs.ArtifactRef{{Name: "out", Path: "out/r.json", S3Key: "artifacts/ns/r1/out/r.json", SizeBytes: 12, SHA256: "abc"}},
+	})
+	reported := &corev1.Pod{
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: sidecar, Env: artifactEnv}}},
+		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+			Name: sidecar, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: string(mb)}},
+		}}},
+	}
+	run := sampleRun()
+	r.foldArtifacts(run, reported)
+	if run.Status.Artifacts == nil || run.Status.Artifacts.State != agentfs.ArtifactComplete {
+		t.Fatalf("manifest not folded: %+v", run.Status.Artifacts)
+	}
+	if len(run.Status.Artifacts.Refs) != 1 || run.Status.Artifacts.Refs[0].S3Key != "artifacts/ns/r1/out/r.json" {
+		t.Errorf("ref not mapped: %+v", run.Status.Artifacts.Refs)
+	}
+
+	// Configured but the sidecar reported nothing → Failed.
+	silent := &corev1.Pod{
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: sidecar, Env: artifactEnv}}},
+		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+			Name: sidecar, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+		}}},
+	}
+	run2 := sampleRun()
+	r.foldArtifacts(run2, silent)
+	if run2.Status.Artifacts == nil || run2.Status.Artifacts.State != pure.ArtifactStateFailed {
+		t.Errorf("egress requested but unreported must fold to Failed, got %+v", run2.Status.Artifacts)
+	}
+
+	// No artifact env → no fold (nil).
+	run3 := sampleRun()
+	r.foldArtifacts(run3, &corev1.Pod{})
+	if run3.Status.Artifacts != nil {
+		t.Errorf("unconfigured pod must leave Artifacts nil, got %+v", run3.Status.Artifacts)
 	}
 }
 

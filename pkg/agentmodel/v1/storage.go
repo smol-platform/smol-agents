@@ -275,3 +275,34 @@ type ArtifactSpec struct {
 	// +optional
 	S3 *S3BackupSpec `json:"s3,omitempty"`
 }
+
+// Artifact egress states, mirrored from the sidecar's collection manifest.
+const (
+	ArtifactStateComplete = "Complete" // every declared output uploaded
+	ArtifactStatePartial  = "Partial"  // some uploaded, some skipped/failed
+	ArtifactStateFailed   = "Failed"   // collection failed or the sidecar never reported
+)
+
+// ArtifactsStatus is the folded, observability-only result of artifact egress
+// (M2.26): the state the agentfs-sidecar reported plus per-file refs. It never
+// gates the run — collection runs after the run's own result is sealed.
+type ArtifactsStatus struct {
+	// State is one of ArtifactState{Complete,Partial,Failed}.
+	State string `json:"state,omitempty"`
+	// Refs are the collected files. May be a prefix of the full set when the
+	// sidecar's manifest exceeded the termination-message cap (the files are
+	// still in S3; this is a display limit only). +optional
+	Refs []ArtifactStatusRef `json:"refs,omitempty"`
+}
+
+// ArtifactStatusRef is one collected file in ArtifactsStatus (the cluster-facing
+// projection of the sidecar's manifest ref).
+type ArtifactStatusRef struct {
+	Name      string `json:"name"`
+	Path      string `json:"path,omitempty"`
+	S3Key     string `json:"s3Key,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	// Skipped is the reason a declared output was not uploaded (empty = uploaded).
+	Skipped string `json:"skipped,omitempty"`
+}

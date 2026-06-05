@@ -8,6 +8,43 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/agentfs"
 )
 
+// terminationMsgPath is the container termination-message file; the operator
+// folds the manifest from pod status (no k8s client / RBAC in the sidecar).
+const terminationMsgPath = "/dev/termination-log"
+
+// terminationMsgCap keeps the manifest well under k8s's 4096-byte termination
+// message limit (per-container), leaving margin for encoding.
+const terminationMsgCap = 3072
+
+// writeArtifactTerminationMessage records the collection manifest to the
+// sidecar's termination-message file so the operator can fold it from pod
+// status. Best-effort: never fatal (the run already completed; artifacts are
+// observability-only). Refs are dropped from the tail if the manifest would
+// exceed the termination-message cap — the files are still in S3; this only
+// bounds what surfaces in AgentRun.status.
+func writeArtifactTerminationMessage(m agentfs.ArtifactManifest) {
+	if b := capArtifactManifest(m); b != nil {
+		_ = os.WriteFile(terminationMsgPath, b, 0o644)
+	}
+}
+
+// capArtifactManifest marshals the manifest, dropping refs from the tail until
+// it fits terminationMsgCap. State is always preserved; a truncated ref list is
+// acceptable (the files remain in S3). Returns nil only if marshaling fails.
+func capArtifactManifest(m agentfs.ArtifactManifest) []byte {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	for len(b) > terminationMsgCap && len(m.Refs) > 0 {
+		m.Refs = m.Refs[:len(m.Refs)-1]
+		if b, err = json.Marshal(m); err != nil {
+			return nil
+		}
+	}
+	return b
+}
+
 // collectArtifactsOnShutdown runs the artifact collector when AGENTFS_ARTIFACTS
 // is configured. It is called AFTER the scheduler's final SIGTERM backup so the
 // AgentFS RPO is preserved first, then declared workspace files are published.

@@ -22,6 +22,7 @@ import (
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
@@ -290,9 +291,11 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	case corev1.PodSucceeded:
 		r.markTerminal(run, pure.PhaseCompleted, "")
 		r.foldRunResult(ctx, run, pod)
+		r.foldArtifacts(run, pod)
 	case corev1.PodFailed:
 		r.markTerminal(run, pure.PhaseFailed, terminationReason(pod))
 		r.foldRunResult(ctx, run, pod)
+		r.foldArtifacts(run, pod)
 	}
 
 	// poll Pod state every 5s until terminal
@@ -666,4 +669,67 @@ func runResultFromPod(pod *corev1.Pod) (agentruntime.RunResult, bool) {
 		}
 	}
 	return agentruntime.RunResult{}, false
+}
+
+// foldArtifacts surfaces the agentfs-sidecar's artifact-collection manifest
+// (M2.26) into Status.Artifacts. The sidecar (a native sidecar = init container)
+// records the manifest in its termination message, which is present by the time
+// the pod is terminal — so the controller folds it from pod status without any
+// new sidecar k8s client or RBAC. Observability-only: this never sets State.
+// When egress was requested but the sidecar reported nothing, the result is
+// recorded as Failed (the files may still be in S3 — this only reflects what
+// the sidecar told us).
+func (r *AgentRunReconciler) foldArtifacts(run *amv1.AgentRun, pod *corev1.Pod) {
+	if !artifactsRequested(pod) {
+		return
+	}
+	m, ok := artifactManifestFromPod(pod)
+	if !ok {
+		run.Status.Artifacts = &pure.ArtifactsStatus{State: pure.ArtifactStateFailed}
+		return
+	}
+	out := &pure.ArtifactsStatus{State: m.State}
+	for _, ref := range m.Refs {
+		out.Refs = append(out.Refs, pure.ArtifactStatusRef{
+			Name: ref.Name, Path: ref.Path, S3Key: ref.S3Key,
+			SizeBytes: ref.SizeBytes, SHA256: ref.SHA256, Skipped: ref.Skipped,
+		})
+	}
+	run.Status.Artifacts = out
+}
+
+// artifactsRequested reports whether the AgentFS serve sidecar was told to
+// collect artifacts (AGENTFS_ARTIFACTS env), so an absent manifest can be
+// distinguished from "egress was never configured".
+func artifactsRequested(pod *corev1.Pod) bool {
+	for _, c := range pod.Spec.InitContainers {
+		if c.Name != builders.StorageFSSidecarName {
+			continue
+		}
+		for _, e := range c.Env {
+			if e.Name == "AGENTFS_ARTIFACTS" && e.Value != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// artifactManifestFromPod reads the agentfs-sidecar's termination message (the
+// collection manifest). The sidecar is a native sidecar, so its status is in
+// InitContainerStatuses.
+func artifactManifestFromPod(pod *corev1.Pod) (agentfs.ArtifactManifest, bool) {
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name != builders.StorageFSSidecarName {
+			continue
+		}
+		if cs.State.Terminated == nil || cs.State.Terminated.Message == "" {
+			return agentfs.ArtifactManifest{}, false
+		}
+		var m agentfs.ArtifactManifest
+		if err := json.Unmarshal([]byte(cs.State.Terminated.Message), &m); err == nil {
+			return m, true
+		}
+	}
+	return agentfs.ArtifactManifest{}, false
 }

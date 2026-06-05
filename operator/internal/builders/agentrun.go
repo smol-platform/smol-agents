@@ -75,6 +75,11 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	// so the agent's files actually persist across Runs (R-AFS).
 	if input, ok := storageMountFor(&agent.Spec); ok {
 		AttachStorageFS(pod, input)
+		// Artifact egress (M2.26): when the Agent declares spec.artifacts, tell the
+		// serve sidecar what to collect + where to key it. The sidecar (not the
+		// harness) holds the S3 creds; it reports the manifest via its termination
+		// message, which the controller folds into status.
+		ApplyArtifactCollection(pod, &agent.Spec, run.Namespace, run.Name)
 	}
 	// The secret broker (AttachSecretBroker) is wired by the controller, which
 	// resolves the secrets to serve (harness env secretRef + loop ModelProvider).

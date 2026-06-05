@@ -137,6 +137,23 @@ spec:
                     truncated: { type: boolean, description: 'True when step detail was dropped from the termination message.' }
                     droppedBytes: { type: integer, format: int64, description: 'Bytes of step detail dropped.' }
                     overflowRef: { type: string, description: 'Object-store ref to the full trace when offloaded (M2.9).' }
+                artifacts:
+                  type: object
+                  description: 'Folded artifact-egress result (M2.26), observability-only — the state the agentfs-sidecar reported plus per-file refs (a prefix of the full set if the manifest exceeded the termination-message cap; files are still in S3).'
+                  properties:
+                    state: { type: string, description: 'Complete | Partial | Failed (Failed = egress requested but the sidecar reported nothing).' }
+                    refs:
+                      type: array
+                      description: Collected files.
+                      items:
+                        type: object
+                        properties:
+                          name: { type: string }
+                          path: { type: string }
+                          s3Key: { type: string }
+                          sizeBytes: { type: integer, format: int64 }
+                          sha256: { type: string }
+                          skipped: { type: string, description: 'Reason a declared output was not uploaded (empty = uploaded).' }
                 output:
                   description: |-
                     The run's answer as arbitrary JSON — a structured object for

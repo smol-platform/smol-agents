@@ -388,6 +388,11 @@ type RunStatus struct {
 	// Trace is compact step/tool-call metadata that survives even when the full
 	// Steps are clamped out of the termination message (M2.2). +optional
 	Trace *TraceSummary `json:"trace,omitempty"`
+
+	// Artifacts is the folded result of workspace-file egress (M2.26): the state
+	// the agentfs-sidecar reported plus per-file refs. Observability-only; nil
+	// when the Agent declares no spec.artifacts. +optional
+	Artifacts *ArtifactsStatus `json:"artifacts,omitempty"`
 }
 
 // TraceSummary is compact metadata about a run's step/tool-call trace, surfaced
