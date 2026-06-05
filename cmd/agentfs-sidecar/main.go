@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -82,6 +83,12 @@ func main() {
 		if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
 			logger.Error("scheduler", "err", err)
 			os.Exit(1)
+		}
+		// After the final backup, publish declared artifacts (M2.25). Never
+		// fatal — the run already completed; artifacts are observability-only.
+		if m, ok := collectArtifactsOnShutdown(*mount, mgr.S3); ok {
+			b, _ := json.Marshal(m)
+			logger.Info("artifacts collected", "state", m.State, "count", len(m.Refs), "manifest", string(b))
 		}
 	default:
 		fail("unknown verb %q (init|serve)", verb)
