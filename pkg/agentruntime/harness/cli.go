@@ -245,10 +245,25 @@ func (h *CodexHarness) Run(ctx context.Context, req Request) (Response, error) {
 	if req.Instructions != "" {
 		prompt = req.Instructions + "\n\n" + prompt
 	}
-	args := append([]string{"exec"}, codexApprovalArgs(req)...)
+	// --json emits the thread-event stream we parse for real tokens/cost/tool
+	// records (M2.6); it goes right after `exec` so a tenant override can't drop
+	// it. Without OutputFormat=json codex behaves exactly as before (raw stdout).
+	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
+	args := []string{"exec"}
+	if jsonOut {
+		args = append(args, "--json")
+	}
+	args = append(args, codexApprovalArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
-	return runCLI(ctx, req, "codex", args, h.Cmd)
+
+	resp, err := runCLI(ctx, req, "codex", args, h.Cmd)
+	if err != nil || !jsonOut {
+		return resp, err
+	}
+	out, in, outTok, costMilli, calls := parseCodexJSONL(resp.Output)
+	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli, resp.ToolCalls = out, in, outTok, costMilli, calls
+	return resp, nil
 }
 
 // codexApprovalArgs maps the shared ApprovalMode to codex's approval policy
