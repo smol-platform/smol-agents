@@ -210,6 +210,12 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	if req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
 	}
+	// apiKeyHelper (M3.20): short-lived broker-leased creds. claude runs the helper
+	// command (and re-runs it on TTL/401) instead of holding a static key.
+	if req.Spec.CLI != nil && req.Spec.CLI.APIKeyHelperSecret != "" {
+		settings, _ := json.Marshal(map[string]string{"apiKeyHelper": "/agent lease " + req.Spec.CLI.APIKeyHelperSecret})
+		args = append(args, "--settings", string(settings))
+	}
 	args = append(args, claudePermArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)

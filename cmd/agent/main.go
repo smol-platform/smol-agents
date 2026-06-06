@@ -42,6 +42,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "eval" {
 		os.Exit(runEval(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "lease" {
+		os.Exit(runLease(os.Args[2:]))
+	}
 
 	configPath := flag.String("config", "", "path to agent.yaml")
 	logLevel := flag.String("log-level", "info", "debug|info|warn|error")

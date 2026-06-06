@@ -202,6 +202,31 @@ func TestClaudeCodeHarness_SystemPromptAndResume(t *testing.T) {
 	}
 }
 
+// M3.20: apiKeyHelperSecret makes claude run an apiKeyHelper (`agent lease <name>`)
+// for short-lived creds; absent → no --settings (static key).
+func TestClaudeCodeHarness_APIKeyHelper(t *testing.T) {
+	capture := func(cli *v1.HarnessCLISpec) string {
+		var got []string
+		h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			got = args
+			return exec.CommandContext(ctx, "/bin/sh", "-c", `echo '{"result":"x"}'`)
+		}}
+		_, _ = h.Run(context.Background(), Request{
+			Spec:   v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: cli},
+			Input:  json.RawMessage(`{"prompt":"hi"}`),
+			Budget: v1.Budget{MaxWallClockSeconds: 10},
+		})
+		return strings.Join(got, " ")
+	}
+	withHelper := capture(&v1.HarnessCLISpec{OutputFormat: "json", APIKeyHelperSecret: "ANTHROPIC_API_KEY"})
+	if !strings.Contains(withHelper, `--settings`) || !strings.Contains(withHelper, `agent lease ANTHROPIC_API_KEY`) {
+		t.Errorf("opted-in run must carry the apiKeyHelper settings: %q", withHelper)
+	}
+	if withoutHelper := capture(&v1.HarnessCLISpec{OutputFormat: "json"}); strings.Contains(withoutHelper, "--settings") {
+		t.Errorf("no apiKeyHelperSecret must emit no --settings: %q", withoutHelper)
+	}
+}
+
 // M3.21: ApprovalMode "never" maps to codex --ask-for-approval never (headless);
 // other modes leave codex's default approval policy.
 func TestCodexHarness_ApprovalMapping(t *testing.T) {

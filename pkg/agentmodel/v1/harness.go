@@ -206,6 +206,14 @@ type HarnessCLISpec struct {
 	AllowedTools []string `json:"allowedTools,omitempty"`
 	// +optional
 	DisallowedTools []string `json:"disallowedTools,omitempty"`
+
+	// APIKeyHelperSecret opts into short-lived provider credentials for claude-code
+	// (M3.20): instead of a static ANTHROPIC_API_KEY, claude is configured with an
+	// apiKeyHelper that runs `/agent lease <secret>` to fetch a fresh broker-leased
+	// key, and re-invokes it on TTL/401. Empty = the static key (default). The
+	// named secret must be one the broker is configured to serve.
+	// +optional
+	APIKeyHelperSecret string `json:"apiKeyHelperSecret,omitempty"`
 }
 
 // HarnessHTTPSpec configures HTTP-based harnesses (pi, generic-http).

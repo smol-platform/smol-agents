@@ -165,6 +165,7 @@ spec:
                           type: array
                           description: 'CLI permission deny-list (e.g. claude --disallowedTools).'
                           items: { type: string }
+                        apiKeyHelperSecret: { type: string, description: 'Opt into short-lived claude-code creds (M3.20): claude runs an apiKeyHelper that leases this broker secret via `agent lease`, re-fetching on TTL/401. Empty = static ANTHROPIC_API_KEY.' }
                     http:
                       type: object
                       description: HTTP-harness transport settings (applies to generic-http/hermes).
