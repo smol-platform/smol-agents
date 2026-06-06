@@ -133,6 +133,28 @@ func (q *NATSQueue) FetchResult(ctx context.Context, key, turnID string, timeout
 	return msg.Data, nil
 }
 
+// UpdateRetention reconfigures the session stream's MaxAge (M2.20). No-op when
+// maxAge <= 0 or already current, so the gateway can call it idempotently on
+// every session reconcile.
+func (q *NATSQueue) UpdateRetention(maxAge time.Duration) error {
+	if maxAge <= 0 {
+		return nil
+	}
+	info, err := q.js.StreamInfo(q.stream)
+	if err != nil {
+		return fmt.Errorf("sessionqueue: stream info: %w", err)
+	}
+	if info.Config.MaxAge == maxAge {
+		return nil
+	}
+	cfg := info.Config
+	cfg.MaxAge = maxAge
+	if _, err := q.js.UpdateStream(&cfg); err != nil {
+		return fmt.Errorf("sessionqueue: update retention: %w", err)
+	}
+	return nil
+}
+
 func (q *NATSQueue) Close() error {
 	q.nc.Close()
 	return nil
