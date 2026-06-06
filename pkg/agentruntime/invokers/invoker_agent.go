@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -53,6 +54,10 @@ type AgentRunInvoker struct {
 	Namespace string
 	// ParentRun is this run's name, stamped on children for the delegation tree.
 	ParentRun string
+	// ParentRunUID, when set (operator downward API AGENT_RUN_UID), makes each
+	// child OwnerReferenced by this parent run so deleting the parent GCs the
+	// whole subtree. Empty = label-only linkage (no GC).
+	ParentRunUID string
 	// Depth is this run's position in the delegation tree (0 = top level).
 	Depth int
 	// MaxDepth bounds recursion. <=0 means depth 1 (this run may spawn children,
@@ -101,6 +106,17 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 		ParentRunLabel: i.ParentRun,
 		DepthLabel:     strconv.Itoa(i.Depth + 1),
 	})
+	// OwnerReference the child to this parent run (same namespace) so deleting the
+	// parent garbage-collects the subtree. GC-only: not a controller ref (the
+	// child has its own reconciler).
+	if i.ParentRunUID != "" && i.ParentRun != "" {
+		child.SetOwnerReferences([]metav1.OwnerReference{{
+			APIVersion: agentRunGVK.GroupVersion().String(),
+			Kind:       agentRunGVK.Kind,
+			Name:       i.ParentRun,
+			UID:        types.UID(i.ParentRunUID),
+		}})
+	}
 
 	if err := i.Client.Create(ctx, child); err != nil {
 		return rt.Observation{}, fmt.Errorf("a2a: create child AgentRun for %q: %w", target, err)
@@ -117,6 +133,13 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 	for {
 		select {
 		case <-ctx.Done():
+			// The parent ctx is cancelled (run cancelled / pod SIGTERM). An
+			// OwnerReference only GCs the child when the parent OBJECT is deleted;
+			// on cancellation the object lives on, so best-effort delete the child
+			// here (fresh ctx) to avoid a leaked running child.
+			delCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = i.Client.Delete(delCtx, child)
+			cancel()
 			return rt.Observation{}, fmt.Errorf("a2a: waiting on child %s: %w", name, ctx.Err())
 		case <-tick.C:
 		}
@@ -134,7 +157,11 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 			if err != nil {
 				raw = []byte("null")
 			}
-			return rt.Observation{Output: raw, DurationMs: msSince(start)}, nil
+			// Roll the child's usage up into the parent (field-wise): the parent
+			// "spent" the child's tokens + tool-calls by delegating to it.
+			tokens, _, _ := unstructured.NestedInt64(got.Object, "status", "usage", "tokens")
+			calls, _, _ := unstructured.NestedInt64(got.Object, "status", "usage", "toolCalls")
+			return rt.Observation{Output: raw, DurationMs: msSince(start), Tokens: tokens, ToolCalls: int32(calls)}, nil
 		case v1.PhaseFailed, v1.PhaseCancelled, v1.PhaseExpired:
 			reason, _, _ := unstructured.NestedString(got.Object, "status", "reason")
 			return rt.Observation{}, fmt.Errorf("a2a: child %s ended %s (%s)", name, state, reason)

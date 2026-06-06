@@ -212,8 +212,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-					Error: "tool not in allow-list"}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
+					Error: "tool not in allow-list",
+				}},
 				Error: ErrToolNotInAllowList.Error(),
 			})
 			continue
@@ -234,8 +236,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		if err := ValidateAgainstSchema(tool.Spec.InputSchema, tc.Arguments); err != nil {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-					Error: err.Error()}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
+					Error: err.Error(),
+				}},
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
 				Error: ErrInvalidArgs.Error(),
 			})
@@ -258,8 +262,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		if !ok {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool,
-					Error: fmt.Sprintf("no invoker for kind %q", tool.Spec.Kind)}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool:  tc.Tool,
+					Error: fmt.Sprintf("no invoker for kind %q", tool.Spec.Kind),
+				}},
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
 				Error: ErrToolNotFound.Error(),
 			})
@@ -274,8 +280,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCall,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-					Error: err.Error(), DurationMs: callEnd.Sub(callStart).Milliseconds()}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
+					Error: err.Error(), DurationMs: callEnd.Sub(callStart).Milliseconds(),
+				}},
 				Error: err.Error(),
 			})
 			usage.ToolCalls++
@@ -288,9 +296,11 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepObservationRejected,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
 					Result: obs.Output, Error: err.Error(),
-					DurationMs: callEnd.Sub(callStart).Milliseconds()}},
+					DurationMs: callEnd.Sub(callStart).Milliseconds(),
+				}},
 				Error: ErrInvalidObservation.Error(),
 			})
 			usage.ToolCalls++
@@ -301,10 +311,17 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		steps = append(steps, v1.Step{
 			Index: int32(len(steps)), Kind: v1.StepObservation,
 			StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
-			ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-				Result: obs.Output, DurationMs: callEnd.Sub(callStart).Milliseconds()}},
+			ToolCalls: []v1.ToolCallRecord{{
+				Tool: tc.Tool, Arguments: tc.Arguments,
+				Result: obs.Output, DurationMs: callEnd.Sub(callStart).Milliseconds(),
+			}},
 		})
 		usage.ToolCalls++
+		// A2A child-usage roll-up: a kind=agent tool reports the child run's
+		// tokens/tool-calls in the Observation; fold them in field-wise (the
+		// next loop iteration's budget check stops the parent if this overruns).
+		usage.Tokens += obs.Tokens
+		usage.ToolCalls += obs.ToolCalls
 		usage.WallClockUsed = e.Clock.Since(startedAt)
 	}
 
@@ -394,10 +411,12 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 		input, agent.Spec.EffectiveWorkingDir(), env, agent.Spec.Budget, seed)
 	endedAt := e.Clock.Now()
 
-	usage := v1.Usage{Steps: 1, Tokens: resp.TokensIn + resp.TokensOut,
+	usage := v1.Usage{
+		Steps: 1, Tokens: resp.TokensIn + resp.TokensOut,
 		ToolCalls:     int32(len(resp.ToolCalls)),
 		CostUSDMilli:  resp.CostUSDMilli, // observability only — not read by AllowsStep
-		WallClockUsed: e.Clock.Since(startedAt)}
+		WallClockUsed: e.Clock.Since(startedAt),
+	}
 
 	// One Step captures the whole bounded call. ToolCalls carries the harness's
 	// own tool log when it surfaces one (e.g. Hermes via the Responses API);

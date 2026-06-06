@@ -26,6 +26,8 @@ type fakeRunClient struct {
 	created   []*unstructured.Unstructured
 	output    string // status.output JSON to fold back
 	failState string // if set, child ends in this terminal state instead of Completed
+	usageTok  int64  // status.usage.tokens to report
+	usageCall int64  // status.usage.toolCalls to report
 }
 
 func (c *fakeRunClient) Create(_ context.Context, obj client.Object, _ ...client.CreateOption) error {
@@ -42,6 +44,12 @@ func (c *fakeRunClient) Create(_ context.Context, obj client.Object, _ ...client
 		var out any
 		_ = json.Unmarshal([]byte(c.output), &out)
 		_ = unstructured.SetNestedField(u.Object, out, "status", "output")
+	}
+	if c.usageTok != 0 {
+		_ = unstructured.SetNestedField(u.Object, c.usageTok, "status", "usage", "tokens")
+	}
+	if c.usageCall != 0 {
+		_ = unstructured.SetNestedField(u.Object, c.usageCall, "status", "usage", "toolCalls")
 	}
 	if c.store == nil {
 		c.store = map[string]*unstructured.Unstructured{}
@@ -96,6 +104,47 @@ func TestAgentRunInvoker_CreatesChildAndFolds(t *testing.T) {
 	}
 	if child.GetNamespace() != "tenant-a" {
 		t.Errorf("child namespace = %q, want tenant-a", child.GetNamespace())
+	}
+}
+
+func TestAgentRunInvoker_RollsUpChildUsage(t *testing.T) {
+	fc := &fakeRunClient{output: `{"ok":true}`, usageTok: 150, usageCall: 3}
+	inv := &AgentRunInvoker{Client: fc, Namespace: "tenant-a", ParentRun: "p", Poll: time.Millisecond}
+	obs, err := inv.Invoke(context.Background(), agentTool("child"), nil)
+	if err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if obs.Tokens != 150 {
+		t.Errorf("child token roll-up = %d, want 150", obs.Tokens)
+	}
+	if obs.ToolCalls != 3 {
+		t.Errorf("child tool-call roll-up = %d, want 3", obs.ToolCalls)
+	}
+}
+
+func TestAgentRunInvoker_SetsOwnerReference(t *testing.T) {
+	fc := &fakeRunClient{output: `{}`}
+	inv := &AgentRunInvoker{Client: fc, Namespace: "tenant-a", ParentRun: "parent-run", ParentRunUID: "uid-123", Poll: time.Millisecond}
+	if _, err := inv.Invoke(context.Background(), agentTool("child"), nil); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	owners := fc.created[0].GetOwnerReferences()
+	if len(owners) != 1 {
+		t.Fatalf("expected 1 ownerReference, got %d", len(owners))
+	}
+	if owners[0].Kind != "AgentRun" || owners[0].Name != "parent-run" || string(owners[0].UID) != "uid-123" {
+		t.Errorf("ownerRef = %+v, want AgentRun/parent-run/uid-123", owners[0])
+	}
+}
+
+func TestAgentRunInvoker_NoOwnerRefWithoutUID(t *testing.T) {
+	fc := &fakeRunClient{output: `{}`}
+	inv := &AgentRunInvoker{Client: fc, Namespace: "tenant-a", ParentRun: "parent-run", Poll: time.Millisecond}
+	if _, err := inv.Invoke(context.Background(), agentTool("child"), nil); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if owners := fc.created[0].GetOwnerReferences(); len(owners) != 0 {
+		t.Errorf("no ParentRunUID must mean no ownerRef, got %v", owners)
 	}
 }
 

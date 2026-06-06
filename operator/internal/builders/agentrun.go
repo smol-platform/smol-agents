@@ -52,6 +52,11 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 			}},
 			corev1.EnvVar{Name: "RUN_NAME", Value: run.Name},
+			// metadata.uid lets the in-pod A2A invoker set an OwnerReference on
+			// child AgentRuns, so deleting this parent run GCs the subtree.
+			corev1.EnvVar{Name: "AGENT_RUN_UID", ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"},
+			}},
 		)
 		if d := run.Labels[a2aDepthLabel]; d != "" {
 			main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_DEPTH", Value: d})

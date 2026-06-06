@@ -45,10 +45,11 @@ func WireAgentInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.Tool
 	}
 	depth, _ := strconv.Atoi(os.Getenv("A2A_DEPTH"))
 	base[v1.ToolAgent] = &AgentRunInvoker{
-		Client:    kc,
-		Namespace: ns,
-		ParentRun: os.Getenv("RUN_NAME"),
-		Depth:     depth,
+		Client:       kc,
+		Namespace:    ns,
+		ParentRun:    os.Getenv("RUN_NAME"),
+		ParentRunUID: os.Getenv("AGENT_RUN_UID"),
+		Depth:        depth,
 	}
 	return base
 }
