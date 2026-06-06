@@ -118,6 +118,22 @@ func BuildAgentSessionEgressPolicyWithPlan(name, namespace string, podSelector m
 	return BuildEgressPolicyWithPlan(name+"-egress", namespace, "agent-session", podSelector, p)
 }
 
+// AttachAgentNetwork is the Tier-2 datapath seam for a bound NetworkPlan: where
+// a TraT-injecting proxy sidecar (p.ProxyNeeded) and the eBPF egress-redirect
+// (p.EbpfNeeded) attach to the run/session pod. Tier-1 enforcement (the
+// default-deny + allow-list NetworkPolicy from BuildEgressPolicyWithPlan) is what
+// ships and is wired in both reconcilers; the in-pod redirect lands with the
+// secret-proxy + SPIRE injection work, so this is intentionally a no-op in
+// Phase 1. Kept as a named, called seam so the integration point is explicit
+// (and so an empty/Tier-1-only plan never silently expects a sidecar). M1.16.
+func AttachAgentNetwork(pod *corev1.Pod, p plan.NetworkPlan) {
+	if pod == nil || (!p.ProxyNeeded() && !p.EbpfNeeded()) {
+		return
+	}
+	// Phase 2: inject the proxy sidecar + eBPF redirect from the plan's proxy
+	// resources / redirect rules here. No-op until that datapath lands.
+}
+
 // BuildEgressPolicyWithPlan renders the egress cage, layering a NetworkPlan's
 // allow-list on top of the default-deny floor. With an empty plan it is
 // byte-identical to the default-deny floor (DNS + in-cluster + public 80/443).

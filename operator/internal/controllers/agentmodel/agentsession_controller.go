@@ -2,6 +2,7 @@ package agentmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
@@ -60,8 +63,38 @@ func (r *AgentSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		// Re-reconcile bound sessions when their AgentNetwork changes (M1.16): a
+		// resident worker's egress cage is updated in place, so a tightened (or
+		// loosened) network applies to the live session.
+		Watches(&amv1.AgentNetwork{}, handler.EnqueueRequestsFromMapFunc(r.sessionsForNetwork)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: mc}).
 		Complete(r)
+}
+
+// sessionsForNetwork maps an AgentNetwork change to reconcile requests for the
+// AgentSessions bound to it (their Agent matches the network's selector). M1.16.
+func (r *AgentSessionReconciler) sessionsForNetwork(ctx context.Context, obj client.Object) []reconcile.Request {
+	an, ok := obj.(*amv1.AgentNetwork)
+	if !ok {
+		return nil
+	}
+	agents := agentsBoundToNetwork(ctx, r.Client, an)
+	if len(agents) == 0 {
+		return nil
+	}
+	var sessions amv1.AgentSessionList
+	if err := r.List(ctx, &sessions, client.InNamespace(an.Namespace)); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range sessions.Items {
+		s := &sessions.Items[i]
+		if !agents[s.Spec.AgentRef] {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: s.Namespace, Name: s.Name}})
+	}
+	return reqs
 }
 
 func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -131,6 +164,12 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// allow-list layered on (M1.16) — empty plan = the default-deny floor.
 	netPlan, err := resolveBoundNetworks(ctx, r.Client, agent)
 	if err != nil {
+		// A NetworkPlan compose conflict is a spec-level error — hold the session
+		// Pending (fail-closed, visible) until the bound AgentNetworks are fixed
+		// (which re-reconciles it via the Watch).
+		if errors.Is(err, ErrNetworkConflict) {
+			return r.writeStatus(ctx, session, pure.PhasePending, "NetworkConflict", err.Error(), 30*time.Second)
+		}
 		return ctrl.Result{}, fmt.Errorf("resolve bound networks: %w", err)
 	}
 	// Surface the egress posture for observability (M1.19).
@@ -143,7 +182,9 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if rule := apiserverEgressRule(ctx, r.Client); rule != nil {
 		np.Spec.Egress = append(np.Spec.Egress, *rule)
 	}
-	if err := r.ensureOwned(ctx, session, np); err != nil {
+	// Update-in-place (not create-only) so a changed AgentNetwork re-cages the
+	// live worker (M1.16).
+	if err := r.ensureEgressPolicy(ctx, session, np); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session egress: %w", err)
 	}
 
@@ -183,6 +224,8 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Right-size the resident worker (M1.11). A session has no wall-clock deadline,
 	// so worker sizing is expressed here rather than via a run budget.
 	builders.ApplySessionResources(&pod.Spec.Containers[0], session.Spec.Resources)
+	// Tier-2 datapath seam (no-op in Phase 1; Tier-1 is the egress NetworkPolicy).
+	builders.AttachAgentNetwork(pod, netPlan)
 	// NATS turn transport (gateway path); without it the worker uses its on-disk
 	// inbox. AGENTSESSION_KEY mirrors sessionqueue.SessionKey(ns, name).
 	if r.NATSURL != "" {
@@ -225,6 +268,26 @@ func (r *AgentSessionReconciler) ensureOwned(ctx context.Context, session *amv1.
 		return r.Create(ctx, obj)
 	}
 	return err
+}
+
+// ensureEgressPolicy creates or UPDATES the session worker's egress NetworkPolicy
+// (unlike ensureOwned, which is create-only for the stable run-spec/broker
+// objects). Update-in-place lets a changed AgentNetwork re-cage a live session
+// worker without recreating it (M1.16).
+func (r *AgentSessionReconciler) ensureEgressPolicy(ctx context.Context, session *amv1.AgentSession, np *networkingv1.NetworkPolicy) error {
+	if err := ctrl.SetControllerReference(session, np, r.Scheme); err != nil {
+		return err
+	}
+	existing := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(np), existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, np)
+	}
+	if err != nil {
+		return err
+	}
+	existing.Spec = np.Spec
+	return r.Update(ctx, existing)
 }
 
 // ensureDeployment creates or updates the session worker Deployment.

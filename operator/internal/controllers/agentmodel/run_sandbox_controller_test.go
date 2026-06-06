@@ -91,7 +91,7 @@ func TestEnsureRunEgressPolicy(t *testing.T) {
 	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a1", Namespace: "tenant-a"}}
 	r := sandboxReconciler(t, nil, run)
 
-	if err := r.ensureRunEgressPolicy(context.Background(), run, agent); err != nil {
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
 		t.Fatalf("ensureRunEgressPolicy: %v", err)
 	}
 	var np networkingv1.NetworkPolicy
@@ -106,7 +106,7 @@ func TestEnsureRunEgressPolicy(t *testing.T) {
 		t.Errorf("status egress = %q networks=%v, want default-deny / none", run.Status.EgressEnforcement, run.Status.Networks)
 	}
 	// Idempotent.
-	if err := r.ensureRunEgressPolicy(context.Background(), run, agent); err != nil {
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
 		t.Fatalf("second ensureRunEgressPolicy: %v", err)
 	}
 }

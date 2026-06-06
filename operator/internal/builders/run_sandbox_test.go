@@ -74,6 +74,23 @@ func TestBuildEgressPolicyWithPlan(t *testing.T) {
 	}
 }
 
+// AttachAgentNetwork is the Tier-2 datapath seam — a no-op in Phase 1 (Tier-1 is
+// the egress NetworkPolicy). It must never mutate the pod yet, even for a plan
+// that will eventually need a proxy sidecar, and must tolerate a nil pod.
+func TestAttachAgentNetwork_NoOpPhase1(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}}}
+	before := len(pod.Spec.Containers)
+
+	AttachAgentNetwork(pod, plan.NetworkPlan{}) // empty plan
+	AttachAgentNetwork(pod, plan.NetworkPlan{ProxyResources: []purev1.ResourceTarget{{Name: "a", Kind: "http", LocalPort: 8080, Gateway: "https://a"}}})
+	if len(pod.Spec.Containers) != before || len(pod.Spec.InitContainers) != 0 || len(pod.Spec.Volumes) != 0 {
+		t.Errorf("Phase-1 AttachAgentNetwork must not mutate the pod: containers=%d init=%d vols=%d",
+			len(pod.Spec.Containers), len(pod.Spec.InitContainers), len(pod.Spec.Volumes))
+	}
+
+	AttachAgentNetwork(nil, plan.NetworkPlan{ProxyResources: []purev1.ResourceTarget{{Name: "a"}}}) // must not panic
+}
+
 func TestBuildAgentRunEgressPolicy(t *testing.T) {
 	run := &amv1.AgentRun{}
 	run.Name = "r1"

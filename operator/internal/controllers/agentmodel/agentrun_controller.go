@@ -3,6 +3,7 @@ package agentmodel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,8 +17,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
@@ -133,8 +136,40 @@ func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&amv1.AgentRun{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Pod{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		// Re-reconcile bound runs when their AgentNetwork changes (M1.16) so a
+		// not-yet-scheduled run picks up the new egress cage. A run whose pod is
+		// already created keeps its NetworkPolicy (ensureRunEgressPolicy is
+		// create-only) — a running run is not re-caged mid-flight.
+		Watches(&amv1.AgentNetwork{}, handler.EnqueueRequestsFromMapFunc(r.runsForNetwork)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: mc}).
 		Complete(r)
+}
+
+// runsForNetwork maps an AgentNetwork change to reconcile requests for the
+// non-terminal AgentRuns bound to it (their Agent matches the network's
+// selector). M1.16.
+func (r *AgentRunReconciler) runsForNetwork(ctx context.Context, obj client.Object) []reconcile.Request {
+	an, ok := obj.(*amv1.AgentNetwork)
+	if !ok {
+		return nil
+	}
+	agents := agentsBoundToNetwork(ctx, r.Client, an)
+	if len(agents) == 0 {
+		return nil
+	}
+	var runs amv1.AgentRunList
+	if err := r.List(ctx, &runs, client.InNamespace(an.Namespace)); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range runs.Items {
+		run := &runs.Items[i]
+		if !agents[run.Spec.AgentRef] || pure.Phase(run.Status.State).Terminal() {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}})
+	}
+	return reqs
 }
 
 // Reconcile is the per-Run entrypoint.
@@ -282,7 +317,14 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 		// Cage egress: a default-deny NetworkPolicy (blocks instance-metadata /
 		// arbitrary outbound) must exist before the pod schedules.
-		if err := r.ensureRunEgressPolicy(ctx, run, agent); err != nil {
+		if err := r.ensureRunEgressPolicy(ctx, run, agent, desired); err != nil {
+			// A NetworkPlan compose conflict is a spec-level error in the bound
+			// AgentNetworks — hold the run Pending (fail-closed, visible) rather
+			// than caging it wrong; a fixed network re-reconciles it (Watches).
+			if errors.Is(err, ErrNetworkConflict) {
+				r.markPending(run, "NetworkConflict", err.Error())
+				return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
+			}
 			return ctrl.Result{}, fmt.Errorf("ensure egress policy: %w", err)
 		}
 
@@ -617,15 +659,17 @@ func (r *AgentRunReconciler) resolveRunSandbox(ctx context.Context, agent *amv1.
 
 // ensureRunEgressPolicy creates the run pod's default-deny egress NetworkPolicy
 // (idempotent), owned by the run so it is GC'd with it.
-func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) error {
+func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent, pod *corev1.Pod) error {
 	netPlan, err := resolveBoundNetworks(ctx, r.Client, agent)
 	if err != nil {
-		return err
+		return err // may wrap ErrNetworkConflict; the caller maps it to Pending
 	}
 	// Surface the egress posture for observability (M1.19): the bound network
 	// names + whether a tightened allow-list applies on top of the floor.
 	run.Status.Networks = netPlan.Networks
 	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
+	// Tier-2 datapath seam (no-op in Phase 1; Tier-1 is the NetworkPolicy below).
+	builders.AttachAgentNetwork(pod, netPlan)
 	np := builders.BuildAgentRunEgressPolicyWithPlan(run, netPlan)
 	// M1.18: allow the kube-apiserver endpoints (e.g. <node-ip>:6443 on a
 	// public-IP cluster), which the default floor would otherwise block.
