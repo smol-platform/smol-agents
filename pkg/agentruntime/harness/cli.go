@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -296,6 +297,26 @@ func (h *CodexHarness) Run(ctx context.Context, req Request) (Response, error) {
 	args = append(args, codexApprovalArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
+
+	// Route codex through the platform Responses gateway (M3.21): copy the
+	// operator-rendered config.toml into a writable CODEX_HOME (codex writes thread
+	// state there, so it can't read it from the read-only run-spec mount) and make
+	// sure the subprocess sees CODEX_HOME.
+	if req.Spec.CLI != nil && req.Spec.CLI.CodexBaseURL != "" {
+		home := os.Getenv("CODEX_HOME")
+		if home == "" {
+			home = "/tmp/.codex"
+		}
+		if err := os.MkdirAll(home, 0o700); err == nil {
+			if cfg, rerr := os.ReadFile(v1.CodexConfigMountPath); rerr == nil {
+				_ = os.WriteFile(filepath.Join(home, "config.toml"), cfg, 0o600)
+			}
+		}
+		if req.Env == nil {
+			req.Env = map[string]string{}
+		}
+		req.Env["CODEX_HOME"] = home
+	}
 
 	resp, err := runCLI(ctx, req, "codex", args, h.Cmd)
 	if err != nil {

@@ -101,6 +101,14 @@ func BuildRunSpecConfigMapWithTools(run *amv1.AgentRun, agent *amv1.Agent, provi
 		}
 		data[pure.ClaudeMCPConfigFile] = string(mj)
 	}
+	// codex config.toml (M3.21): route codex through the platform Responses gateway
+	// when a baseURL is set; the harness copies this into $CODEX_HOME at startup.
+	if agent.Spec.Harness != nil && agent.Spec.Harness.Kind == pure.HarnessCodex &&
+		agent.Spec.Harness.CLI != nil && agent.Spec.Harness.CLI.CodexBaseURL != "" {
+		if toml := RenderCodexConfigTOML(agent.Spec.Harness.CLI.CodexModel, agent.Spec.Harness.CLI.CodexBaseURL); toml != "" {
+			data[pure.CodexConfigFile] = toml
+		}
+	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{

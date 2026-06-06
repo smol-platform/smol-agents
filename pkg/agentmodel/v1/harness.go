@@ -217,6 +217,16 @@ type HarnessCLISpec struct {
 	// +optional
 	APIKeyHelperSecret string `json:"apiKeyHelperSecret,omitempty"`
 
+	// CodexBaseURL / CodexModel configure codex's provider (M3.21): when BaseURL is
+	// set the operator renders ~/.codex/config.toml with a [model_providers.platform]
+	// pointing at it (wire_api="responses") and the harness sets CODEX_HOME so codex
+	// routes through the platform's Responses gateway instead of the public OpenAI
+	// API. Empty = codex's built-in defaults.
+	// +optional
+	CodexBaseURL string `json:"codexBaseURL,omitempty"`
+	// +optional
+	CodexModel string `json:"codexModel,omitempty"`
+
 	// MCPServers declares MCP servers claude-code connects to (M3.18). The operator
 	// renders them to a claude mcp-config file mounted with the run spec; the
 	// harness passes --mcp-config and auto-allows mcp__<name>__* tools. stdio
@@ -233,6 +243,12 @@ type HarnessCLISpec struct {
 const (
 	ClaudeMCPConfigFile = "claude-mcp.json"
 	ClaudeMCPConfigPath = "/etc/smol-agents/run/" + ClaudeMCPConfigFile
+
+	// CodexConfigFile is the run-spec ConfigMap key (and filename) holding the
+	// rendered codex config.toml; CodexConfigMountPath is where it mounts. The
+	// codex harness copies it to $CODEX_HOME/config.toml at startup (M3.21).
+	CodexConfigFile      = "codex-config.toml"
+	CodexConfigMountPath = "/etc/smol-agents/run/" + CodexConfigFile
 )
 
 // MCPServerSpec declares one MCP server for claude-code (M3.18). Exactly one

@@ -137,6 +137,19 @@ func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Con
 			agent.Spec.Storage != nil && agent.Spec.Storage.AgentFS != nil {
 			env = append(env, corev1.EnvVar{Name: "HOME", Value: agent.Spec.EffectiveWorkingDir() + "/.claude-home"})
 		}
+		// Codex config home (M3.21): when routing codex through a platform gateway,
+		// CODEX_HOME is a writable dir the harness copies config.toml into (and codex
+		// writes thread state there). On AgentFS for a persistent agent so codex
+		// threads survive across runs; else an ephemeral /tmp/.codex.
+		if agent.Spec.Harness.Kind == pure.HarnessCodex &&
+			agent.Spec.Harness.CLI != nil && agent.Spec.Harness.CLI.CodexBaseURL != "" {
+			home := "/tmp/.codex"
+			if agent.Spec.Harness.SessionPolicy == pure.SessionPersistent &&
+				agent.Spec.Storage != nil && agent.Spec.Storage.AgentFS != nil {
+				home = agent.Spec.EffectiveWorkingDir() + "/.codex"
+			}
+			env = append(env, corev1.EnvVar{Name: "CODEX_HOME", Value: home})
+		}
 	}
 	return corev1.Container{
 		Name:            "harness",

@@ -166,6 +166,8 @@ spec:
                           description: 'CLI permission deny-list (e.g. claude --disallowedTools).'
                           items: { type: string }
                         apiKeyHelperSecret: { type: string, description: 'Opt into short-lived claude-code creds (M3.20): claude runs an apiKeyHelper that leases this broker secret via `agent lease`, re-fetching on TTL/401. Empty = static ANTHROPIC_API_KEY.' }
+                        codexBaseURL: { type: string, description: 'Route codex through a platform Responses gateway (M3.21): renders ~/.codex/config.toml with [model_providers.platform] wire_api=responses pointing here. Empty = codex defaults.' }
+                        codexModel: { type: string, description: 'Optional codex model id written into config.toml (M3.21).' }
                         mcpServers:
                           type: array
                           description: 'MCP servers claude-code connects to (M3.18); rendered to a --mcp-config file, mcp__<name>__* auto-allowed. stdio needs an operator-allow-listed image; http/sse URLs to internal hosts are rejected at admission.'
