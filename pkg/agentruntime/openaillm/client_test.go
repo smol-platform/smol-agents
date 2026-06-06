@@ -37,6 +37,44 @@ func TestClient_FinalAnswer(t *testing.T) {
 	}
 }
 
+// Reasoning models (z.ai glm-4.6, deepseek-r1) can return an empty content with
+// the answer only in reasoning_content — typically on the final turn after a tool
+// call. We must fall back to reasoning_content, not fold an empty final answer.
+func TestClient_ReasoningContentFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"",` +
+			`"reasoning_content":"the answer is 42"}}]}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+	dec, err := c.Chat(context.Background(), agentruntime.ChatRequest{Model: v1.ModelRef{Name: "glm-4.6"}, Input: json.RawMessage(`"go"`)})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if dec.FinalAnswer == nil || string(dec.FinalAnswer.Output) != `"the answer is 42"` {
+		t.Errorf("final = %+v, want fallback to reasoning_content", dec.FinalAnswer)
+	}
+}
+
+// content always wins when present — reasoning_content is the CoT, not the answer.
+func TestClient_ContentWinsOverReasoning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"real answer",` +
+			`"reasoning_content":"let me think..."}}]}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{Endpoint: srv.URL, HTTP: srv.Client()}
+	dec, err := c.Chat(context.Background(), agentruntime.ChatRequest{Model: v1.ModelRef{Name: "glm-4.6"}, Input: json.RawMessage(`"go"`)})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if dec.FinalAnswer == nil || string(dec.FinalAnswer.Output) != `"real answer"` {
+		t.Errorf("final = %+v, want content to win over reasoning_content", dec.FinalAnswer)
+	}
+}
+
 func TestClient_ToolCall(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":` +
