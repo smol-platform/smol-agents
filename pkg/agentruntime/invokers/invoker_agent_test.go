@@ -70,6 +70,25 @@ func (c *fakeRunClient) Get(_ context.Context, key client.ObjectKey, obj client.
 	return nil
 }
 
+// vanishingRunClient creates a child fine but never finds it on Get — modelling a
+// child deleted out-of-band (parent GC, manual delete) before it ever reaches a
+// terminal state. Exercises the invoker's fail-fast-on-persistent-NotFound guard.
+type vanishingRunClient struct {
+	client.Client
+	created int
+}
+
+func (c *vanishingRunClient) Create(_ context.Context, obj client.Object, _ ...client.CreateOption) error {
+	u := obj.(*unstructured.Unstructured)
+	u.SetName(u.GetGenerateName() + "gone")
+	c.created++
+	return nil
+}
+
+func (c *vanishingRunClient) Get(_ context.Context, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+	return apierrors.NewNotFound(schema.GroupResource{Resource: "agentruns"}, key.Name)
+}
+
 func agentTool(target string) v1.Tool {
 	t := v1.Tool{}
 	t.Name = "delegate"
@@ -175,5 +194,30 @@ func TestAgentRunInvoker_NoTarget(t *testing.T) {
 	bad.Spec.Kind = v1.ToolAgent // no Agent target
 	if _, err := inv.Invoke(context.Background(), bad, nil); err == nil {
 		t.Fatal("expected error for kind=agent tool with no target ref")
+	}
+}
+
+// A child deleted out-of-band (persistent NotFound) must make Invoke return an
+// error promptly, not poll until the run deadline. The timeout guards against the
+// infinite-poll regression.
+func TestAgentRunInvoker_ChildVanishesFailsFast(t *testing.T) {
+	fc := &vanishingRunClient{}
+	inv := &AgentRunInvoker{Client: fc, Namespace: "tenant-a", ParentRun: "p", Poll: time.Millisecond}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := inv.Invoke(context.Background(), agentTool("child"), nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error when the child vanished, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Invoke did not return — still polling a vanished child (regression)")
+	}
+	if fc.created != 1 {
+		t.Errorf("expected exactly 1 child create attempt, got %d", fc.created)
 	}
 }

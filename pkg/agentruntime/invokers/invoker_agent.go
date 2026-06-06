@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -130,6 +131,13 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 	start := timeNow()
 	tick := time.NewTimer(0)
 	defer tick.Stop()
+	// A child that 404s right after Create is almost always brief apiserver lag;
+	// tolerate a few consecutive misses. PERSISTENT NotFound means the child was
+	// deleted out-of-band (parent GC, manual delete) before reaching a terminal
+	// state — fail fast instead of polling until the run deadline (the bug this
+	// guard closes). Any successful Get resets the counter.
+	const maxChildGone = 3
+	gone := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -146,9 +154,16 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(agentRunGVK)
 		if err := i.Client.Get(ctx, types.NamespacedName{Namespace: i.Namespace, Name: name}, got); err != nil {
+			if apierrors.IsNotFound(err) {
+				if gone++; gone >= maxChildGone {
+					return rt.Observation{}, fmt.Errorf("a2a: child %s vanished before reaching a terminal state (deleted out-of-band?)", name)
+				}
+			}
+			// Transient error (or within the post-create grace window): keep polling.
 			tick.Reset(poll)
 			continue
 		}
+		gone = 0
 		state, _, _ := unstructured.NestedString(got.Object, "status", "state")
 		switch v1.Phase(state) {
 		case v1.PhaseCompleted:
