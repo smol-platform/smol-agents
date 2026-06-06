@@ -93,7 +93,7 @@ func BuildAgentPodSpec(cr *v1.SmolAgent) corev1.PodSpec {
 		containers = append(containers, secretProxyContainer())
 	}
 
-	return corev1.PodSpec{
+	spec := corev1.PodSpec{
 		RuntimeClassName:   ptr.To(rc),
 		ServiceAccountName: saName,
 		SecurityContext: &corev1.PodSecurityContext{
@@ -108,6 +108,10 @@ func BuildAgentPodSpec(cr *v1.SmolAgent) corev1.PodSpec {
 		Containers: containers,
 		Volumes:    agentVolumes(cr),
 	}
+	// Interactive terminal/attach plane (M4.8): wrap the agent in tmux + add the
+	// ttyd driver/viewer (+ recorder) sidecars when features.terminal.enabled.
+	WireTerminal(&spec, cr)
+	return spec
 }
 
 func agentVolumeMounts() []corev1.VolumeMount {
