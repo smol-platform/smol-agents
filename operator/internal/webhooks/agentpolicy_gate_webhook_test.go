@@ -52,6 +52,38 @@ func TestAgentPolicyGate_FailOpenNoPolicies(t *testing.T) {
 	}
 }
 
+func TestAgentPolicyGate_LoopToolKinds(t *testing.T) {
+	httpTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "ht", Namespace: "t"}, Spec: pure.ToolSpec{Kind: pure.ToolHTTP}}
+	fnTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "fn", Namespace: "t"}, Spec: pure.ToolSpec{Kind: pure.ToolFunction}}
+	g := gateWith(t, httpTool, fnTool)
+
+	// loop-mode agent referencing a function-kind tool (no loop invoker) → Invalid
+	bad := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	bad.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
+	if err := g.checkLoopToolKinds(context.Background(), bad); err == nil || !apierrors.IsInvalid(err) {
+		t.Fatalf("function-kind loop tool must be Invalid, got %v", err)
+	}
+	// http-kind tool → allowed
+	good := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	good.Spec.Tools = []pure.ToolRef{{Name: "ht"}}
+	if err := g.checkLoopToolKinds(context.Background(), good); err != nil {
+		t.Fatalf("http-kind loop tool must pass: %v", err)
+	}
+	// harness mode → loop-tool-kind check is skipped even with a function tool
+	harness := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	harness.Spec.Mode = pure.ModeHarness
+	harness.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
+	if err := g.checkLoopToolKinds(context.Background(), harness); err != nil {
+		t.Fatalf("harness mode must skip loop-tool-kind check: %v", err)
+	}
+	// dangling ref → not judged here (reconciler handles existence)
+	dangling := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	dangling.Spec.Tools = []pure.ToolRef{{Name: "nope"}}
+	if err := g.checkLoopToolKinds(context.Background(), dangling); err != nil {
+		t.Fatalf("dangling tool ref must pass at this gate: %v", err)
+	}
+}
+
 func TestAgentPolicyGate_RunBudgetOverride(t *testing.T) {
 	policy := &amv1.AgentPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "t"},

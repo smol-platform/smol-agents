@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -64,6 +65,42 @@ func gatherRunSecrets(ctx context.Context, c client.Client, agent *amv1.Agent, n
 				return nil, nil, err
 			}
 			values[e.SecretRef.SecretName] = val
+		}
+	}
+
+	// Loop-mode tool auth: each referenced Tool's http/mcp Auth.SecretName must
+	// be served by the broker under that name — the in-pod invoker leases by it
+	// (invokers/http.go, invokers/mcp.go). Without this an auth'd HTTP/MCP tool
+	// fails its lease at runtime. Ref resolution mirrors resolveRunTools (a
+	// dangling ref is skipped, matching the catalog).
+	if agent.Spec.Mode != pure.ModeHarness {
+		for _, ref := range agent.Spec.Tools {
+			tns := ref.Namespace
+			if tns == "" {
+				tns = agent.Namespace
+			}
+			t := &amv1.Tool{}
+			if err := c.Get(ctx, types.NamespacedName{Namespace: tns, Name: ref.Name}, t); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, nil, err
+			}
+			var auth *pure.AuthRef
+			switch {
+			case t.Spec.HTTP != nil && t.Spec.HTTP.Auth != nil:
+				auth = t.Spec.HTTP.Auth
+			case t.Spec.MCP != nil && t.Spec.MCP.Auth != nil:
+				auth = t.Spec.MCP.Auth
+			}
+			if auth == nil || auth.SecretName == "" {
+				continue
+			}
+			val, err := readSecretKey(ctx, c, tns, auth.SecretName, auth.Key)
+			if err != nil {
+				return nil, nil, err
+			}
+			values[auth.SecretName] = val
 		}
 	}
 

@@ -73,6 +73,36 @@ func (g *agentPolicyGate) checkAgent(ctx context.Context, a *amv1.Agent) error {
 	return apierrors.NewInvalid(agentGK, a.Name, errs)
 }
 
+// checkLoopToolKinds fail-closes a loop-mode Agent that references a Tool whose
+// kind has no production loop invoker (M2.16). It mirrors the reconciler's
+// SupportedLoopToolKinds gate at admission. Runs regardless of AgentPolicy; a
+// dangling tool ref is left to the reconciler (its kind can't be judged yet).
+func (g *agentPolicyGate) checkLoopToolKinds(ctx context.Context, a *amv1.Agent) error {
+	if a.Spec.Mode == pure.ModeHarness {
+		return nil
+	}
+	supported := pure.SupportedLoopToolKinds()
+	var errs field.ErrorList
+	for i, ref := range a.Spec.Tools {
+		ns := ref.Namespace
+		if ns == "" {
+			ns = a.Namespace
+		}
+		var t amv1.Tool
+		if err := g.client.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, &t); err != nil {
+			continue // dangling ref → the reconciler handles existence; kind unknowable here
+		}
+		if !supported[t.Spec.Kind] {
+			errs = append(errs, field.Forbidden(field.NewPath("spec", "tools").Index(i),
+				"tool "+ref.Name+" has kind "+string(t.Spec.Kind)+" which has no loop-mode invoker"))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(agentGK, a.Name, errs)
+}
+
 func (g *agentPolicyGate) checkRun(ctx context.Context, run *amv1.AgentRun) error {
 	eff, ok := g.effective(ctx, run.Namespace)
 	if !ok || eff.Budget == nil {
@@ -102,11 +132,19 @@ func (g *agentPolicyGate) checkRun(ctx context.Context, run *amv1.AgentRun) erro
 type agentGate struct{ g *agentPolicyGate }
 
 func (a agentGate) ValidateCreate(ctx context.Context, obj *amv1.Agent) (admission.Warnings, error) {
-	return nil, a.g.checkAgent(ctx, obj)
+	if err := a.g.checkAgent(ctx, obj); err != nil {
+		return nil, err
+	}
+	return nil, a.g.checkLoopToolKinds(ctx, obj)
 }
+
 func (a agentGate) ValidateUpdate(ctx context.Context, _, newObj *amv1.Agent) (admission.Warnings, error) {
-	return nil, a.g.checkAgent(ctx, newObj)
+	if err := a.g.checkAgent(ctx, newObj); err != nil {
+		return nil, err
+	}
+	return nil, a.g.checkLoopToolKinds(ctx, newObj)
 }
+
 func (a agentGate) ValidateDelete(context.Context, *amv1.Agent) (admission.Warnings, error) {
 	return nil, nil
 }
@@ -117,9 +155,11 @@ type runGate struct{ g *agentPolicyGate }
 func (r runGate) ValidateCreate(ctx context.Context, obj *amv1.AgentRun) (admission.Warnings, error) {
 	return nil, r.g.checkRun(ctx, obj)
 }
+
 func (r runGate) ValidateUpdate(ctx context.Context, _, newObj *amv1.AgentRun) (admission.Warnings, error) {
 	return nil, r.g.checkRun(ctx, newObj)
 }
+
 func (r runGate) ValidateDelete(context.Context, *amv1.AgentRun) (admission.Warnings, error) {
 	return nil, nil
 }
