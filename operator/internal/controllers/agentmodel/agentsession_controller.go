@@ -30,8 +30,8 @@ import (
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
-	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
+	"github.com/smol-platform/smol-agents/pkg/turnmodel"
 )
 
 const sessionSuffix = "-session"
@@ -297,7 +297,7 @@ func (r *AgentSessionReconciler) mirrorWorkerStatus(ctx context.Context, session
 
 // applySummaryToStatus folds a worker SessionSummary into AgentSessionStatus
 // field-wise (Usage is verbatim CumulativeUsage — NOT Usage.Add). Pure + tested.
-func applySummaryToStatus(st *pure.AgentSessionStatus, sum agentruntime.SessionSummary) {
+func applySummaryToStatus(st *pure.AgentSessionStatus, sum turnmodel.SessionSummary) {
 	st.Usage = sum.Usage
 	st.Turns = int64(sum.Turns)
 	st.FailedTurns = int64(sum.FailedTurns)
@@ -309,25 +309,25 @@ func applySummaryToStatus(st *pure.AgentSessionStatus, sum agentruntime.SessionS
 
 // fetchSessionSummary GETs the worker's /status endpoint (a short-timeout,
 // in-cluster read of the session's own non-secret counters).
-func fetchSessionSummary(ctx context.Context, podIP string) (agentruntime.SessionSummary, error) {
-	url := "http://" + podIP + agentruntime.SessionStatusPort + "/status"
+func fetchSessionSummary(ctx context.Context, podIP string) (turnmodel.SessionSummary, error) {
+	url := "http://" + podIP + turnmodel.SessionStatusPort + "/status"
 	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(rctx, http.MethodGet, url, nil)
 	if err != nil {
-		return agentruntime.SessionSummary{}, err
+		return turnmodel.SessionSummary{}, err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return agentruntime.SessionSummary{}, err
+		return turnmodel.SessionSummary{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return agentruntime.SessionSummary{}, fmt.Errorf("session status: http %d", resp.StatusCode)
+		return turnmodel.SessionSummary{}, fmt.Errorf("session status: http %d", resp.StatusCode)
 	}
-	var sum agentruntime.SessionSummary
+	var sum turnmodel.SessionSummary
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&sum); err != nil {
-		return agentruntime.SessionSummary{}, err
+		return turnmodel.SessionSummary{}, err
 	}
 	return sum, nil
 }

@@ -1,4 +1,4 @@
-package agentruntime
+package turnmodel
 
 import (
 	"context"
@@ -13,10 +13,10 @@ import (
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
-// echoRun is a fake turn runner: it completes immediately, echoing the input as
+// echoRun is a fake TurnExecutor: it completes immediately, echoing the input as
 // output and reporting fixed usage — so worker tests need no real LLM/harness.
-func echoRun(_ context.Context, _ v1.Agent, turn v1.AgentRunSpec) (Result, error) {
-	return Result{Phase: v1.PhaseCompleted, Output: turn.Input, Usage: v1.Usage{Steps: 1, Tokens: 7}}, nil
+func echoRun(_ context.Context, tn Turn) (Result, error) {
+	return Result{Phase: v1.PhaseCompleted, Output: tn.Spec.Input, Usage: v1.Usage{Steps: 1, Tokens: 7}}, nil
 }
 
 func dropTurn(t *testing.T, workspace, name string, input string) {
@@ -33,7 +33,7 @@ func dropTurn(t *testing.T, workspace, name string, input string) {
 }
 
 func newTestWorker(workspace string) *SessionWorker {
-	return &SessionWorker{Agent: v1.Agent{}, AgentRef: "sess-agent", Workspace: workspace, run: echoRun, Now: time.Now}
+	return &SessionWorker{Agent: v1.Agent{}, AgentRef: "sess-agent", Workspace: workspace, Executor: ExecutorFunc(echoRun), Now: time.Now}
 }
 
 func TestSessionWorker_ProcessInbox(t *testing.T) {
@@ -69,7 +69,7 @@ func TestSessionWorker_ConcurrentTurns(t *testing.T) {
 	ws := t.TempDir()
 	const n, width = 12, 4
 	var inflight, maxSeen int64
-	run := func(_ context.Context, _ v1.Agent, turn v1.AgentRunSpec) (Result, error) {
+	run := func(_ context.Context, tn Turn) (Result, error) {
 		cur := atomic.AddInt64(&inflight, 1)
 		for { // record the high-water mark of concurrent invocations
 			m := atomic.LoadInt64(&maxSeen)
@@ -79,9 +79,9 @@ func TestSessionWorker_ConcurrentTurns(t *testing.T) {
 		}
 		time.Sleep(2 * time.Millisecond)
 		atomic.AddInt64(&inflight, -1)
-		return Result{Phase: v1.PhaseCompleted, Output: turn.Input, Usage: v1.Usage{Tokens: 1}}, nil
+		return Result{Phase: v1.PhaseCompleted, Output: tn.Spec.Input, Usage: v1.Usage{Tokens: 1}}, nil
 	}
-	w := &SessionWorker{Agent: v1.Agent{}, Workspace: ws, run: run, Now: time.Now, MaxConcurrentTurns: width}
+	w := &SessionWorker{Agent: v1.Agent{}, Workspace: ws, Executor: ExecutorFunc(run), Now: time.Now, MaxConcurrentTurns: width}
 	for i := 0; i < n; i++ {
 		dropTurn(t, ws, fmt.Sprintf("%04d.json", i), `{"prompt":"x"}`)
 	}
@@ -143,7 +143,7 @@ func TestSessionWorker_CompactsHistory(t *testing.T) {
 func TestSessionWorker_TurnTimeout(t *testing.T) {
 	ws := t.TempDir()
 	var sawDeadline int64
-	run := func(ctx context.Context, _ v1.Agent, _ v1.AgentRunSpec) (Result, error) {
+	run := func(ctx context.Context, _ Turn) (Result, error) {
 		if _, ok := ctx.Deadline(); ok {
 			atomic.StoreInt64(&sawDeadline, 1)
 		}
@@ -154,7 +154,7 @@ func TestSessionWorker_TurnTimeout(t *testing.T) {
 			return Result{Phase: v1.PhaseCompleted}, nil
 		}
 	}
-	w := &SessionWorker{Agent: v1.Agent{}, Workspace: ws, run: run, Now: time.Now, TurnTimeout: 20 * time.Millisecond}
+	w := &SessionWorker{Agent: v1.Agent{}, Workspace: ws, Executor: ExecutorFunc(run), Now: time.Now, TurnTimeout: 20 * time.Millisecond}
 	dropTurn(t, ws, "0001.json", `{"prompt":"x"}`)
 
 	state := &SessionState{}

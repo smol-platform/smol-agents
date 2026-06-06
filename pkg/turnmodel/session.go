@@ -1,4 +1,4 @@
-package agentruntime
+package turnmodel
 
 import (
 	"encoding/json"
@@ -126,11 +126,11 @@ func (st SessionStore) Load() (*SessionState, error) {
 		return &SessionState{Phase: v1.PhasePending}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("agentruntime: load session state: %w", err)
+		return nil, fmt.Errorf("turnmodel: load session state: %w", err)
 	}
 	var s SessionState
 	if err := json.Unmarshal(b, &s); err != nil {
-		return nil, fmt.Errorf("agentruntime: decode session state: %w", err)
+		return nil, fmt.Errorf("turnmodel: decode session state: %w", err)
 	}
 	return &s, nil
 }
@@ -139,15 +139,15 @@ func (st SessionStore) Load() (*SessionState, error) {
 // never leaves a torn checkpoint that a resuming worker would fail to decode.
 func (st SessionStore) Save(s *SessionState) error {
 	if err := os.MkdirAll(filepath.Dir(st.Path), 0o700); err != nil {
-		return fmt.Errorf("agentruntime: session dir: %w", err)
+		return fmt.Errorf("turnmodel: session dir: %w", err)
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return fmt.Errorf("agentruntime: encode session state: %w", err)
+		return fmt.Errorf("turnmodel: encode session state: %w", err)
 	}
 	tmp := st.Path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return fmt.Errorf("agentruntime: write session state: %w", err)
+		return fmt.Errorf("turnmodel: write session state: %w", err)
 	}
 	return os.Rename(tmp, st.Path)
 }

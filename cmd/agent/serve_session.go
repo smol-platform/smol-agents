@@ -16,12 +16,13 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/observability"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
+	"github.com/smol-platform/smol-agents/pkg/turnmodel"
 )
 
 // runServeSession is the `agent serve-session` subcommand: the long-running
 // runtime behind an AgentSession. It loads the mounted Agent spec, restores
 // durable session state from the AgentFS workspace (the init container already
-// restored the files), and drives agentruntime.SessionWorker — processing turns
+// restored the files), and drives turnmodel.SessionWorker — processing turns
 // from the inbox, checkpointing after each, parking when idle — until SIGTERM
 // (final checkpoint) or the idle timeout (exit so Knative can scale to zero).
 func runServeSession(args []string) int {
@@ -65,7 +66,7 @@ func runServeSession(args []string) int {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
-	w := &agentruntime.SessionWorker{
+	w := &turnmodel.SessionWorker{
 		Agent:              agent,
 		AgentRef:           *agentRef,
 		Workspace:          ws,
@@ -94,14 +95,14 @@ func runServeSession(args []string) int {
 			return 1
 		}
 		defer q.Close()
-		w.Source = &agentruntime.QueueSource{Queue: q, SessionKey: *sessionKey, Max: 16}
-		w.Sink = &agentruntime.QueueSink{Queue: q, SessionKey: *sessionKey}
+		w.Source = &turnmodel.QueueSource{Queue: q, SessionKey: *sessionKey, Max: 16}
+		w.Sink = &turnmodel.QueueSink{Queue: q, SessionKey: *sessionKey}
 		logger.Info("turn transport: NATS", "sessionKey", *sessionKey)
 	}
 
 	// Read-only status endpoint the operator scrapes to mirror usage/turn counters
 	// into AgentSession.status (M2.19); serves the checkpointed summary file.
-	go serveSessionStatus(ctx, agentruntime.SessionStatusPort, agentruntime.DefaultSessionSummaryPath(ws), logger.Error)
+	go serveSessionStatus(ctx, turnmodel.SessionStatusPort, turnmodel.DefaultSessionSummaryPath(ws), logger.Error)
 
 	logger.Info("serving AgentSession", "workspace", ws, "poll", poll.String(), "idleTimeout", idle.String())
 	if err := w.Run(ctx); err != nil && ctx.Err() == nil {

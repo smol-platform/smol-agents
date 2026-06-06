@@ -1,4 +1,4 @@
-package agentruntime
+package turnmodel
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	rt "github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
 
 // SessionWorker is the long-running runtime behind an AgentSession. It restores
@@ -27,8 +28,8 @@ type SessionWorker struct {
 	Agent        v1.Agent
 	AgentRef     string // the Agent CR name, recorded in checkpoint metadata
 	Workspace    string // AgentFS mount; state + inbox/outbox live under it
-	Leaser       SecretLeaser
-	LLM          LLM
+	Leaser       rt.SecretLeaser
+	LLM          rt.LLM
 	PollInterval time.Duration // inbox poll cadence (default 2s)
 	IdleTimeout  time.Duration // exit (for scale-to-zero) after this idle; 0 = never
 	Now          func() time.Time
@@ -54,12 +55,20 @@ type SessionWorker struct {
 	// monotonic across compaction, so indices and status counts never regress.
 	HistoryLimit int
 
+	// ReplayHistory opts a loop (history-replay) session into carrying prior
+	// turns into each Turn's Memory (M4.2). Default false: per D6 the loop-resume
+	// engine is deferred, so loop turns are independent. Hermes/CLI ignore it
+	// (they carry memory provider-side / on the workspace).
+	ReplayHistory bool
+
 	// mu guards the shared SessionState mutations (phase/index/Append/compact)
 	// when MaxConcurrentTurns > 1. runTurn itself runs OUTSIDE the lock.
 	mu sync.Mutex
 
-	// run executes one turn; nil defaults to RunTurn. Injected by tests.
-	run func(context.Context, v1.Agent, v1.AgentRunSpec) (Result, error)
+	// Executor runs one turn (the Turn-Model → Runtime seam, M4.1). nil defaults
+	// to a RuntimeExecutor built from Leaser+LLM (the production RunTurn path);
+	// tests inject a fake (ExecutorFunc) so the worker needs no real LLM/harness.
+	Executor TurnExecutor
 }
 
 // InboundTurn is one pending turn yielded by a TurnSource. Ack marks it durably
@@ -135,11 +144,17 @@ func (w *SessionWorker) log(msg string, args ...any) {
 	}
 }
 
-func (w *SessionWorker) runTurn(ctx context.Context, turn v1.AgentRunSpec) (Result, error) {
-	if w.run != nil {
-		return w.run(ctx, w.Agent, turn)
+// executor returns the worker's TurnExecutor, defaulting to a RuntimeExecutor
+// (the production RunTurn path) built from the worker's Leaser + LLM.
+func (w *SessionWorker) executor() TurnExecutor {
+	if w.Executor != nil {
+		return w.Executor
 	}
-	return RunTurn(ctx, w.Agent, turn, w.Leaser, w.LLM)
+	return RuntimeExecutor{Leaser: w.Leaser, LLM: w.LLM}
+}
+
+func (w *SessionWorker) runTurn(ctx context.Context, turn v1.AgentRunSpec, mem TurnMemory) (rt.Result, error) {
+	return w.executor().Execute(ctx, Turn{Agent: w.Agent, Spec: turn, Memory: mem})
 }
 
 // Run drives the session until ctx is cancelled, returning ctx.Err() on a
@@ -274,7 +289,12 @@ func (w *SessionWorker) handleTurn(ctx context.Context, state *SessionState, t I
 		defer cancel()
 	}
 	started := w.now()
-	res, runErr := w.runTurn(turnCtx, t.Spec) // OUTSIDE the lock — the expensive part
+	// Decide what cross-turn memory this turn carries (M4.2), snapshotting the
+	// live state under the lock; runTurn itself stays OUTSIDE the lock.
+	w.mu.Lock()
+	mem := w.buildMemory(state, w.AgentRef)
+	w.mu.Unlock()
+	res, runErr := w.runTurn(turnCtx, t.Spec, mem) // OUTSIDE the lock — the expensive part
 	st := SessionTurn{
 		Input:             t.Spec.Input,
 		Output:            res.Output,
