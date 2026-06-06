@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
@@ -436,6 +437,78 @@ func TestHermesHarness_ResponsesAPI(t *testing.T) {
 	if resp.TokensIn != 7 || resp.TokensOut != 3 {
 		t.Errorf("tokens = %d/%d, want 7/3", resp.TokensIn, resp.TokensOut)
 	}
+}
+
+// M3.11: the async /v1/runs path submits, polls to terminal, fails on
+// status:failed, and on cancel fires POST /v1/runs/{id}/stop (orphan fix).
+func TestHermesHarness_AsyncRuns(t *testing.T) {
+	t.Run("completes", func(t *testing.T) {
+		var gets int
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /v1/runs", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"r1","status":"queued"}`)) })
+		mux.HandleFunc("GET /v1/runs/r1", func(w http.ResponseWriter, _ *http.Request) {
+			if gets++; gets < 2 {
+				_, _ = w.Write([]byte(`{"id":"r1","status":"in_progress"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"r1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2}}`))
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		resp, err := (&HermesHarness{Client: srv.Client()}).Run(context.Background(), Request{
+			Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL + "/v1/runs", API: "runs", PollIntervalMs: 10}},
+			Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+		})
+		if err != nil || string(resp.Output) != "ok" || resp.TokensIn != 5 || resp.TokensOut != 2 {
+			t.Errorf("async completes: err=%v out=%q tok=%d/%d", err, resp.Output, resp.TokensIn, resp.TokensOut)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /v1/runs", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"r1","status":"queued"}`)) })
+		mux.HandleFunc("GET /v1/runs/r1", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"id":"r1","status":"failed","error":"boom"}`))
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		if _, err := (&HermesHarness{Client: srv.Client()}).Run(context.Background(), Request{
+			Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL + "/v1/runs", API: "runs", PollIntervalMs: 10}},
+			Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+		}); err == nil {
+			t.Error("status:failed must error")
+		}
+	})
+
+	t.Run("cancel-stops", func(t *testing.T) {
+		stopped := make(chan struct{}, 1)
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /v1/runs", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"r1","status":"queued"}`)) })
+		mux.HandleFunc("GET /v1/runs/r1", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"id":"r1","status":"in_progress"}`))
+		})
+		mux.HandleFunc("POST /v1/runs/r1/stop", func(http.ResponseWriter, *http.Request) {
+			select {
+			case stopped <- struct{}{}:
+			default:
+			}
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+		if _, err := (&HermesHarness{Client: srv.Client()}).Run(ctx, Request{
+			Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL + "/v1/runs", API: "runs", PollIntervalMs: 10}},
+			Input: json.RawMessage(`{"prompt":"hi"}`),
+		}); err == nil {
+			t.Error("cancel must return an error")
+		}
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+			t.Error("cancel must POST /v1/runs/r1/stop (orphan fix)")
+		}
+	})
 }
 
 // M3.10: a gateway that explicitly reports responses_api:false fails the run loud

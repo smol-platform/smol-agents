@@ -176,6 +176,8 @@ spec:
                           type: string
                           enum: [chat, responses, runs]
                           description: 'Hermes endpoint family: chat (default) | responses | runs. Only valid for kind=hermes (M3.9).'
+                        stream: { type: boolean, description: 'Prefer a streaming transport where the API supports it (M3.9); a hint for the async /v1/runs poller.' }
+                        pollIntervalMs: { type: integer, minimum: 0, description: 'Async /v1/runs poll cadence in ms (0 = 1000); M3.11.' }
                         method:
                           type: string
                           description: HTTP method; defaults to POST.

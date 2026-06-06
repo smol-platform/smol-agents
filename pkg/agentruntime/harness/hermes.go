@@ -74,6 +74,10 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	if spec.API == "responses" {
 		return h.runResponses(ctx, req, spec)
 	}
+	// The async /v1/runs API (M3.11) submits + polls; handled in hermes_runs.go.
+	if spec.API == "runs" {
+		return h.runAsync(ctx, req, spec)
+	}
 	client := h.Client
 	if client == nil {
 		client = http.DefaultClient

@@ -219,6 +219,15 @@ type HarnessHTTPSpec struct {
 	// +optional
 	API string `json:"api,omitempty"`
 
+	// Stream prefers a streaming/SSE transport where the API supports it (M3.9).
+	// Currently a hint for the async /v1/runs poller. +optional
+	Stream bool `json:"stream,omitempty"`
+
+	// PollIntervalMs is the async /v1/runs poll cadence in ms (0 → 1000). M3.11.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	PollIntervalMs int32 `json:"pollIntervalMs,omitempty"`
+
 	// +optional
 	Method string `json:"method,omitempty"` // POST default
 
