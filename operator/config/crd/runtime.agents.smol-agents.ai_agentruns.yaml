@@ -177,6 +177,7 @@ spec:
                     tokens: { type: integer, description: 'Total LLM tokens consumed.' }
                     toolCalls: { type: integer, description: 'Total tool invocations.' }
                     wallClockUsed: { type: integer, format: int64, description: 'Wall-clock seconds consumed.' }
+                    costUSDMilli: { type: integer, format: int64, description: 'Backend-reported cost in integer milli-USD (observability-only; never gated).' }
                 steps:
                   type: array
                   description: |-

@@ -295,6 +295,42 @@ spec:
                     properties:
                       name: { type: string, description: 'Name of the Tool resource to allow.' }
                       namespace: { type: string, description: 'Namespace of the Tool; defaults to the Agent''s namespace.' }
+                artifacts:
+                  type: object
+                  description: 'Workspace files to publish to S3 on pod shutdown (M2.23). Requires storage.agentfs + an S3 target. Best-effort, collected by the agentfs sidecar; never affects run Phase (the harness container holds no S3 creds).'
+                  required: [outputs]
+                  properties:
+                    outputs:
+                      type: array
+                      items:
+                        type: object
+                        required: [name, glob]
+                        properties:
+                          name: { type: string, description: 'Stable identifier (S3 key prefix + manifest key); unique within the spec.' }
+                          glob: { type: string, description: 'Workspace-relative doublestar pattern (e.g. out/**/*.json); a leading / or any .. traversal is rejected.' }
+                          maxBytes: { type: integer, format: int64, minimum: 0, description: 'Per-file cap; an over-budget file is skipped (recorded), never fatal. 0 = no cap.' }
+                          contentType: { type: string, description: 'Override the sniffed content type for uploaded objects.' }
+                    s3:
+                      type: object
+                      description: 'Upload target; defaults to the AgentFS backup target.'
+                      required: [bucket]
+                      properties:
+                        bucket: { type: string, description: 'Destination bucket.' }
+                        prefix: { type: string, description: 'Key prefix within the bucket.' }
+                        region: { type: string, description: 'Bucket region.' }
+                        endpointURL: { type: string, description: 'Custom S3 endpoint (e.g. MinIO); empty uses AWS S3.' }
+                        sseAlgorithm:
+                          type: string
+                          description: 'Server-side encryption: AES256, aws:kms, or "" (none).'
+                          enum: [AES256, "aws:kms", ""]
+                        kmsKeyARN: { type: string, description: 'KMS key ARN when sseAlgorithm=aws:kms.' }
+                        versioning: { type: boolean, description: 'Whether the destination bucket has object versioning enabled.' }
+                        credentialsRef:
+                          type: object
+                          description: Secret holding S3 credentials, leased by the broker at runtime.
+                          properties:
+                            secretName: { type: string, description: 'Name of the Secret.' }
+                            key: { type: string, description: 'Key within the Secret''s data.' }
                 memory:
                   type: object
                   description: |-
