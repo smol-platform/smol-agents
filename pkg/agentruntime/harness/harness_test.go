@@ -438,6 +438,44 @@ func TestHermesHarness_ResponsesAPI(t *testing.T) {
 	}
 }
 
+// M3.10: a gateway that explicitly reports responses_api:false fails the run loud
+// BEFORE any /v1/responses request; responses_api:true proceeds.
+func TestHermesHarness_ResponsesCapabilityGate(t *testing.T) {
+	gate := func(t *testing.T, capsBody string) (*HermesHarness, string, *bool) {
+		posted := new(bool)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/capabilities", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(capsBody)) })
+		mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, _ *http.Request) {
+			*posted = true
+			_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}`))
+		})
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return &HermesHarness{Client: srv.Client()}, srv.URL + "/v1/responses", posted
+	}
+
+	// responses_api:false → fail loud, no POST.
+	h, url, posted := gate(t, `{"responses_api":false}`)
+	if _, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: url, API: "responses"}},
+		Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+	}); err == nil {
+		t.Error("responses_api:false must fail loud")
+	} else if *posted {
+		t.Error("must NOT POST /v1/responses when capability is false")
+	}
+
+	// responses_api:true → proceeds.
+	h2, url2, _ := gate(t, `{"responses_api":true}`)
+	resp, err := h2.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: url2, API: "responses"}},
+		Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if err != nil || string(resp.Output) != "ok" {
+		t.Errorf("responses_api:true must proceed: err=%v out=%q", err, resp.Output)
+	}
+}
+
 // M2.7: parseUsage accepts both the chat and Responses token shapes and never
 // cross-zeroes — the top correctness hazard (a mis-parse zeroing the budget).
 func TestParseUsage_DualShape(t *testing.T) {

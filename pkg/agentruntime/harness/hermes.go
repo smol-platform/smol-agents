@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
@@ -50,6 +52,10 @@ import (
 // broker) to authenticate to the gateway.
 type HermesHarness struct {
 	Client HTTPClient
+	// capsCache memoizes the per-endpoint capability probe (M3.10), keyed by the
+	// capabilities URL → bool (responses supported). Bounds repeat probes across
+	// turns in a long-lived session worker.
+	capsCache sync.Map
 }
 
 func (h *HermesHarness) Kind() v1.HarnessKind { return v1.HarnessHermes }
@@ -279,6 +285,12 @@ func (h *HermesHarness) runResponses(ctx context.Context, req Request, spec *v1.
 		client = http.DefaultClient
 	}
 	env := effectiveEnv(req)
+	// Fail loud BEFORE any request if the gateway explicitly reports it cannot
+	// serve the Responses API (M3.10) — a misconfigured baseURL otherwise produces
+	// a confusing 404/parse error mid-run.
+	if err := h.probeResponsesCapability(ctx, client, spec, env); err != nil {
+		return Response{}, err
+	}
 	body := map[string]any{
 		"model": hermesModel(env),
 		"input": promptFromInput(req.Input),
@@ -347,6 +359,61 @@ func (h *HermesHarness) runResponses(ctx context.Context, req Request, spec *v1.
 		CostUSDMilli: costMilli,
 		DurationMs:   res.DurationMs,
 	}, nil
+}
+
+// probeResponsesCapability fails loud when the gateway EXPLICITLY reports it
+// cannot serve the Responses API (M3.10). It GETs <base>/v1/capabilities (derived
+// from spec.URL) once per endpoint (cached) with the request's auth headers. A
+// probe error, a non-200, an unparseable body, or an absent responses_api field
+// is NOT fatal — only `"responses_api": false` blocks the run, so gateways
+// without a capabilities endpoint keep working unchanged.
+func (h *HermesHarness) probeResponsesCapability(ctx context.Context, client HTTPClient, spec *v1.HarnessHTTPSpec, env map[string]string) error {
+	url := capabilitiesURL(spec.URL)
+	if v, ok := h.capsCache.Load(url); ok {
+		if supported, _ := v.(bool); !supported {
+			return fmt.Errorf("harness: hermes gateway at %s reports responses_api unsupported (M3.10)", url)
+		}
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil // can't build the probe → proceed (best-effort)
+	}
+	for k, v := range env {
+		if name, ok := strings.CutPrefix(k, "HEADER_"); ok && v != "" {
+			req.Header.Set(name, v)
+		}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil // probe failed → proceed; the real request surfaces a hard error
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil // no capabilities endpoint (older gateway) → proceed
+	}
+	var caps struct {
+		ResponsesAPI *bool `json:"responses_api"`
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if json.Unmarshal(b, &caps) != nil || caps.ResponsesAPI == nil {
+		return nil // unparseable / field absent → proceed
+	}
+	h.capsCache.Store(url, *caps.ResponsesAPI)
+	if !*caps.ResponsesAPI {
+		return fmt.Errorf("harness: hermes gateway at %s reports responses_api unsupported (M3.10)", url)
+	}
+	return nil
+}
+
+// capabilitiesURL derives the gateway's /v1/capabilities URL from the responses
+// URL by swapping the final path segment (.../v1/responses → .../v1/capabilities).
+func capabilitiesURL(responsesURL string) string {
+	i := strings.LastIndex(responsesURL, "/")
+	if i < 0 {
+		return responsesURL + "/capabilities"
+	}
+	return responsesURL[:i+1] + "capabilities"
 }
 
 // parseResponsesOutput walks the /v1/responses output[] array: it concatenates
