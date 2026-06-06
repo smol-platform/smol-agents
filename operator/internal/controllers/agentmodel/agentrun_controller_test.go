@@ -422,6 +422,50 @@ func runPodExists(r *AgentRunReconciler, ns, name string) bool {
 	return r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, &corev1.Pod{}) == nil
 }
 
+// M4.4: a session.required Agent is served by its resident AgentSession worker,
+// so a bare standalone AgentRun (no sessionRef) against it is a misuse — it
+// fails fast with reason agent:requires-session and NO pod is created. A
+// session-linked turn-run (sessionRef set) skips the gate.
+func TestAgentRunReconciler_SessionRequiredRejectsStandaloneRun(t *testing.T) {
+	agent := sampleAgent()
+	agent.Spec.Session = &pure.SessionSpec{Required: true}
+	run := sampleRun() // no SessionRef
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, run)
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := getRun(t, r, run.Namespace, run.Name)
+	if got.Status.State != pure.PhaseFailed || got.Status.TerminationReason != "agent:requires-session" {
+		t.Fatalf("standalone run vs resident agent: state=%s reason=%q, want Failed/agent:requires-session",
+			got.Status.State, got.Status.TerminationReason)
+	}
+	if runPodExists(r, run.Namespace, run.Name) {
+		t.Error("a rejected resident-agent run must not create a pod")
+	}
+
+	// Control: a session-linked turn-run (sessionRef set) is NOT rejected by the
+	// gate (it proceeds past it — it is the legitimate per-turn run path).
+	turn := sampleRun()
+	turn.Name = "turn-001"
+	turn.Spec.SessionRef = "sess-1"
+	r2 := newRunReconcilerForTest(t, interceptor.Funcs{}, sampleAgentSessionRequired(), turn)
+	req2 := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: turn.Namespace, Name: turn.Name}}
+	if _, err := r2.Reconcile(context.Background(), req2); err != nil {
+		t.Fatalf("Reconcile (turn-run): %v", err)
+	}
+	if got := getRun(t, r2, turn.Namespace, turn.Name); got.Status.TerminationReason == "agent:requires-session" {
+		t.Errorf("a session-linked turn-run must not be rejected by the resident-agent gate")
+	}
+}
+
+func sampleAgentSessionRequired() *amv1.Agent {
+	a := sampleAgent()
+	a.Spec.Session = &pure.SessionSpec{Required: true}
+	return a
+}
+
 // M1.12: the per-tenant concurrency gate holds a run Pending when the namespace
 // (or Agent) is at its Running-runs cap, and admits otherwise.
 func mkRun(name, ns, ref string) *amv1.AgentRun {

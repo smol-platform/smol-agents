@@ -200,6 +200,18 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.updateRunStatus(ctx, run, ctrl.Result{})
 	}
 
+	// A session.required Agent (D4/M4.4) is served by its resident AgentSession
+	// worker — turns are delivered to a warm pod, never a one-shot run. A turn
+	// that shares the session (spec.sessionRef set, e.g. AgentFS / Hermes memory
+	// scoping) is fine; a bare standalone AgentRun against a resident-only agent
+	// is a misuse, so fail it fast (before any pod or cost) rather than spawn an
+	// ephemeral RestartPolicy=Never pod that bypasses the resident worker.
+	if !run.Status.State.Terminal() && run.Spec.SessionRef == "" &&
+		agent.Spec.Session != nil && agent.Spec.Session.Required {
+		r.markTerminal(run, pure.PhaseFailed, "agent:requires-session")
+		return r.updateRunStatus(ctx, run, ctrl.Result{})
+	}
+
 	// Ensure the Pod exists.
 	pod := &corev1.Pod{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod)
