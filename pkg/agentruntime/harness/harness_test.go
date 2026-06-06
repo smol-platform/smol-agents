@@ -168,6 +168,40 @@ func TestClaudeCodeHarness_RunsCommand(t *testing.T) {
 	}
 }
 
+// M3.16/M3.19: instructions go via --append-system-prompt, a captured session id
+// resumes via --resume, and the parsed session_id surfaces on Response.SessionID.
+func TestClaudeCodeHarness_SystemPromptAndResume(t *testing.T) {
+	var got []string
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		got = args
+		return exec.CommandContext(ctx, "/bin/sh", "-c",
+			`echo '{"result":"hi","session_id":"sess-9","total_cost_usd":0.002,"usage":{"input_tokens":4,"output_tokens":2}}'`)
+	}}
+	resp, err := h.Run(context.Background(), Request{
+		Spec:         v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{OutputFormat: "json"}},
+		Instructions: "be terse",
+		Input:        json.RawMessage(`{"prompt":"hello"}`),
+		SessionID:    "prior-7",
+		Budget:       v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	j := strings.Join(got, " ")
+	if !strings.Contains(j, "--append-system-prompt be terse") {
+		t.Errorf("instructions must go via --append-system-prompt: %q", j)
+	}
+	if !strings.Contains(j, "--resume prior-7") {
+		t.Errorf("a captured session id must resume: %q", j)
+	}
+	if resp.SessionID != "sess-9" {
+		t.Errorf("Response.SessionID = %q, want sess-9 (captured from session_id)", resp.SessionID)
+	}
+	if resp.CostUSDMilli != 2 || resp.TokensIn != 4 {
+		t.Errorf("richness = cost %d / in %d, want 2 / 4", resp.CostUSDMilli, resp.TokensIn)
+	}
+}
+
 // M3.21: ApprovalMode "never" maps to codex --ask-for-approval never (headless);
 // other modes leave codex's default approval policy.
 func TestCodexHarness_ApprovalMapping(t *testing.T) {

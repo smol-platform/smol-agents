@@ -80,6 +80,11 @@ type Response struct {
 	// contract above).
 	ToolCalls []v1.ToolCallRecord
 
+	// SessionID is the harness's own session/thread id when it reports one
+	// (claude-code session_id, codex thread) — captured so a later run can resume
+	// the conversation (M3.16/M3.19). Empty when the harness has none.
+	SessionID string
+
 	// DurationMs measured by the executor's clock.
 	DurationMs int64
 }

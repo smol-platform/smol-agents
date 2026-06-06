@@ -193,15 +193,22 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 		flag = req.Spec.CLI.PromptFlag
 	}
 	prompt := promptFromInput(req.Input)
-	if req.Instructions != "" {
-		prompt = req.Instructions + "\n\n" + prompt
-	}
 	// --output-format json lets us parse real tokens/cost/session-id (M2.5); the
 	// flag goes before ExtraFlags + the prompt so a tenant override can't drop it.
 	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
 	args := []string{flag}
 	if jsonOut {
 		args = append(args, "--output-format", "json")
+	}
+	// Instructions belong in the system prompt, not stuffed into the user turn
+	// (M3.16) — --append-system-prompt adds them to claude's system prompt.
+	if req.Instructions != "" {
+		args = append(args, "--append-system-prompt", req.Instructions)
+	}
+	// Resume a prior conversation when a session id was captured (M3.19); claude
+	// reloads the transcript from its session store (HOME on AgentFS for durable).
+	if req.SessionID != "" {
+		args = append(args, "--resume", req.SessionID)
 	}
 	args = append(args, claudePermArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
@@ -211,8 +218,8 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	if err != nil || !jsonOut {
 		return resp, err
 	}
-	out, in, outTok, costMilli, _, isErr := parseClaudeJSON(resp.Output)
-	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli = out, in, outTok, costMilli
+	out, in, outTok, costMilli, sessionID, isErr := parseClaudeJSON(resp.Output)
+	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli, resp.SessionID = out, in, outTok, costMilli, sessionID
 	// claude --print exits 0 even when the turn errored (is_error). Surface it as
 	// a harness error so the run is folded Failed, not a silent success (M3.16).
 	// resp (with usage) is returned too, so token/cost accounting still lands.
