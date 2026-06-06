@@ -473,6 +473,12 @@ type AgentSessionSpec struct {
 	// +optional
 	TurnDeliveryTimeoutSeconds int32 `json:"turnDeliveryTimeoutSeconds,omitempty"`
 
+	// MemoryScope is an optional cross-turn memory partition key for Hermes
+	// sessions (M3.12) — injected as HERMES_SESSION_KEY so the gateway can scope
+	// (or share) provider-side memory beyond the per-session id. Empty = the
+	// session-id alone scopes memory. +optional
+	MemoryScope string `json:"memoryScope,omitempty"`
+
 	// Resources is the compute request/limit for the resident session worker
 	// container (M1.11). A session has NO wall-clock deadline (the idle timeout
 	// bounds it), so right-sizing the worker is done here rather than via a

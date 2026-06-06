@@ -747,6 +747,14 @@ func (r *AgentRunReconciler) hermesSessionAgent(ctx context.Context, run *amv1.A
 		Name:  "HERMES_SESSION_ID",
 		Value: "sess-" + string(session.UID),
 	})
+	// Optional cross-turn memory partition (M3.12): scope (or share) gateway-side
+	// memory beyond the per-session id.
+	if session.Spec.MemoryScope != "" {
+		out.Spec.Harness.Env = append(out.Spec.Harness.Env, pure.HarnessEnvVar{
+			Name:  "HERMES_SESSION_KEY",
+			Value: session.Spec.MemoryScope,
+		})
+	}
 	return out
 }
 

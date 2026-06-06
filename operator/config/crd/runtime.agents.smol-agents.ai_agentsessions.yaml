@@ -46,6 +46,7 @@ spec:
                 turnBatchSize: { type: integer, minimum: 0, description: 'Queued turns pulled per poll (0 = 1).' }
                 turnPollIntervalMs: { type: integer, minimum: 0, description: 'Worker inbox poll cadence in ms (0 = 500).' }
                 turnDeliveryTimeoutSeconds: { type: integer, minimum: 0, description: 'Per-turn processing timeout (0 = 300s); must be <= turnRetentionSeconds (M2.22).' }
+                memoryScope: { type: string, description: 'Optional cross-turn memory partition key for Hermes sessions (M3.12); injected as HERMES_SESSION_KEY. Empty = session-id alone scopes memory.' }
                 resources:
                   type: object
                   description: 'Compute request/limit for the resident session worker container (M1.11). A session has no wall-clock deadline (idle timeout bounds it), so worker sizing is here, not via a budget. Quantities are strings (e.g. 500m, 512Mi); the operator parses them and the webhook rejects unparseable values.'

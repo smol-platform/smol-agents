@@ -273,6 +273,37 @@ func TestHermesSessionAgent_InjectsSessionID(t *testing.T) {
 	}
 }
 
+// M3.12: a session's MemoryScope is injected as HERMES_SESSION_KEY; absent → none.
+func TestHermesSessionAgent_MemoryScope(t *testing.T) {
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "tenant-a", UID: "u"}}
+	session.Spec.MemoryScope = "team-shared"
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, session)
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	run.Spec.SessionRef = "s"
+
+	out := r.hermesSessionAgent(context.Background(), run, harnessAgent("alice", "tenant-a"))
+	var key string
+	for _, e := range out.Spec.Harness.Env {
+		if e.Name == "HERMES_SESSION_KEY" {
+			key = e.Value
+		}
+	}
+	if key != "team-shared" {
+		t.Errorf("HERMES_SESSION_KEY = %q, want team-shared", key)
+	}
+
+	// No MemoryScope → no HERMES_SESSION_KEY.
+	noScope := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "tenant-a", UID: "u2"}}
+	r2 := newRunReconcilerForTest(t, interceptor.Funcs{}, noScope)
+	run2 := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	run2.Spec.SessionRef = "s2"
+	for _, e := range r2.hermesSessionAgent(context.Background(), run2, harnessAgent("alice", "tenant-a")).Spec.Harness.Env {
+		if e.Name == "HERMES_SESSION_KEY" {
+			t.Error("no MemoryScope must inject no HERMES_SESSION_KEY")
+		}
+	}
+}
+
 // M4.18: a pod killed by activeDeadlineSeconds carries the reason at the POD
 // level — terminationReason must surface it (pod:DeadlineExceeded), preferring
 // the pod-level reason over container status, and falling back to pod:Failed.
