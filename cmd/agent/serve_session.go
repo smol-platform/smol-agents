@@ -37,6 +37,7 @@ func runServeSession(args []string) int {
 	historyLimit := fs.Int("history-limit", 0, "max in-memory turns retained; 0 = unbounded")
 	natsURL := fs.String("nats-url", os.Getenv("AGENTSESSION_NATS_URL"), "NATS JetStream URL for turn delivery; empty uses the on-disk inbox")
 	sessionKey := fs.String("session-key", os.Getenv("AGENTSESSION_KEY"), "session queue key (namespace.name); required with --nats-url")
+	natsCreds := fs.String("nats-creds", os.Getenv("AGENTSESSION_NATS_CREDS"), "path to a NATS user .creds file — the operator-minted, namespace-scoped worker credential (M2.20); empty = no auth (connects + manages the stream as before)")
 	_ = fs.Parse(args)
 
 	logger := observability.MustLogger(slog.LevelInfo)
@@ -80,7 +81,14 @@ func runServeSession(args []string) int {
 
 	// NATS turn transport (gateway path); default is the on-disk inbox.
 	if *natsURL != "" && *sessionKey != "" {
-		q, qerr := sessionqueue.NewNATSQueue(*natsURL)
+		// With a namespace-scoped worker credential (M2.20), authenticate with it
+		// and connect stream-management-off — a scoped cred can't create the shared
+		// stream (the gateway/operator owns it), and must not try.
+		var opts []sessionqueue.NATSOption
+		if *natsCreds != "" {
+			opts = append(opts, sessionqueue.WithUserCredentials(*natsCreds), sessionqueue.WithoutStreamManagement())
+		}
+		q, qerr := sessionqueue.NewNATSQueue(*natsURL, opts...)
 		if qerr != nil {
 			logger.Error("serve-session: connect NATS", "err", qerr)
 			return 1

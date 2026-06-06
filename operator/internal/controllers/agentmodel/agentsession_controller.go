@@ -53,6 +53,10 @@ type AgentSessionReconciler struct {
 	// path) by injecting AGENTSESSION_NATS_URL/_KEY into the worker; empty
 	// leaves the worker on its on-disk inbox.
 	NATSURL string
+	// NATSAccountSeed, when set, is the operator's NATS account signing seed used
+	// to mint per-namespace worker credentials (M2.20). Empty leaves workers
+	// connecting unauthenticated (today's behavior — no per-tenant ACL).
+	NATSAccountSeed []byte
 	// MaxConcurrentReconciles bounds parallel session reconciles (default 1).
 	MaxConcurrentReconciles int
 }
@@ -237,6 +241,17 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			corev1.EnvVar{Name: "AGENTSESSION_NATS_URL", Value: r.NATSURL},
 			corev1.EnvVar{Name: "AGENTSESSION_KEY", Value: sessionqueue.SessionKey(session.Namespace, session.Name)},
 		)
+		// Per-namespace NATS credential (M2.20): with an account seed configured,
+		// authenticate the worker with its namespace-scoped creds so a compromised
+		// worker can only touch its own tenant's turn subjects. Off (unauthed) when
+		// no seed is set — today's behavior.
+		if len(r.NATSAccountSeed) > 0 {
+			credsSecret, cerr := r.ensureWorkerCreds(ctx, session.Namespace)
+			if cerr != nil {
+				return r.writeStatus(ctx, session, pure.PhasePending, "NATSCredsPending", cerr.Error(), 15*time.Second)
+			}
+			attachNATSCreds(pod, credsSecret)
+		}
 	}
 	pod.Spec.RestartPolicy = corev1.RestartPolicyAlways // required for a Deployment template
 

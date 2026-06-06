@@ -31,9 +31,40 @@ type NATSQueue struct {
 	subs map[string]*nats.Subscription // sessionKey -> durable pull subscription
 }
 
-// NewNATSQueue connects to url and ensures the session stream exists.
-func NewNATSQueue(url string) (*NATSQueue, error) {
-	nc, err := nats.Connect(url, nats.Name("smol-agents-sessionqueue"), nats.MaxReconnects(-1))
+// natsOptions configures NewNATSQueue (functional options keep the bare
+// NewNATSQueue(url) call backward-compatible).
+type natsOptions struct {
+	credsFile       string
+	skipStreamSetup bool
+}
+
+// NATSOption tunes a NATSQueue connection.
+type NATSOption func(*natsOptions)
+
+// WithUserCredentials authenticates with a NATS .creds file (the operator-minted,
+// per-namespace worker credential — M2.20). Empty path = no auth (today's default).
+func WithUserCredentials(path string) NATSOption {
+	return func(o *natsOptions) { o.credsFile = path }
+}
+
+// WithoutStreamManagement skips AddStream — a scoped worker credential cannot
+// (and must not) create the shared session stream; the gateway/operator owns it.
+func WithoutStreamManagement() NATSOption {
+	return func(o *natsOptions) { o.skipStreamSetup = true }
+}
+
+// NewNATSQueue connects to url and (unless WithoutStreamManagement) ensures the
+// session stream exists.
+func NewNATSQueue(url string, opts ...NATSOption) (*NATSQueue, error) {
+	var o natsOptions
+	for _, f := range opts {
+		f(&o)
+	}
+	connOpts := []nats.Option{nats.Name("smol-agents-sessionqueue"), nats.MaxReconnects(-1)}
+	if o.credsFile != "" {
+		connOpts = append(connOpts, nats.UserCredentials(o.credsFile))
+	}
+	nc, err := nats.Connect(url, connOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("sessionqueue: connect %q: %w", url, err)
 	}
@@ -43,6 +74,9 @@ func NewNATSQueue(url string) (*NATSQueue, error) {
 		return nil, fmt.Errorf("sessionqueue: jetstream: %w", err)
 	}
 	q := &NATSQueue{nc: nc, js: js, stream: defaultStream, subs: map[string]*nats.Subscription{}}
+	if o.skipStreamSetup {
+		return q, nil // a scoped worker connects to the pre-existing stream
+	}
 	_, err = js.AddStream(&nats.StreamConfig{
 		Name:      q.stream,
 		Subjects:  []string{subjectPrefix + ".>"},

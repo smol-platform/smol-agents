@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"os"
 	"strings"
@@ -40,6 +41,7 @@ func main() {
 	var defaultRunRuntimeClass string
 	var allowHostRuntime bool
 	var sessionNATSURL string
+	var natsAccountSeedFile string
 	var maxConcurrentReconciles int
 	var runDeadlineMultiplier float64
 	var defaultApprovalTimeout time.Duration
@@ -56,6 +58,8 @@ func main() {
 		"permit runc (shared host kernel) for AgentRun pods on clusters with no sandbox runtime; otherwise runc is a fail-closed R-SBX-1 violation")
 	flag.StringVar(&sessionNATSURL, "session-nats-url", os.Getenv("SESSION_NATS_URL"),
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
+	flag.StringVar(&natsAccountSeedFile, "nats-account-seed-file", os.Getenv("NATS_ACCOUNT_SEED_FILE"),
+		"path to the NATS account signing seed (mounted Secret) used to mint per-namespace worker credentials (M2.20); empty leaves session workers connecting unauthenticated")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
 		"max parallel reconciles per agent-model controller (AgentRun/AgentSession)")
 	flag.Float64Var(&runDeadlineMultiplier, "run-deadline-multiplier", 1.5,
@@ -74,6 +78,18 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Load the NATS account signing seed for per-namespace worker credentials
+	// (M2.20). Mounted from a Secret; absent leaves session workers unauthenticated.
+	var natsAccountSeed []byte
+	if natsAccountSeedFile != "" {
+		b, rerr := os.ReadFile(natsAccountSeedFile)
+		if rerr != nil {
+			setupLog.Error(rerr, "unable to read --nats-account-seed-file", "path", natsAccountSeedFile)
+			os.Exit(1)
+		}
+		natsAccountSeed = bytes.TrimSpace(b)
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
@@ -138,6 +154,7 @@ func main() {
 		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
 		AllowHostRuntime:        allowHostRuntime,
 		NATSURL:                 sessionNATSURL,
+		NATSAccountSeed:         natsAccountSeed,
 		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentSession controller")
