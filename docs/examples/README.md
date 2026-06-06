@@ -244,3 +244,39 @@ transaction's intent and a few minutes of validity.
   opt-in *and* admission-refused unless the resolved sandbox is a kata microVM.
 - **Cross-tenant** anything (A2A target, AgentNetwork selection) is refused by
   design; everything is namespace-scoped.
+
+## Running these for real with z.ai (live-verified 2026-06-06)
+
+These were exercised end-to-end on real **z.ai glm-4.6** on a local kind cluster
+(multi-run, session-per-request, idle pause/resume, file-state recovery,
+config/settings injection). Things you'll hit when pointing them at z.ai:
+
+- **Provider secret.** Create `zai-key` with a **single** key `ZAI_API_KEY`
+  (`kubectl -n <ns> create secret generic zai-key --from-literal=ZAI_API_KEY=<key>`).
+  The `ModelProvider.spec.secretRef` reads the secret's *sole* key — its CRD has no
+  `key` field today, so don't add a second key.
+- **z.ai Coding Plan vs pay-as-you-go.** The pay-as-you-go OpenAI endpoint
+  `https://api.z.ai/api/paas/v4/...` returns `429 code 1113 "insufficient balance"`. A
+  Coding-Plan account uses `https://api.z.ai/api/coding/paas/v4/...` (OpenAI-compatible,
+  for `mode: loop`) and `https://api.z.ai/api/anthropic` (for `harness: claude-code`).
+- **Loop path bridge.** The loop client posts to `<endpoint>/v1/chat/completions`, but
+  z.ai's path is `/api/coding/paas/v4/chat/completions`. Point `ModelProvider.endpoint`
+  at a tiny in-cluster proxy that rewrites `/v1/chat/completions` → the z.ai coding path.
+- **Kataless cluster (kind).** Start the operator with
+  `--default-run-runtime-class=runc --allow-host-runtime`, else every run holds at
+  `Pending/NoKVMCapacity` (the default class is `kata-fc`).
+- **claude-code file writes need kata.** On `runc`, claude-code can't create files
+  headlessly — `approvalMode: acceptEdits` / `cli.allowedTools` are *not* enough, and the
+  only flag that works (`--dangerously-skip-permissions`) is D3-refused unless the runtime
+  is a kata microVM. So examples 03/04 (claude-code writing files) need a kata cluster;
+  AgentFS *recovery* (delete the worker pod → fresh pod restores from minio) demonstrates
+  file-state durability on `runc` without writing via the CLI.
+- **Sessions (03).** AgentSession workers run the **loop** (not a CLI harness), need NATS +
+  `agentgateway` (operator `--session-nats-url`), and on the `0.2.1` images require
+  `storage.agentfs.backup.s3` with `sizeGiB > 0` (ephemeral workspaces are fixed only on
+  HEAD). Submit turns via `POST /v1/sessions/{ns}/{name}/turns`.
+- **Token accounting.** A claude-code agent reports `usage.tokens=0` unless you set
+  `cli.outputFormat: json`.
+
+The full local bring-up recipe (operator flags, minio, NATS/gateway, the z.ai proxy) is in
+the repo `CLAUDE.md`.

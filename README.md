@@ -288,6 +288,12 @@ P0–P2 path), live-verified on a single-node cluster:
 - **Gateway + queue + autoscaling** — a stateless `agentgateway` (Knative
   Service, scale-to-zero) publishes turns to **NATS JetStream**; session workers
   consume them durably.
+- **End-to-end on real z.ai (glm-4.6)** — the five core flows (multiple runs, a
+  long session per request, idle **pause + resume**, AgentFS **cross-pod
+  file-state recovery**, and **config/settings injection** for a new agent) were
+  verified live on glm-4.6. Run notes + the z.ai gotchas (Coding-Plan endpoint,
+  the loop path bridge, claude-code file-writes needing kata) are in
+  [docs/examples](docs/examples/README.md#running-these-for-real-with-zai-live-verified-2026-06-06).
 
 Remaining work is tracked per subsystem (`tasks.md`): multi-tenant hardening,
 serverless cold-start, and broader live-infra coverage.
