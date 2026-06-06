@@ -65,3 +65,32 @@ func TestAgentSessionWebhook_RejectsBadResourceQuantity(t *testing.T) {
 		t.Errorf("valid resource quantities must pass: %v", err)
 	}
 }
+
+// M2.22: a per-turn delivery timeout exceeding the turn-stream retention is
+// rejected (only when both are explicitly set; defaults stay valid).
+func TestAgentSessionWebhook_RejectsTimeoutOverRetention(t *testing.T) {
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "t"}}
+	w := sessionWebhookWith(t, agent)
+
+	bad := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	bad.Spec.AgentRef = "alice"
+	bad.Spec.TurnDeliveryTimeoutSeconds = 600
+	bad.Spec.TurnRetentionSeconds = 300
+	if _, err := w.ValidateCreate(context.Background(), bad); err == nil {
+		t.Error("delivery timeout > retention must be rejected")
+	}
+
+	ok := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	ok.Spec.AgentRef = "alice"
+	ok.Spec.TurnDeliveryTimeoutSeconds = 120
+	ok.Spec.TurnRetentionSeconds = 300
+	if _, err := w.ValidateCreate(context.Background(), ok); err != nil {
+		t.Errorf("delivery <= retention must pass: %v", err)
+	}
+	// Defaults (both 0) never trip the check.
+	def := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	def.Spec.AgentRef = "alice"
+	if _, err := w.ValidateCreate(context.Background(), def); err != nil {
+		t.Errorf("unset timeouts must pass: %v", err)
+	}
+}

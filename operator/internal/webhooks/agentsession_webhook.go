@@ -31,6 +31,14 @@ func (w *agentSessionWebhook) validate(ctx context.Context, s *amv1.AgentSession
 	if s.Spec.AgentRef == "" {
 		return fmt.Errorf("spec.agentRef is required")
 	}
+	// A per-turn timeout longer than the turn-stream retention is nonsensical — the
+	// turn could outlive the record of it (M2.22). Only checked when both are
+	// explicitly set; the defaults (300s ≤ 3600s) are always valid.
+	if s.Spec.TurnDeliveryTimeoutSeconds > 0 && s.Spec.TurnRetentionSeconds > 0 &&
+		s.Spec.TurnDeliveryTimeoutSeconds > s.Spec.TurnRetentionSeconds {
+		return fmt.Errorf("spec.turnDeliveryTimeoutSeconds (%d) must be <= spec.turnRetentionSeconds (%d)",
+			s.Spec.TurnDeliveryTimeoutSeconds, s.Spec.TurnRetentionSeconds)
+	}
 	// Resource quantities must parse (M1.11) — reject a bad "500x" at apply rather
 	// than silently dropping it on the worker pod build.
 	if r := s.Spec.Resources; r != nil {
