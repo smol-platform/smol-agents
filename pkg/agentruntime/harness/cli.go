@@ -249,20 +249,49 @@ func (h *CodexHarness) Run(ctx context.Context, req Request) (Response, error) {
 	// records (M2.6); it goes right after `exec` so a tenant override can't drop
 	// it. Without OutputFormat=json codex behaves exactly as before (raw stdout).
 	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
+
+	// `exec`, or `exec resume <id>` to continue a persistent session (M3.23).
 	args := []string{"exec"}
+	if req.Spec.SessionPolicy == v1.SessionPersistent && req.SessionID != "" {
+		args = append(args, "resume", req.SessionID)
+	}
 	if jsonOut {
 		args = append(args, "--json")
+	}
+	// codex refuses to run outside a git repo; the AgentFS workspace isn't one.
+	args = append(args, "--skip-git-repo-check")
+	if req.WorkingDir != "" {
+		args = append(args, "-C", req.WorkingDir)
+	}
+	// --output-last-message writes the final assistant message to a file we read
+	// back for a reliable Output (more robust than scraping the JSONL stream).
+	var lastMsgFile string
+	if f, ferr := os.CreateTemp("", "codex-last-*.txt"); ferr == nil {
+		lastMsgFile = f.Name()
+		_ = f.Close()
+		defer func() { _ = os.Remove(lastMsgFile) }()
+		args = append(args, "--output-last-message", lastMsgFile)
 	}
 	args = append(args, codexApprovalArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
 
 	resp, err := runCLI(ctx, req, "codex", args, h.Cmd)
-	if err != nil || !jsonOut {
+	if err != nil {
 		return resp, err
 	}
-	out, in, outTok, costMilli, calls := parseCodexJSONL(resp.Output)
-	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli, resp.ToolCalls = out, in, outTok, costMilli, calls
+	if jsonOut {
+		out, in, outTok, costMilli, calls := parseCodexJSONL(resp.Output)
+		resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli, resp.ToolCalls = out, in, outTok, costMilli, calls
+	}
+	// Prefer codex's own last-message file when it wrote one (most reliable Output).
+	if lastMsgFile != "" {
+		if b, rerr := os.ReadFile(lastMsgFile); rerr == nil {
+			if trimmed := bytes.TrimSpace(b); len(trimmed) > 0 {
+				resp.Output = trimmed
+			}
+		}
+	}
 	return resp, nil
 }
 

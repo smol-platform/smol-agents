@@ -192,6 +192,42 @@ func TestCodexHarness_ApprovalMapping(t *testing.T) {
 	}
 }
 
+// M3.21/M3.23: codex argv carries --skip-git-repo-check + -C <wd> +
+// --output-last-message, and resumes a persistent session via `exec resume <id>`.
+func TestCodexHarness_ArgvAndResume(t *testing.T) {
+	capture := func(req Request) []string {
+		var got []string
+		h := &CodexHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			got = args
+			return exec.CommandContext(ctx, "true")
+		}}
+		_, _ = h.Run(context.Background(), req)
+		return got
+	}
+
+	args := capture(Request{
+		Spec:       v1.HarnessSpec{Kind: v1.HarnessCodex},
+		Input:      json.RawMessage(`"hi"`),
+		WorkingDir: "/var/agentfs",
+		Budget:     v1.Budget{MaxWallClockSeconds: 10},
+	})
+	j := strings.Join(args, " ")
+	if args[0] != "exec" || !strings.Contains(j, "--skip-git-repo-check") ||
+		!strings.Contains(j, "-C /var/agentfs") || !strings.Contains(j, "--output-last-message ") {
+		t.Errorf("base argv missing expected flags: %q", j)
+	}
+
+	r := capture(Request{
+		Spec:      v1.HarnessSpec{Kind: v1.HarnessCodex, SessionPolicy: v1.SessionPersistent},
+		Input:     json.RawMessage(`"hi"`),
+		SessionID: "thread-7",
+		Budget:    v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if len(r) < 3 || r[0] != "exec" || r[1] != "resume" || r[2] != "thread-7" {
+		t.Errorf("resume argv = %v, want [exec resume thread-7 ...]", r)
+	}
+}
+
 func TestCodexHarness_RunsCommand(t *testing.T) {
 	h := &CodexHarness{Cmd: fakeCmd("codex-output")}
 	resp, _ := h.Run(context.Background(), Request{

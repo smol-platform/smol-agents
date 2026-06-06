@@ -43,6 +43,12 @@ type Request struct {
 	// it). For exact reproduction use record/replay. See
 	// docs/specs/determinism-and-replay.md.
 	Seed int64
+
+	// SessionID is a prior harness session/thread id to RESUME (M3.19/M3.23): the
+	// session worker threads it from AgentSessionStatus.HarnessSessionID across
+	// turns of a persistent session. Empty = a fresh session. Consumed by
+	// resumable harnesses (claude --resume, codex exec resume); ignored otherwise.
+	SessionID string
 }
 
 // Response is what a Harness returns. The executor folds it into
