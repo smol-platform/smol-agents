@@ -284,6 +284,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// isolation boundary (default kata-fc), not the cluster-default runtime.
 		builders.ApplyRunSandbox(desired, sbClass)
 
+		// M2.26: wire workspace-file egress onto the AgentFS serve sidecar (the
+		// only container with S3 creds; the harness/agent container gets none). The
+		// sidecar collects + uploads on shutdown and reports its manifest via its
+		// termination message — no new k8s client/RBAC. No-op without agentfs +
+		// spec.artifacts.
+		builders.ApplyArtifactCollection(desired, &agent.Spec, run.Namespace, run.Name)
+
 		// Bind the pod to its kata node pool (no-op for runc / no pool) and set a
 		// hard ActiveDeadlineSeconds backstop from the effective wall-clock budget
 		// (BudgetOverride wins over the Agent's budget).
@@ -335,6 +342,12 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, fmt.Errorf("create pod: %w", err)
 		}
 		r.markRunning(run)
+		// M2.26: mark artifact egress Pending when collection was wired, so status
+		// reflects that an upload is expected; foldArtifacts overwrites it with the
+		// sidecar's terminal verdict (Complete/Partial/Failed). Never affects State.
+		if artifactsRequested(desired) {
+			run.Status.Artifacts = &pure.ArtifactsStatus{State: pure.ArtifactStatePending}
+		}
 		logger.Info("created run pod", "agent", agent.Name)
 		return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 5 * time.Second})
 	}

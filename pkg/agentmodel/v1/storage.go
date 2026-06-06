@@ -278,6 +278,7 @@ type ArtifactSpec struct {
 
 // Artifact egress states, mirrored from the sidecar's collection manifest.
 const (
+	ArtifactStatePending  = "Pending"  // declared + requested; collection runs at shutdown
 	ArtifactStateComplete = "Complete" // every declared output uploaded
 	ArtifactStatePartial  = "Partial"  // some uploaded, some skipped/failed
 	ArtifactStateFailed   = "Failed"   // collection failed or the sidecar never reported
