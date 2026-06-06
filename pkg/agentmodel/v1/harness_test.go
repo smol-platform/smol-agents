@@ -64,6 +64,40 @@ func TestValidateHarness_HTTPRequiresURL(t *testing.T) {
 	}
 }
 
+// M3.18: MCP server validation — transport enum, stdio⇒command, http/sse⇒url,
+// internal-host URLs rejected, unique names.
+func TestValidateHarness_MCPServers(t *testing.T) {
+	mk := func(s MCPServerSpec) error {
+		return ValidateHarness(HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{MCPServers: []MCPServerSpec{s}}})
+	}
+	if err := mk(MCPServerSpec{Name: "fs", Transport: "stdio", Command: []string{"mcp-fs"}}); err != nil {
+		t.Errorf("valid stdio rejected: %v", err)
+	}
+	if err := mk(MCPServerSpec{Name: "api", Transport: "http", URL: "https://mcp.example.com"}); err != nil {
+		t.Errorf("valid http rejected: %v", err)
+	}
+	if err := mk(MCPServerSpec{Name: "x", Transport: "stdio"}); err == nil {
+		t.Error("stdio without command must be rejected")
+	}
+	if err := mk(MCPServerSpec{Name: "x", Transport: "http"}); err == nil {
+		t.Error("http without url must be rejected")
+	}
+	if err := mk(MCPServerSpec{Name: "x", Transport: "carrier-pigeon", Command: []string{"c"}}); err == nil {
+		t.Error("invalid transport must be rejected")
+	}
+	for _, bad := range []string{"http://169.254.169.254/x", "http://localhost/x", "http://10.0.0.5/x", "http://svc.internal/x"} {
+		if err := mk(MCPServerSpec{Name: "x", Transport: "http", URL: bad}); err == nil {
+			t.Errorf("internal-host MCP URL %q must be rejected", bad)
+		}
+	}
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{MCPServers: []MCPServerSpec{
+		{Name: "dup", Transport: "stdio", Command: []string{"a"}},
+		{Name: "dup", Transport: "stdio", Command: []string{"b"}},
+	}}}); err == nil {
+		t.Error("duplicate MCP server names must be rejected")
+	}
+}
+
 func TestValidateHarness_CLIDefaultsAccepted(t *testing.T) {
 	for _, k := range []HarnessKind{HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI} {
 		if err := ValidateHarness(HarnessSpec{Kind: k}); err != nil {

@@ -91,6 +91,16 @@ func BuildRunSpecConfigMapWithTools(run *amv1.AgentRun, agent *amv1.Agent, provi
 		}
 		data[runSpecToolsFile] = string(tj)
 	}
+	// claude MCP servers (M3.18): render the mcp-config beside the run spec so the
+	// claude harness can --mcp-config it (mounted at RunSpecMountPath).
+	if agent.Spec.Harness != nil && agent.Spec.Harness.Kind == pure.HarnessClaudeCode &&
+		agent.Spec.Harness.CLI != nil && len(agent.Spec.Harness.CLI.MCPServers) > 0 {
+		mj, err := RenderClaudeMCPConfig(agent.Spec.Harness.CLI.MCPServers)
+		if err != nil {
+			return nil, fmt.Errorf("render claude mcp config: %w", err)
+		}
+		data[pure.ClaudeMCPConfigFile] = string(mj)
+	}
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{

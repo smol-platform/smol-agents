@@ -216,6 +216,14 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 		settings, _ := json.Marshal(map[string]string{"apiKeyHelper": "/agent lease " + req.Spec.CLI.APIKeyHelperSecret})
 		args = append(args, "--settings", string(settings))
 	}
+	// MCP servers (M3.18): point claude at the operator-rendered mcp-config and
+	// auto-allow each server's mcp__<name>__* tools so they're usable headlessly.
+	if req.Spec.CLI != nil && len(req.Spec.CLI.MCPServers) > 0 {
+		args = append(args, "--mcp-config", v1.ClaudeMCPConfigPath)
+		for _, s := range req.Spec.CLI.MCPServers {
+			args = append(args, "--allowedTools", "mcp__"+s.Name+"__*")
+		}
+	}
 	args = append(args, claudePermArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)

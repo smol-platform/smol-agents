@@ -3,6 +3,8 @@ package v1
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -214,6 +216,39 @@ type HarnessCLISpec struct {
 	// named secret must be one the broker is configured to serve.
 	// +optional
 	APIKeyHelperSecret string `json:"apiKeyHelperSecret,omitempty"`
+
+	// MCPServers declares MCP servers claude-code connects to (M3.18). The operator
+	// renders them to a claude mcp-config file mounted with the run spec; the
+	// harness passes --mcp-config and auto-allows mcp__<name>__* tools. stdio
+	// servers must resolve to an operator-approved image (cluster allow-list,
+	// D7/D11); http/sse URLs to internal/private hosts are rejected at admission.
+	// +optional
+	MCPServers []MCPServerSpec `json:"mcpServers,omitempty"`
+}
+
+// ClaudeMCPConfigFile is the run-spec ConfigMap key (and filename) holding the
+// rendered claude mcp-config; ClaudeMCPConfigPath is where it mounts (must equal
+// builders.RunSpecMountPath + "/" + ClaudeMCPConfigFile — the harness reads it
+// without importing the operator builders). M3.18.
+const (
+	ClaudeMCPConfigFile = "claude-mcp.json"
+	ClaudeMCPConfigPath = "/etc/smol-agents/run/" + ClaudeMCPConfigFile
+)
+
+// MCPServerSpec declares one MCP server for claude-code (M3.18). Exactly one
+// transport: stdio (a Command, restricted to the operator's cluster allow-list)
+// or http/sse (a URL — internal/private hosts rejected at admission). Env carries
+// non-secret values; MCP secrets come through the broker, never inline.
+type MCPServerSpec struct {
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=stdio;http;sse
+	Transport string `json:"transport"`
+	// +optional
+	Command []string `json:"command,omitempty"`
+	// +optional
+	URL string `json:"url,omitempty"`
+	// +optional
+	Env []HarnessEnvVar `json:"env,omitempty"`
 }
 
 // HarnessHTTPSpec configures HTTP-based harnesses (pi, generic-http).
@@ -418,6 +453,7 @@ func ValidateHarness(h HarnessSpec) error {
 			default:
 				errs = append(errs, fmt.Errorf("harness.cli.approvalMode=%q is invalid", h.CLI.ApprovalMode))
 			}
+			errs = append(errs, validateMCPServers(h.CLI.MCPServers)...)
 		}
 	}
 	for i, e := range h.Env {
@@ -429,4 +465,57 @@ func ValidateHarness(h HarnessSpec) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateMCPServers checks claude MCP server declarations (M3.18): unique names,
+// stdio ⇒ command, http/sse ⇒ an http(s) URL to a non-internal host. The stdio
+// IMAGE allow-list (D7/D11) is enforced operator-side (it knows the cluster list).
+func validateMCPServers(servers []MCPServerSpec) []error {
+	var errs []error
+	seen := map[string]bool{}
+	for i, s := range servers {
+		if strings.TrimSpace(s.Name) == "" {
+			errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].name is required", i))
+		} else if seen[s.Name] {
+			errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d]: duplicate name %q", i, s.Name))
+		}
+		seen[s.Name] = true
+		switch s.Transport {
+		case "stdio":
+			if len(s.Command) == 0 {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d] (stdio) requires command", i))
+			}
+		case "http", "sse":
+			if strings.TrimSpace(s.URL) == "" {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d] (%s) requires url", i, s.Transport))
+				continue
+			}
+			u, err := url.Parse(s.URL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].url %q must be http(s)", i, s.URL))
+				continue
+			}
+			if isInternalMCPHost(u.Hostname()) {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].url %q targets an internal/private host (rejected)", i, s.URL))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].transport=%q is invalid (stdio|http|sse)", i, s.Transport))
+		}
+	}
+	return errs
+}
+
+// isInternalMCPHost reports whether host is loopback/private/link-local or an
+// internal name — a remote MCP URL pointing there is an SSRF/exfil surface the
+// agent's egress cage can't see (the gateway, not the pod, dials it).
+func isInternalMCPHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || host == "localhost" ||
+		strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+	return false
 }

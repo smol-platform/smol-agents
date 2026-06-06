@@ -202,6 +202,31 @@ func TestClaudeCodeHarness_SystemPromptAndResume(t *testing.T) {
 	}
 }
 
+// M3.18: with MCP servers declared, claude gets --mcp-config <path> + auto-allows
+// each server's mcp__<name>__* tools.
+func TestClaudeCodeHarness_MCPServers(t *testing.T) {
+	var got []string
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		got = args
+		return exec.CommandContext(ctx, "/bin/sh", "-c", `echo '{"result":"x"}'`)
+	}}
+	_, _ = h.Run(context.Background(), Request{
+		Spec: v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{
+			OutputFormat: "json",
+			MCPServers:   []v1.MCPServerSpec{{Name: "fs", Transport: "stdio", Command: []string{"mcp-fs"}}},
+		}},
+		Input:  json.RawMessage(`{"prompt":"hi"}`),
+		Budget: v1.Budget{MaxWallClockSeconds: 10},
+	})
+	j := strings.Join(got, " ")
+	if !strings.Contains(j, "--mcp-config "+v1.ClaudeMCPConfigPath) {
+		t.Errorf("missing --mcp-config: %q", j)
+	}
+	if !strings.Contains(j, "--allowedTools mcp__fs__*") {
+		t.Errorf("missing auto-allow mcp__fs__*: %q", j)
+	}
+}
+
 // M3.20: apiKeyHelperSecret makes claude run an apiKeyHelper (`agent lease <name>`)
 // for short-lived creds; absent → no --settings (static key).
 func TestClaudeCodeHarness_APIKeyHelper(t *testing.T) {

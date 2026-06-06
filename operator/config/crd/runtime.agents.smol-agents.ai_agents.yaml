@@ -166,6 +166,30 @@ spec:
                           description: 'CLI permission deny-list (e.g. claude --disallowedTools).'
                           items: { type: string }
                         apiKeyHelperSecret: { type: string, description: 'Opt into short-lived claude-code creds (M3.20): claude runs an apiKeyHelper that leases this broker secret via `agent lease`, re-fetching on TTL/401. Empty = static ANTHROPIC_API_KEY.' }
+                        mcpServers:
+                          type: array
+                          description: 'MCP servers claude-code connects to (M3.18); rendered to a --mcp-config file, mcp__<name>__* auto-allowed. stdio needs an operator-allow-listed image; http/sse URLs to internal hosts are rejected at admission.'
+                          items:
+                            type: object
+                            required: [name, transport]
+                            properties:
+                              name: { type: string }
+                              transport: { type: string, enum: [stdio, http, sse] }
+                              command: { type: array, items: { type: string }, description: 'stdio argv (the binary + args).' }
+                              url: { type: string, description: 'http/sse endpoint.' }
+                              env:
+                                type: array
+                                items:
+                                  type: object
+                                  required: [name]
+                                  properties:
+                                    name: { type: string }
+                                    value: { type: string }
+                                    secretRef:
+                                      type: object
+                                      properties:
+                                        secretName: { type: string }
+                                        key: { type: string }
                     http:
                       type: object
                       description: HTTP-harness transport settings (applies to generic-http/hermes).
