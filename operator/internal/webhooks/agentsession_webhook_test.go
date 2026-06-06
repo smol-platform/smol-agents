@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 func sessionWebhookWith(t *testing.T, objs ...client.Object) *agentSessionWebhook {
@@ -40,5 +41,27 @@ func TestAgentSessionWebhook_AgentRefMustExist(t *testing.T) {
 	empty := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
 	if _, err := w.ValidateCreate(context.Background(), empty); err == nil {
 		t.Errorf("empty agentRef must be rejected")
+	}
+}
+
+func TestAgentSessionWebhook_RejectsBadResourceQuantity(t *testing.T) {
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "t"}}
+	w := sessionWebhookWith(t, agent)
+
+	bad := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	bad.Spec.AgentRef = "alice"
+	bad.Spec.Resources = &pure.ResourceRequirements{Limits: map[string]string{"memory": "500x"}}
+	if _, err := w.ValidateCreate(context.Background(), bad); err == nil {
+		t.Errorf("unparseable resource quantity must be rejected at admission")
+	}
+
+	good := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "t"}}
+	good.Spec.AgentRef = "alice"
+	good.Spec.Resources = &pure.ResourceRequirements{
+		Limits:   map[string]string{"memory": "512Mi", "cpu": "500m"},
+		Requests: map[string]string{"memory": "256Mi"},
+	}
+	if _, err := w.ValidateCreate(context.Background(), good); err != nil {
+		t.Errorf("valid resource quantities must pass: %v", err)
 	}
 }

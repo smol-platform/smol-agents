@@ -457,6 +457,27 @@ type AgentSessionSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	MaxTurnInputBytes int32 `json:"maxTurnInputBytes,omitempty"`
+
+	// Resources is the compute request/limit for the resident session worker
+	// container (M1.11). A session has NO wall-clock deadline (the idle timeout
+	// bounds it), so right-sizing the worker is done here rather than via a
+	// budget. nil leaves the operator's default sizing. Quantities are strings
+	// (e.g. "500m", "512Mi") so the pure model stays free of k8s core/v1; the
+	// operator parses them.
+	// +optional
+	Resources *ResourceRequirements `json:"resources,omitempty"`
+}
+
+// ResourceRequirements is a pure (k8s-core-free) mirror of compute resources for
+// a container: a map from resource name (cpu, memory, …) to a quantity string.
+// The operator translates these into corev1.ResourceRequirements, parsing each
+// value with resource.ParseQuantity; the AgentSession webhook rejects an
+// unparseable quantity at admission.
+type ResourceRequirements struct {
+	// +optional
+	Limits map[string]string `json:"limits,omitempty"`
+	// +optional
+	Requests map[string]string `json:"requests,omitempty"`
 }
 
 // ConcurrentTurns is the turn-processing width (default 1 — the proven serial

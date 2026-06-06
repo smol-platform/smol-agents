@@ -24,3 +24,25 @@ func TestAgentSessionSpec_TurnAccessors(t *testing.T) {
 		t.Errorf("set values must pass through: %+v", set)
 	}
 }
+
+// M1.11: the hand-written DeepCopy of Resources must be independent — mutating the
+// copy's maps must not bleed back into the original.
+func TestAgentSessionSpec_ResourcesDeepCopy(t *testing.T) {
+	orig := &AgentSessionSpec{Resources: &ResourceRequirements{
+		Limits:   map[string]string{"memory": "512Mi"},
+		Requests: map[string]string{"cpu": "100m"},
+	}}
+	cp := orig.DeepCopy()
+	cp.Resources.Limits["memory"] = "1Gi"
+	cp.Resources.Requests["cpu"] = "999m"
+	if orig.Resources.Limits["memory"] != "512Mi" {
+		t.Errorf("deep copy aliased Limits: original mutated to %s", orig.Resources.Limits["memory"])
+	}
+	if orig.Resources.Requests["cpu"] != "100m" {
+		t.Errorf("deep copy aliased Requests: original mutated to %s", orig.Resources.Requests["cpu"])
+	}
+	// nil Resources copies cleanly.
+	if (&AgentSessionSpec{}).DeepCopy().Resources != nil {
+		t.Error("nil Resources must stay nil after DeepCopy")
+	}
+}

@@ -43,6 +43,16 @@ spec:
                 turnRetentionSeconds: { type: integer, minimum: 0, description: 'NATS turn-stream retention (0 = 3600s default).' }
                 turnHistoryLimit: { type: integer, minimum: 0, description: 'Max retained in-memory turns (0 = unbounded).' }
                 maxTurnInputBytes: { type: integer, minimum: 0, description: 'Per-turn input ceiling (0 = 1 MiB default).' }
+                resources:
+                  type: object
+                  description: 'Compute request/limit for the resident session worker container (M1.11). A session has no wall-clock deadline (idle timeout bounds it), so worker sizing is here, not via a budget. Quantities are strings (e.g. 500m, 512Mi); the operator parses them and the webhook rejects unparseable values.'
+                  properties:
+                    limits:
+                      type: object
+                      additionalProperties: { type: string }
+                    requests:
+                      type: object
+                      additionalProperties: { type: string }
               required: [agentRef]
             status:
               type: object

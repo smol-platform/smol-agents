@@ -4,7 +4,46 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
+
+func TestApplySessionResources(t *testing.T) {
+	// limits-only must leave the container's default requests untouched (merge).
+	c := &corev1.Container{Resources: corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
+	}}
+	ApplySessionResources(c, &pure.ResourceRequirements{Limits: map[string]string{"memory": "512Mi"}})
+	if got := c.Resources.Limits.Memory(); got.String() != "512Mi" {
+		t.Errorf("limit memory = %s, want 512Mi", got.String())
+	}
+	if got := c.Resources.Requests.Cpu(); got.String() != "100m" {
+		t.Errorf("default request cpu = %s, want preserved 100m", got.String())
+	}
+}
+
+func TestApplySessionResources_NilNoOp(t *testing.T) {
+	c := &corev1.Container{Resources: corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+	}}
+	ApplySessionResources(c, nil)
+	if got := c.Resources.Limits.Cpu(); got.String() != "1" {
+		t.Errorf("nil resources must be a no-op; limit cpu = %s", got.String())
+	}
+}
+
+func TestApplySessionResources_BadQuantitySkipped(t *testing.T) {
+	c := &corev1.Container{}
+	// "500x" does not parse → that entry is dropped, "1" survives.
+	ApplySessionResources(c, &pure.ResourceRequirements{Requests: map[string]string{"cpu": "1", "memory": "500x"}})
+	if got := c.Resources.Requests.Cpu(); got.String() != "1" {
+		t.Errorf("valid request cpu = %s, want 1", got.String())
+	}
+	if _, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+		t.Error("unparseable memory quantity must be skipped")
+	}
+}
 
 func TestApplyRunPodPlacement(t *testing.T) {
 	pod := &corev1.Pod{}

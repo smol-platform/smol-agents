@@ -180,6 +180,9 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		cmd = append(cmd, fmt.Sprintf("--history-limit=%d", h))
 	}
 	pod.Spec.Containers[0].Command = cmd
+	// Right-size the resident worker (M1.11). A session has no wall-clock deadline,
+	// so worker sizing is expressed here rather than via a run budget.
+	builders.ApplySessionResources(&pod.Spec.Containers[0], session.Spec.Resources)
 	// NATS turn transport (gateway path); without it the worker uses its on-disk
 	// inbox. AGENTSESSION_KEY mirrors sessionqueue.SessionKey(ns, name).
 	if r.NATSURL != "" {

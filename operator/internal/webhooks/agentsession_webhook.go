@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,6 +30,20 @@ type agentSessionWebhook struct{ client client.Client }
 func (w *agentSessionWebhook) validate(ctx context.Context, s *amv1.AgentSession) error {
 	if s.Spec.AgentRef == "" {
 		return fmt.Errorf("spec.agentRef is required")
+	}
+	// Resource quantities must parse (M1.11) — reject a bad "500x" at apply rather
+	// than silently dropping it on the worker pod build.
+	if r := s.Spec.Resources; r != nil {
+		for _, side := range []struct {
+			path string
+			m    map[string]string
+		}{{"limits", r.Limits}, {"requests", r.Requests}} {
+			for name, val := range side.m {
+				if _, err := resource.ParseQuantity(val); err != nil {
+					return fmt.Errorf("spec.resources.%s[%s]: %q is not a valid quantity: %w", side.path, name, val, err)
+				}
+			}
+		}
 	}
 	var agent amv1.Agent
 	err := w.client.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: s.Spec.AgentRef}, &agent)

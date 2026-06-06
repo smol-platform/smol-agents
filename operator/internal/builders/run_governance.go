@@ -4,6 +4,9 @@ import (
 	"math"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 // ApplyRunPodPlacement binds a raw AgentRun / AgentSession pod to its node pool:
@@ -56,4 +59,43 @@ func ApplyRunDeadline(pod *corev1.Pod, maxWallClockSeconds int32, multiplier flo
 		secs = 1
 	}
 	pod.Spec.ActiveDeadlineSeconds = &secs
+}
+
+// ApplySessionResources merges an AgentSession's pure quantity-string resource
+// mirror onto the worker container (M1.11). Only a side that the spec provides
+// overrides the container's default — so limits-only leaves the default requests
+// intact, and vice-versa. No-op when r is nil. An unparseable quantity is skipped
+// defensively (the AgentSession webhook rejects those at admission). A session
+// has no wall-clock deadline, so sizing the worker is done here, not via budget.
+func ApplySessionResources(c *corev1.Container, r *pure.ResourceRequirements) {
+	if r == nil {
+		return
+	}
+	if rl := toResourceList(r.Limits); rl != nil {
+		c.Resources.Limits = rl
+	}
+	if rl := toResourceList(r.Requests); rl != nil {
+		c.Resources.Requests = rl
+	}
+}
+
+// toResourceList parses a name→quantity-string map into a corev1.ResourceList,
+// skipping any value that does not parse. Returns nil for an empty/all-invalid
+// map so callers can leave the existing side untouched.
+func toResourceList(m map[string]string) corev1.ResourceList {
+	if len(m) == 0 {
+		return nil
+	}
+	rl := corev1.ResourceList{}
+	for k, v := range m {
+		q, err := resource.ParseQuantity(v)
+		if err != nil {
+			continue
+		}
+		rl[corev1.ResourceName(k)] = q
+	}
+	if len(rl) == 0 {
+		return nil
+	}
+	return rl
 }
