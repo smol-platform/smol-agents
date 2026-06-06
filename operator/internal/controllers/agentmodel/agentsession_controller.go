@@ -138,6 +138,11 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
 	np := builders.BuildAgentSessionEgressPolicyWithPlan(synthetic.Name, session.Namespace,
 		map[string]string{"agents.smol-agents.ai/run": synthetic.Name}, netPlan)
+	// M1.18: allow the kube-apiserver endpoints (blocked by the default floor on
+	// public-IP clusters) so a session worker can reach the apiserver.
+	if rule := apiserverEgressRule(ctx, r.Client); rule != nil {
+		np.Spec.Egress = append(np.Spec.Egress, *rule)
+	}
 	if err := r.ensureOwned(ctx, session, np); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session egress: %w", err)
 	}

@@ -18,6 +18,7 @@
 package builders
 
 import (
+	"fmt"
 	"net/netip"
 
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +42,39 @@ var clusterInternalCIDRs = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/
 // metadataBlockedCIDR is the link-local range (incl. 169.254.169.254, the
 // AWS/GCP/Azure instance-metadata endpoint): never reachable from a run pod.
 const metadataBlockedCIDR = "169.254.0.0/16"
+
+// APIServerEgressRule allows egress to the kube-apiserver endpoints on apiPort
+// (M1.18). The default floor permits public IPs only on 80/443, so an apiserver
+// reached via a node's PUBLIC IP:6443 (single-node / public-IP clusters, e.g.
+// k0s on a cloud VM) is blocked — breaking any run that must call the apiserver
+// (notably A2A, which creates child AgentRuns). The reconciler discovers the
+// endpoint IPs from the kubernetes EndpointSlice; this renders the allow rule.
+// Returns nil for no valid IPs, leaving the floor unchanged.
+func APIServerEgressRule(ips []string, apiPort int32) *networkingv1.NetworkPolicyEgressRule {
+	peers := make([]networkingv1.NetworkPolicyPeer, 0, len(ips))
+	for _, ip := range ips {
+		addr, err := netip.ParseAddr(ip)
+		if err != nil {
+			continue
+		}
+		bits := 32
+		if addr.Is6() {
+			bits = 128
+		}
+		peers = append(peers, networkingv1.NetworkPolicyPeer{
+			IPBlock: &networkingv1.IPBlock{CIDR: fmt.Sprintf("%s/%d", ip, bits)},
+		})
+	}
+	if len(peers) == 0 {
+		return nil
+	}
+	tcp := corev1.ProtocolTCP
+	port := intstr.FromInt32(apiPort)
+	return &networkingv1.NetworkPolicyEgressRule{
+		To:    peers,
+		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
+	}
+}
 
 // ApplyRunSandbox pins the run pod's RuntimeClass to a resolved, hardened class.
 // An empty class or "runc" leaves RuntimeClassName nil (cluster-default runtime)

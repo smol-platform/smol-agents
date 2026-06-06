@@ -77,6 +77,12 @@ rules:
     resources: [networkpolicies]
     verbs: [get, list, watch, create, update, patch, delete]
 
+  # M1.18: discover kube-apiserver endpoints to allow them through the egress
+  # floor (apiserver at <node-ip>:6443 on public-IP clusters).
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+
   # Workload feature (Deployment, StatefulSet, Knative Service)
   - apiGroups: [apps]
     resources: [deployments, statefulsets, daemonsets]

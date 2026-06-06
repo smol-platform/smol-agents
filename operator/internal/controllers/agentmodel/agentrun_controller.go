@@ -627,6 +627,11 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 	run.Status.Networks = netPlan.Networks
 	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
 	np := builders.BuildAgentRunEgressPolicyWithPlan(run, netPlan)
+	// M1.18: allow the kube-apiserver endpoints (e.g. <node-ip>:6443 on a
+	// public-IP cluster), which the default floor would otherwise block.
+	if rule := apiserverEgressRule(ctx, r.Client); rule != nil {
+		np.Spec.Egress = append(np.Spec.Egress, *rule)
+	}
 	if err := ctrl.SetControllerReference(run, np, r.Scheme); err != nil {
 		return err
 	}
