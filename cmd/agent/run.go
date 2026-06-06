@@ -59,6 +59,12 @@ func runAgentRun(args []string) int {
 	// the kind=agent (A2A) invoker when the pod has in-cluster API access (M3 A1);
 	// without it kind=agent stays fail-closed.
 	toolInvokers := invokers.WireAgentInvoker(invokers.Default(leaser, nil))
+
+	// pi-mono (M4.16): start the in-pod pi-bridge before the run so the harness's
+	// HTTP call to 127.0.0.1:8848 lands; SIGTERM it on exit. No-op for other kinds.
+	stopBridge := maybeStartPiBridge(ctx, *dir)
+	defer stopBridge()
+
 	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser),
 		agentruntime.WithInvokers(toolInvokers))
 	wire := agentruntime.ResultToWire(res, runErr)

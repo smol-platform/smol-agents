@@ -238,6 +238,17 @@ spec:
                               type: array
                               description: Host allow-list for image URLs when allowURLs is true.
                               items: { type: string }
+                    piMono:
+                      type: object
+                      description: 'pi-mono harness config (kind=pi-mono): the pi CLI driven over HTTP via the in-pod pi-bridge (M4.15).'
+                      properties:
+                        model: { type: string, description: 'pi model (passed to pi --model).' }
+                        provider: { type: string, description: 'Model provider the bridge configures for pi.' }
+                        mode: { type: string, description: 'pi run mode; defaults to json (required for token/tool parsing).' }
+                        url: { type: string, description: 'Bridge endpoint override (default http://127.0.0.1:8848/run).' }
+                        bridgePort: { type: integer, minimum: 1, description: 'In-pod bridge port (default 8848).' }
+                        extraArgs: { type: array, items: { type: string }, description: 'Extra args appended to the pi invocation.' }
+                        activeDeadlineSeconds: { type: integer, minimum: 0, description: 'Pod-level wall-clock cap for a pi run (M4.18); a runaway prompt is killed -> DeadlineExceeded.' }
                 storage:
                   type: object
                   description: |-

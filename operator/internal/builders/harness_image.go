@@ -22,6 +22,9 @@ var perKindHarnessImage = map[pure.HarnessKind]string{
 	pure.HarnessCodex:      "harness-codex",
 	pure.HarnessAider:      "harness-aider",
 	pure.HarnessGoose:      "harness-goose",
+	// pi-mono bundles /agent + /pi-bridge + the pi CLI (M4.17). Unlike the other
+	// HTTP kinds it needs the CLI on-image, so it has a per-kind bundle.
+	pure.HarnessPiMono: "harness-pi-mono",
 }
 
 // HarnessImage resolves the container image for an Agent's harness:

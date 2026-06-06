@@ -25,6 +25,7 @@ func TestHarnessImage(t *testing.T) {
 		{"codex default bundle", harnessAgent(pure.HarnessCodex, "", ""), "/harness-codex:0.2.1"},
 		{"aider default bundle", harnessAgent(pure.HarnessAider, "", ""), "/harness-aider:0.2.1"},
 		{"goose default bundle", harnessAgent(pure.HarnessGoose, "", ""), "/harness-goose:0.2.1"},
+		{"pi-mono default bundle", harnessAgent(pure.HarnessPiMono, "", ""), "/harness-pi-mono:0.2.1"},
 		{"version pins the tag", harnessAgent(pure.HarnessClaudeCode, "", "1.2.3"), "/harness-claude-code:1.2.3"},
 		{"explicit image wins", harnessAgent(pure.HarnessClaudeCode, "example.com/my/claude:dev", "1.2.3"), "example.com/my/claude:dev"},
 		{"hermes (HTTP) uses base agent image", harnessAgent(pure.HarnessHermes, "", ""), "/agent:0.2.1"},

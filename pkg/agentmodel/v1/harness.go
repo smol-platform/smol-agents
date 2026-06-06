@@ -145,6 +145,37 @@ type HarnessSpec struct {
 	// (kind=claude-code|codex|aider|goose|generic-cli).
 	// +optional
 	CLI *HarnessCLISpec `json:"cli,omitempty"`
+
+	// PiMono carries config for kind=pi-mono (the pi coding agent driven over
+	// HTTP via the in-pod pi-bridge, M4.15). Ignored for other kinds.
+	// +optional
+	PiMono *HarnessPiMonoSpec `json:"piMono,omitempty"`
+}
+
+// HarnessPiMonoSpec configures the pi-mono harness (M4.15): the in-pod pi-bridge
+// wraps the pi CLI and the harness drives it over HTTP. pi-mono is the first
+// CLI-family harness to report honest tokens + tool-calls (parsed from pi's
+// --mode json output by the bridge).
+type HarnessPiMonoSpec struct {
+	// Model is the pi model to run (passed to pi --model). +optional
+	Model string `json:"model,omitempty"`
+	// Provider names the model provider the bridge configures for pi. +optional
+	Provider string `json:"provider,omitempty"`
+	// Mode is the pi run mode (default "json", required for token/tool parsing).
+	// +optional
+	Mode string `json:"mode,omitempty"`
+	// URL overrides the bridge endpoint (default http://127.0.0.1:8848/run).
+	// +optional
+	URL string `json:"url,omitempty"`
+	// BridgePort is the in-pod bridge port (default 8848). +optional
+	// +kubebuilder:validation:Minimum=1
+	BridgePort int32 `json:"bridgePort,omitempty"`
+	// ExtraArgs are appended to the pi invocation. +optional
+	ExtraArgs []string `json:"extraArgs,omitempty"`
+	// ActiveDeadlineSeconds caps a single pi run's wall-clock at the pod level
+	// (M4.18); a runaway pi prompt is killed → DeadlineExceeded. +optional
+	// +kubebuilder:validation:Minimum=0
+	ActiveDeadlineSeconds int32 `json:"activeDeadlineSeconds,omitempty"`
 }
 
 // HarnessEnvVar is a typed env var with optional secret broker reference.
@@ -450,6 +481,18 @@ func ValidateHarness(h HarnessSpec) error {
 			r := h.HTTP.Retry
 			if r.MaxAttempts < 0 || r.BackoffBaseMs < 0 || r.MaxBackoffMs < 0 {
 				errs = append(errs, errors.New("harness.http.retry values must be ≥ 0"))
+			}
+		}
+	case HarnessPiMono:
+		// pi-mono talks to the in-pod pi-bridge: no URL is required (it defaults
+		// to http://127.0.0.1:8848/run). Mode, when set, must be json (the only
+		// mode that yields honest tokens + tool-calls).
+		if h.PiMono != nil {
+			if m := h.PiMono.Mode; m != "" && m != "json" {
+				errs = append(errs, fmt.Errorf("harness.piMono.mode=%q is invalid (only json)", m))
+			}
+			if h.PiMono.BridgePort < 0 {
+				errs = append(errs, errors.New("harness.piMono.bridgePort must be ≥ 0"))
 			}
 		}
 	case HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI:

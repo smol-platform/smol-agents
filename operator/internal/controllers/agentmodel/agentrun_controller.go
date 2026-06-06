@@ -307,11 +307,20 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// hard ActiveDeadlineSeconds backstop from the effective wall-clock budget
 		// (BudgetOverride wins over the Agent's budget).
 		builders.ApplyRunPodPlacement(desired, placement)
-		effWall := agent.Spec.Budget.MaxWallClockSeconds
-		if run.Spec.BudgetOverride != nil && run.Spec.BudgetOverride.MaxWallClockSeconds > 0 {
-			effWall = run.Spec.BudgetOverride.MaxWallClockSeconds
+		// An explicit per-harness ActiveDeadlineSeconds (pi-mono, M4.18) wins over
+		// the budget-derived backstop; else the deadline is MaxWallClock * grace
+		// (BudgetOverride wins over the Agent's budget). DeadlineExceeded maps to a
+		// terminal run (terminationReason).
+		if h := agent.Spec.Harness; h != nil && h.PiMono != nil && h.PiMono.ActiveDeadlineSeconds > 0 {
+			secs := int64(h.PiMono.ActiveDeadlineSeconds)
+			desired.Spec.ActiveDeadlineSeconds = &secs
+		} else {
+			effWall := agent.Spec.Budget.MaxWallClockSeconds
+			if run.Spec.BudgetOverride != nil && run.Spec.BudgetOverride.MaxWallClockSeconds > 0 {
+				effWall = run.Spec.BudgetOverride.MaxWallClockSeconds
+			}
+			builders.ApplyRunDeadline(desired, effWall, r.RunDeadlineMultiplier)
 		}
-		builders.ApplyRunDeadline(desired, effWall, r.RunDeadlineMultiplier)
 
 		// Attach filesystem MemoryRetriever mount if referenced (R-MEM-FS-2).
 		mountInput, mountEnabled, mountErr := memoryFSRetriever(ctx, r.Client, run)
