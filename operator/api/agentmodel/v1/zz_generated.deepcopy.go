@@ -656,3 +656,59 @@ func (in *DynamicCredentialBackendList) DeepCopyObject() runtime.Object {
 	}
 	return nil
 }
+
+// AttachGrant deepcopy (M4.6) — hand-written (CRD-drift rule: do not blind
+// controller-gen, which reorders the whole file). Spec/Status carry a
+// *metav1.Time so they use DeepCopyInto, not a value copy.
+func (in *AttachGrant) DeepCopyInto(out *AttachGrant) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *AttachGrant) DeepCopy() *AttachGrant {
+	if in == nil {
+		return nil
+	}
+	out := new(AttachGrant)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *AttachGrant) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *AttachGrantList) DeepCopyInto(out *AttachGrantList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]AttachGrant, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *AttachGrantList) DeepCopy() *AttachGrantList {
+	if in == nil {
+		return nil
+	}
+	out := new(AttachGrantList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *AttachGrantList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}

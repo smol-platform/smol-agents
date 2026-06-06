@@ -1822,3 +1822,54 @@ func (in *DynamicCredentialBackendStatus) DeepCopy() *DynamicCredentialBackendSt
 	in.DeepCopyInto(out)
 	return out
 }
+
+// DeepCopyInto is a hand-written deepcopy (M4.6 AttachGrant). CRD-drift rule: do
+// not blind controller-gen, which reorders the whole file.
+func (in *AttachGrant) DeepCopyInto(out *AttachGrant) {
+	*out = *in
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *AttachGrant) DeepCopy() *AttachGrant {
+	if in == nil {
+		return nil
+	}
+	out := new(AttachGrant)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *AttachGrantSpec) DeepCopyInto(out *AttachGrantSpec) {
+	*out = *in
+	if in.ExpiresAt != nil {
+		in, out := &in.ExpiresAt, &out.ExpiresAt
+		*out = (*in).DeepCopy()
+	}
+}
+
+func (in *AttachGrantSpec) DeepCopy() *AttachGrantSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(AttachGrantSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *AttachGrantStatus) DeepCopyInto(out *AttachGrantStatus) {
+	*out = *in
+	if in.LastAttachTime != nil {
+		in, out := &in.LastAttachTime, &out.LastAttachTime
+		*out = (*in).DeepCopy()
+	}
+}
+
+func (in *AttachGrantStatus) DeepCopy() *AttachGrantStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(AttachGrantStatus)
+	in.DeepCopyInto(out)
+	return out
+}
