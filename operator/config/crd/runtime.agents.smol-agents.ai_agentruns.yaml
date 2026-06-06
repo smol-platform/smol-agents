@@ -54,6 +54,7 @@ spec:
               properties:
                 agentRef: { type: string, minLength: 1, description: 'Name of the Agent in this namespace to execute.' }
                 sessionRef: { type: string, description: 'Optionally associates the run with an AgentSession (for grouping/checkpointing).' }
+                resumeSessionID: { type: string, description: 'Resume a prior harness conversation (M3.19): a session id from an earlier run''s status.harnessSessionID (claude --resume / codex exec resume). Empty = fresh session.' }
                 input:
                   type: object
                   description: |-
@@ -126,6 +127,7 @@ spec:
                 endedAt: { type: string, format: date-time, description: 'When the run reached a terminal state.' }
                 terminationReason: { type: string, description: 'Machine-readable reason for a terminal state (e.g. budget exceeded, error).' }
                 reason: { type: string, description: 'Short machine-readable cause for the current State (e.g. ConcurrencyLimited, SandboxNotReady).' }
+                harnessSessionID: { type: string, description: 'Harness session/thread id from this run (claude session_id, codex thread); pass to a later run''s spec.resumeSessionID to resume (M3.19).' }
                 networks: { type: array, items: { type: string }, description: 'AgentNetworks bound to this run (M1.19); empty = default-deny floor only.' }
                 egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }
                 pendingAction:

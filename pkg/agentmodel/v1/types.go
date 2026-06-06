@@ -256,6 +256,12 @@ type AgentRunSpec struct {
 	// SessionRef optionally associates this run with an AgentSession.
 	SessionRef string `json:"sessionRef,omitempty"`
 
+	// ResumeSessionID resumes a prior harness conversation (M3.19): a claude-code
+	// session_id / codex thread captured in an earlier run's
+	// status.harnessSessionID. The harness reloads that transcript (--resume /
+	// exec resume). Empty = a fresh session. +optional
+	ResumeSessionID string `json:"resumeSessionID,omitempty"`
+
 	// Input is the run's JSON payload. It rides the run spec, which the operator
 	// marshals into a ~1 MiB ConfigMap — use Inputs[].secretRef for large or
 	// secret payloads instead of inlining them here.
@@ -406,6 +412,11 @@ type RunStatus struct {
 	// the agentfs-sidecar reported plus per-file refs. Observability-only; nil
 	// when the Agent declares no spec.artifacts. +optional
 	Artifacts *ArtifactsStatus `json:"artifacts,omitempty"`
+
+	// HarnessSessionID is the harness's own session/thread id from this run
+	// (claude-code session_id, codex thread) — surfaced so a later run can resume
+	// the conversation via spec.resumeSessionID (M3.19). +optional
+	HarnessSessionID string `json:"harnessSessionID,omitempty"`
 
 	// Networks are the AgentNetworks bound to this run (M1.19), empty when only
 	// the default-deny egress floor applies. +optional

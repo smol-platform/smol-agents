@@ -20,7 +20,7 @@ import (
 type HarnessRunner interface {
 	RunHarness(ctx context.Context, spec v1.HarnessSpec, instructions string,
 		input json.RawMessage, workingDir string, env map[string]string,
-		budget v1.Budget, seed int64) (harness.Response, error)
+		budget v1.Budget, seed int64, sessionID string) (harness.Response, error)
 }
 
 // SecretLeaser leases a named secret from the broker so the executor can
@@ -47,6 +47,11 @@ type Executor struct {
 	// Secrets resolves harness env secretRef entries via the broker. Optional;
 	// required only when an Agent declares a harness env with a secretRef.
 	Secrets SecretLeaser
+
+	// ResumeSessionID, when set, is passed to the harness to resume a prior
+	// conversation (M3.19: claude --resume / codex exec resume). Sourced from
+	// AgentRunSpec.ResumeSessionID by RunTurn.
+	ResumeSessionID string
 }
 
 // New returns a default Executor. Caller must set LLM (for Mode=loop)
@@ -66,6 +71,10 @@ type Result struct {
 	Usage             v1.Usage
 	TerminationReason string
 	Output            json.RawMessage
+	// SessionID is the harness's own session/thread id when it reports one
+	// (claude-code session_id, codex thread), captured so a later run can resume
+	// the conversation (M3.19). Empty for loop mode / harnesses with no session.
+	SessionID string
 }
 
 // Run executes the agent against `input` and returns the Result. The
@@ -408,7 +417,7 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 
 	startedAt := e.Clock.Now()
 	resp, err := e.Harness.RunHarness(ctx, *agent.Spec.Harness, agent.Spec.Instructions,
-		input, agent.Spec.EffectiveWorkingDir(), env, agent.Spec.Budget, seed)
+		input, agent.Spec.EffectiveWorkingDir(), env, agent.Spec.Budget, seed, e.ResumeSessionID)
 	endedAt := e.Clock.Now()
 
 	usage := v1.Usage{
@@ -447,10 +456,11 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 		}, nil
 	}
 	return Result{
-		Phase:  v1.PhaseCompleted,
-		Steps:  []v1.Step{step},
-		Usage:  usage,
-		Output: harnessOutputJSON(resp.Output),
+		Phase:     v1.PhaseCompleted,
+		Steps:     []v1.Step{step},
+		Usage:     usage,
+		Output:    harnessOutputJSON(resp.Output),
+		SessionID: resp.SessionID, // captured for resume (M3.19)
 	}, nil
 }
 

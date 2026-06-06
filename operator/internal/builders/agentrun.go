@@ -129,6 +129,14 @@ func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Con
 				env = append(env, corev1.EnvVar{Name: e.Name, Value: e.Value})
 			}
 		}
+		// Durable claude session store (M3.19): a persistent claude-code agent with
+		// AgentFS keeps its session transcripts under HOME on the workspace, so
+		// --resume can reload a prior conversation across runs.
+		if agent.Spec.Harness.Kind == pure.HarnessClaudeCode &&
+			agent.Spec.Harness.SessionPolicy == pure.SessionPersistent &&
+			agent.Spec.Storage != nil && agent.Spec.Storage.AgentFS != nil {
+			env = append(env, corev1.EnvVar{Name: "HOME", Value: agent.Spec.EffectiveWorkingDir() + "/.claude-home"})
+		}
 	}
 	return corev1.Container{
 		Name:            "harness",

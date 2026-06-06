@@ -826,6 +826,9 @@ func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentR
 	run.Status.Steps = pure.RedactSteps(rr.Steps, pats)
 	run.Status.Usage = rr.Usage
 	run.Status.Trace = rr.Trace // compact trace metadata (M2.2)
+	if rr.SessionID != "" {
+		run.Status.HarnessSessionID = rr.SessionID // M3.19: surface for run-to-run resume
+	}
 	switch {
 	case rr.Error != "":
 		run.Status.TerminationReason = rr.Error

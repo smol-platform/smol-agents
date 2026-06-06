@@ -30,7 +30,7 @@ func NewRegistryRunner(r *harness.Registry) *RegistryRunner {
 func (r *RegistryRunner) RunHarness(
 	ctx context.Context, spec v1.HarnessSpec, instructions string,
 	input json.RawMessage, workingDir string, env map[string]string,
-	budget v1.Budget, seed int64,
+	budget v1.Budget, seed int64, sessionID string,
 ) (harness.Response, error) {
 	if r == nil || r.Registry == nil {
 		r.Registry = harness.Default()
@@ -47,5 +47,6 @@ func (r *RegistryRunner) RunHarness(
 		Env:          env,
 		Budget:       budget,
 		Seed:         seed,
+		SessionID:    sessionID,
 	})
 }

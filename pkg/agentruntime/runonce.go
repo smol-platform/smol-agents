@@ -38,6 +38,9 @@ type RunResult struct {
 	// Trace is compact step/tool-call metadata computed from Steps before any
 	// clamp, so the counts survive even when Steps are elided (M2.2).
 	Trace *v1.TraceSummary `json:"trace,omitempty"`
+	// SessionID is the harness's session/thread id (M3.19), folded into
+	// AgentRunStatus.HarnessSessionID so a later run can resume the conversation.
+	SessionID string `json:"sessionID,omitempty"`
 }
 
 // RunOnce loads the Agent + AgentRunSpec from dir and executes one bounded run.
@@ -122,6 +125,7 @@ func RunTurn(ctx context.Context, agent v1.Agent, run v1.AgentRunSpec, leaser Se
 	exec.Harness = NewRegistryRunner(harness.Default())
 	exec.Secrets = leaser
 	exec.LLM = llm
+	exec.ResumeSessionID = run.ResumeSessionID // M3.19: resume a prior harness session
 
 	// Loop-mode tool catalog + invokers (M2.13): the operator ships resolved Tool
 	// specs as tools.json (LoadTools) and cmd/agent injects invokers.Default
@@ -156,6 +160,7 @@ func ResultToWire(res Result, runErr error) RunResult {
 		Usage:             res.Usage,
 		TerminationReason: res.TerminationReason,
 		Trace:             &v1.TraceSummary{StepCount: int32(len(res.Steps)), ToolCallCount: toolCalls},
+		SessionID:         res.SessionID,
 	}
 	if runErr != nil {
 		w.Error = runErr.Error()
