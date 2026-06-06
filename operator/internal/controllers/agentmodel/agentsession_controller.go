@@ -2,8 +2,11 @@ package agentmodel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,6 +30,7 @@ import (
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
 )
 
@@ -243,17 +247,74 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	phase := pure.PhasePending
 	reason, message := "WorkerStarting", "session worker Deployment not yet Available"
+	requeue := 15 * time.Second // Pending: poll for the worker to become Available
 	if r.deployAvailable(ctx, deploy.Namespace, deploy.Name) {
 		phase, reason, message = pure.PhaseRunning, "Reconciled", ""
+		// M2.19: mirror the worker's live usage/turn counters into status
+		// (best-effort), and keep refreshing them on a ~30s cadence.
+		r.mirrorWorkerStatus(ctx, session, deploy.Name)
+		requeue = 30 * time.Second
 	}
 	logger.Info("reconciled session", "phase", phase)
-	// Requeue while not yet available so phase advances even without a Deployment
-	// status event reaching us.
-	requeue := time.Duration(0)
-	if phase == pure.PhasePending {
-		requeue = 15 * time.Second
-	}
 	return r.writeStatus(ctx, session, phase, reason, message, requeue)
+}
+
+// mirrorWorkerStatus scrapes a Running worker pod's /status endpoint and folds the
+// SessionSummary into status (usage/turns/failedTurns/lastTurnTime). Best-effort:
+// no reachable pod / a scrape error leaves the prior status untouched (M2.19).
+func (r *AgentSessionReconciler) mirrorWorkerStatus(ctx context.Context, session *amv1.AgentSession, deployName string) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(session.Namespace),
+		client.MatchingLabels{"agents.smol-agents.ai/run": deployName}); err != nil {
+		return
+	}
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Status.Phase != corev1.PodRunning || p.Status.PodIP == "" {
+			continue
+		}
+		if sum, err := fetchSessionSummary(ctx, p.Status.PodIP); err == nil {
+			applySummaryToStatus(&session.Status, sum)
+			return
+		}
+	}
+}
+
+// applySummaryToStatus folds a worker SessionSummary into AgentSessionStatus
+// field-wise (Usage is verbatim CumulativeUsage — NOT Usage.Add). Pure + tested.
+func applySummaryToStatus(st *pure.AgentSessionStatus, sum agentruntime.SessionSummary) {
+	st.Usage = sum.Usage
+	st.Turns = int64(sum.Turns)
+	st.FailedTurns = int64(sum.FailedTurns)
+	if sum.LastTurnTime != nil {
+		t := metav1.NewTime(*sum.LastTurnTime)
+		st.LastTurnTime = &t
+	}
+}
+
+// fetchSessionSummary GETs the worker's /status endpoint (a short-timeout,
+// in-cluster read of the session's own non-secret counters).
+func fetchSessionSummary(ctx context.Context, podIP string) (agentruntime.SessionSummary, error) {
+	url := "http://" + podIP + agentruntime.SessionStatusPort + "/status"
+	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(rctx, http.MethodGet, url, nil)
+	if err != nil {
+		return agentruntime.SessionSummary{}, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return agentruntime.SessionSummary{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return agentruntime.SessionSummary{}, fmt.Errorf("session status: http %d", resp.StatusCode)
+	}
+	var sum agentruntime.SessionSummary
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&sum); err != nil {
+		return agentruntime.SessionSummary{}, err
+	}
+	return sum, nil
 }
 
 // ensureOwned sets the session as controller-owner and creates obj if absent

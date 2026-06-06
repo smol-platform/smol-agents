@@ -101,6 +101,12 @@ func DefaultSessionSummaryPath(workspace string) string {
 	return filepath.Join(workspace, ".smol-session", "status-summary.json")
 }
 
+// SessionStatusPort is the worker's read-only status endpoint (GET /status →
+// SessionSummary JSON). The operator scrapes it to mirror usage/turn counters
+// into AgentSession.status (M2.19) — a single source of truth shared by the
+// worker (cmd/agent serve-session) and the operator controller.
+const SessionStatusPort = ":9091"
+
 // SessionStore persists SessionState to Path atomically. Path should live under
 // the AgentFS workspace so checkpoints ride the existing durable-storage
 // sidecar (kopia/S3) and are restored by its init container on a fresh pod.

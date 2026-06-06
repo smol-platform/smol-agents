@@ -91,6 +91,10 @@ func runServeSession(args []string) int {
 		logger.Info("turn transport: NATS", "sessionKey", *sessionKey)
 	}
 
+	// Read-only status endpoint the operator scrapes to mirror usage/turn counters
+	// into AgentSession.status (M2.19); serves the checkpointed summary file.
+	go serveSessionStatus(ctx, agentruntime.SessionStatusPort, agentruntime.DefaultSessionSummaryPath(ws), logger.Error)
+
 	logger.Info("serving AgentSession", "workspace", ws, "poll", poll.String(), "idleTimeout", idle.String())
 	if err := w.Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("session worker", "err", err)
