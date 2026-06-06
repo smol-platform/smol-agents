@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -130,6 +131,12 @@ func main() {
 		Dynamic:      dynamic,
 		TraTVerifier: verifier,
 		CredPolicy:   credPolicy,
+		// Interactive-caller policy (M4.12): classify each UDS peer (agent vs a
+		// PTY-spawned driver shell) and apply the knob. Empty env = allow-audited
+		// (the default): a driver shell still leases but the access is audited;
+		// set to "deny" to refuse leases to interactive callers.
+		InteractivePolicy: secrets.InteractiveCallerPolicy(os.Getenv("SMOL_AGENTS_INTERACTIVE_CALLER_POLICY")),
+		ClassifyConn:      func(c net.Conn) secrets.CallerClass { return secrets.PeerCallerClass(c, secrets.ProcfsAncestry{}) },
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

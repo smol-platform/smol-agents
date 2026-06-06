@@ -67,7 +67,7 @@ func TestProperty_LeaseImpliesAuthorized(t *testing.T) {
 			callerIdx := rapid.IntRange(0, len(ids)-1).Draw(t, "caller")
 			secretIdx := rapid.IntRange(0, len(secretNames)-1).Draw(t, "secret")
 			ttl := time.Duration(rapid.IntRange(1, int(s.MaxLeaseTTL/time.Second)+10).Draw(t, "ttl")) * time.Second
-			resp := s.dispatch(context.Background(), ids[callerIdx], request{Kind: reqLease, Name: secretNames[secretIdx], TTL: ttl})
+			resp := s.dispatch(context.Background(), ids[callerIdx], CallerAgent, request{Kind: reqLease, Name: secretNames[secretIdx], TTL: ttl})
 
 			// Invariant 1: if a lease was issued, the policy must allow.
 			if resp.Lease != nil {

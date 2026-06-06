@@ -1,0 +1,119 @@
+# Bundled self-hosted OIDC IdP (M4.5, D9): Dex is the human-identity rail for
+# driver-mode terminal attach. cmd/agentterminal verifies Dex-issued ID tokens
+# (JWKSVerifier) before resolving an AttachGrant. SPIFFE remains the MACHINE
+# identity rail; this is the HUMAN one — keep the trust domains documented and
+# distinct.
+#
+# DEPLOYMENT-GATED: this manifest is authored, not live-verified here (no cluster
+# with Dex in this environment). The reference config below uses a static-password
+# connector for a test user; production swaps it for a real upstream connector
+# (GitHub/Google/LDAP). Dex images are multiarch (ghcr.io/dexidp/dex).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: smol-oidc
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-config
+  namespace: smol-oidc
+data:
+  config.yaml: |
+    issuer: https://dex.smol-oidc.svc.cluster.local:5556/dex
+    storage:
+      type: kubernetes
+      config:
+        inCluster: true
+    web:
+      https: 0.0.0.0:5556
+      tlsCert: /etc/dex/tls/tls.crt
+      tlsKey: /etc/dex/tls/tls.key
+    oauth2:
+      skipApprovalScreen: true
+    staticClients:
+      - id: agentterminal
+        name: Terminal Attach Gateway
+        public: true
+        redirectURIs:
+          - http://localhost:8000/callback
+    # Static-password connector for a test user (production: real connector).
+    enablePasswordDB: true
+    staticPasswords:
+      - email: "tester@smol-agents.ai"
+        # bcrypt of "password" — TEST ONLY; replace before any real use.
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4G"
+        username: "tester"
+        userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  namespace: smol-oidc
+  labels: { app.kubernetes.io/name: dex }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: dex }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: dex }
+    spec:
+      serviceAccountName: dex
+      containers:
+        - name: dex
+          image: ghcr.io/dexidp/dex:v2.41.1
+          command: ["/usr/local/bin/dex", "serve", "/etc/dex/cfg/config.yaml"]
+          ports:
+            - { name: https, containerPort: 5556 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/dex/cfg, readOnly: true }
+            - { name: tls, mountPath: /etc/dex/tls, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: dex-config }
+        - name: tls
+          secret: { secretName: dex-tls }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+  namespace: smol-oidc
+spec:
+  selector: { app.kubernetes.io/name: dex }
+  ports:
+    - { name: https, port: 5556, targetPort: 5556 }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dex
+  namespace: smol-oidc
+---
+# Dex needs to manage its CRD-backed storage objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dex
+rules:
+  - apiGroups: ["dex.coreos.com"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["create", "list", "watch", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dex
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: dex }
+subjects:
+  - { kind: ServiceAccount, name: dex, namespace: smol-oidc }
