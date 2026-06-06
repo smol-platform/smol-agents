@@ -86,6 +86,15 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 	}
 	target := tool.Spec.Agent.Ref.Name
 
+	// Per-call timeout (M3.5): TimeoutSeconds bounds this single delegation; on
+	// expiry the ctx.Done branch below cancel-deletes the child. 0 = bounded only
+	// by the parent ctx (the run deadline).
+	if ts := tool.Spec.Agent.TimeoutSeconds; ts > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(ts)*time.Second)
+		defer cancel()
+	}
+
 	// Decode args into a native value so unstructured can hold it (it rejects
 	// json.RawMessage). Empty/invalid args become an empty object.
 	var input any = map[string]any{}

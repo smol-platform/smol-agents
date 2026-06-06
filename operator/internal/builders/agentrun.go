@@ -1,6 +1,10 @@
 package builders
 
 import (
+	"os"
+	"strconv"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,6 +66,8 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 		if d := run.Labels[a2aDepthLabel]; d != "" {
 			main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_DEPTH", Value: d})
 		}
+		// A2A recursion ceiling (M3.5), read by WireAgentInvoker → invoker.MaxDepth.
+		main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_MAX_DEPTH", Value: a2aMaxDepth()})
 	}
 
 	labels := map[string]string{
@@ -173,4 +179,16 @@ func loopContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Contai
 		},
 		VolumeMounts: mounts,
 	}
+}
+
+// a2aMaxDepth is the A2A recursion ceiling injected into loop-mode run pods
+// (A2A_MAX_DEPTH, read by WireAgentInvoker → invoker.MaxDepth). The operator's
+// --a2a-max-depth flag sets SMOL_AGENTS_A2A_MAX_DEPTH at startup; default 4.
+func a2aMaxDepth() string {
+	if v := strings.TrimSpace(os.Getenv("SMOL_AGENTS_A2A_MAX_DEPTH")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return strconv.Itoa(n)
+		}
+	}
+	return "4"
 }

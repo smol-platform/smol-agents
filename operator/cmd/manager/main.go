@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"flag"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ func main() {
 	var allowHostRuntime bool
 	var sessionNATSURL string
 	var natsAccountSeedFile string
+	var a2aMaxDepth int
 	var maxConcurrentReconciles int
 	var runDeadlineMultiplier float64
 	var defaultApprovalTimeout time.Duration
@@ -60,6 +62,8 @@ func main() {
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
 	flag.StringVar(&natsAccountSeedFile, "nats-account-seed-file", os.Getenv("NATS_ACCOUNT_SEED_FILE"),
 		"path to the NATS account signing seed (mounted Secret) used to mint per-namespace worker credentials (M2.20); empty leaves session workers connecting unauthenticated")
+	flag.IntVar(&a2aMaxDepth, "a2a-max-depth", 4,
+		"A2A delegation recursion ceiling injected into loop run pods (M3.5); a child at this depth may not spawn further children")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
 		"max parallel reconciles per agent-model controller (AgentRun/AgentSession)")
 	flag.Float64Var(&runDeadlineMultiplier, "run-deadline-multiplier", 1.5,
@@ -76,6 +80,11 @@ func main() {
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	// The A2A recursion ceiling reaches the run-pod builder via env (M3.5).
+	if a2aMaxDepth > 0 {
+		_ = os.Setenv("SMOL_AGENTS_A2A_MAX_DEPTH", strconv.Itoa(a2aMaxDepth))
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 

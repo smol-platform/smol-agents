@@ -89,6 +89,37 @@ func (c *vanishingRunClient) Get(_ context.Context, key client.ObjectKey, _ clie
 	return apierrors.NewNotFound(schema.GroupResource{Resource: "agentruns"}, key.Name)
 }
 
+// neverTerminalRunClient creates a child that stays Running forever — exercises
+// the per-call TimeoutSeconds path (M3.5): the invoke must give up + delete it.
+type neverTerminalRunClient struct {
+	client.Client
+	mu      sync.Mutex
+	deleted bool
+}
+
+func (c *neverTerminalRunClient) Create(_ context.Context, obj client.Object, _ ...client.CreateOption) error {
+	obj.(*unstructured.Unstructured).SetName("running-child")
+	return nil
+}
+
+func (c *neverTerminalRunClient) Get(_ context.Context, _ client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
+	_ = unstructured.SetNestedField(obj.(*unstructured.Unstructured).Object, string(v1.PhaseRunning), "status", "state")
+	return nil
+}
+
+func (c *neverTerminalRunClient) Delete(_ context.Context, _ client.Object, _ ...client.DeleteOption) error {
+	c.mu.Lock()
+	c.deleted = true
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *neverTerminalRunClient) wasDeleted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.deleted
+}
+
 func agentTool(target string) v1.Tool {
 	t := v1.Tool{}
 	t.Name = "delegate"
@@ -194,6 +225,33 @@ func TestAgentRunInvoker_NoTarget(t *testing.T) {
 	bad.Spec.Kind = v1.ToolAgent // no Agent target
 	if _, err := inv.Invoke(context.Background(), bad, nil); err == nil {
 		t.Fatal("expected error for kind=agent tool with no target ref")
+	}
+}
+
+// M3.5: AgentTargetSpec.TimeoutSeconds bounds a single delegation — a child that
+// never terminates makes Invoke give up at the timeout and delete the child.
+func TestAgentRunInvoker_PerCallTimeout(t *testing.T) {
+	fc := &neverTerminalRunClient{}
+	inv := &AgentRunInvoker{Client: fc, Namespace: "tenant-a", ParentRun: "p", Poll: 10 * time.Millisecond}
+	tool := agentTool("child")
+	tool.Spec.Agent.TimeoutSeconds = 1 // seconds (the spec's granularity)
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { _, err := inv.Invoke(context.Background(), tool, nil); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a per-call timeout error for a never-terminal child")
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("Invoke did not honor TimeoutSeconds (still polling)")
+	}
+	if time.Since(start) < 900*time.Millisecond {
+		t.Errorf("returned too early (%v) — the 1s timeout should bound it", time.Since(start))
+	}
+	if !fc.wasDeleted() {
+		t.Error("child must be deleted when the per-call timeout fires")
 	}
 }
 
