@@ -458,6 +458,21 @@ type AgentSessionSpec struct {
 	// +optional
 	MaxTurnInputBytes int32 `json:"maxTurnInputBytes,omitempty"`
 
+	// TurnBatchSize is how many queued turns the worker pulls per poll (0 → 1,
+	// today's one-at-a-time pull). Observability/tuning knob for the NATS path.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TurnBatchSize int32 `json:"turnBatchSize,omitempty"`
+	// TurnPollIntervalMs is the worker's inbox poll cadence in ms (0 → 500ms).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TurnPollIntervalMs int32 `json:"turnPollIntervalMs,omitempty"`
+	// TurnDeliveryTimeoutSeconds bounds how long a single turn may take before the
+	// worker abandons it (0 → 300s). Must be ≤ turnRetentionSeconds (M2.22).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TurnDeliveryTimeoutSeconds int32 `json:"turnDeliveryTimeoutSeconds,omitempty"`
+
 	// Resources is the compute request/limit for the resident session worker
 	// container (M1.11). A session has NO wall-clock deadline (the idle timeout
 	// bounds it), so right-sizing the worker is done here rather than via a
@@ -509,6 +524,30 @@ func (s AgentSessionSpec) InputBytesCap() int32 {
 	return 1 << 20
 }
 
+// BatchSize is how many queued turns the worker pulls per poll (default 1).
+func (s AgentSessionSpec) BatchSize() int32 {
+	if s.TurnBatchSize > 0 {
+		return s.TurnBatchSize
+	}
+	return 1
+}
+
+// PollIntervalMs is the worker's inbox poll cadence in milliseconds (default 500).
+func (s AgentSessionSpec) PollIntervalMs() int32 {
+	if s.TurnPollIntervalMs > 0 {
+		return s.TurnPollIntervalMs
+	}
+	return 500
+}
+
+// DeliveryTimeoutSeconds bounds a single turn's processing time (default 300s).
+func (s AgentSessionSpec) DeliveryTimeoutSeconds() int32 {
+	if s.TurnDeliveryTimeoutSeconds > 0 {
+		return s.TurnDeliveryTimeoutSeconds
+	}
+	return 300
+}
+
 type AgentSessionStatus struct {
 	// Phase mirrors the session worker's lifecycle as observed by the operator
 	// (Pending until the worker is available, then Running).
@@ -537,6 +576,18 @@ type AgentSessionStatus struct {
 	Reason string `json:"reason,omitempty"`
 	// Message is a human-readable elaboration of Reason. +optional
 	Message string `json:"message,omitempty"`
+
+	// Usage is the session's cumulative resource accounting across all turns,
+	// mirrored field-wise from the worker's checkpoint (M2.19 — NOT via Usage.Add).
+	// Observability only. +optional
+	Usage Usage `json:"usage,omitempty"`
+	// Turns is the monotonic count of turns the worker has processed (survives
+	// in-memory history compaction). +optional
+	Turns int64 `json:"turns,omitempty"`
+	// FailedTurns is how many of those turns ended in error. +optional
+	FailedTurns int64 `json:"failedTurns,omitempty"`
+	// LastTurnTime is when the most recent turn completed. +optional
+	LastTurnTime *metav1.Time `json:"lastTurnTime,omitempty"`
 }
 
 // AgentPolicy — guardrails. R-AM-API-6.

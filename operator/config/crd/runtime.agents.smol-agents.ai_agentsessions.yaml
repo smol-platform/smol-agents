@@ -43,6 +43,9 @@ spec:
                 turnRetentionSeconds: { type: integer, minimum: 0, description: 'NATS turn-stream retention (0 = 3600s default).' }
                 turnHistoryLimit: { type: integer, minimum: 0, description: 'Max retained in-memory turns (0 = unbounded).' }
                 maxTurnInputBytes: { type: integer, minimum: 0, description: 'Per-turn input ceiling (0 = 1 MiB default).' }
+                turnBatchSize: { type: integer, minimum: 0, description: 'Queued turns pulled per poll (0 = 1).' }
+                turnPollIntervalMs: { type: integer, minimum: 0, description: 'Worker inbox poll cadence in ms (0 = 500).' }
+                turnDeliveryTimeoutSeconds: { type: integer, minimum: 0, description: 'Per-turn processing timeout (0 = 300s); must be <= turnRetentionSeconds (M2.22).' }
                 resources:
                   type: object
                   description: 'Compute request/limit for the resident session worker container (M1.11). A session has no wall-clock deadline (idle timeout bounds it), so worker sizing is here, not via a budget. Quantities are strings (e.g. 500m, 512Mi); the operator parses them and the webhook rejects unparseable values.'
@@ -68,3 +71,15 @@ spec:
                 egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }
                 reason: { type: string, description: 'Short machine-readable cause for the current phase (AgentMissing, SandboxNotReady, SecretMissing, NoKVMCapacity, Reconciled, ...).' }
                 message: { type: string, description: 'Human-readable elaboration of reason.' }
+                usage:
+                  type: object
+                  description: 'Cumulative resource accounting across all turns, mirrored field-wise from the worker checkpoint (M2.19). Observability only.'
+                  properties:
+                    steps: { type: integer }
+                    tokens: { type: integer, format: int64 }
+                    toolCalls: { type: integer }
+                    wallClockUsed: { type: integer, format: int64 }
+                    costUSDMilli: { type: integer, format: int64, description: 'Backend cost in milli-USD (never gated).' }
+                turns: { type: integer, format: int64, description: 'Monotonic count of turns processed (survives history compaction).' }
+                failedTurns: { type: integer, format: int64, description: 'Turns that ended in error.' }
+                lastTurnTime: { type: string, format: date-time, description: 'When the most recent turn completed.' }

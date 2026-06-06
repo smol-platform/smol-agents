@@ -1,6 +1,10 @@
 package v1
 
-import "testing"
+import (
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // M2.17: the turn-scaling accessors default-preserve today's serial, unbounded
 // behavior (0 → the default), and pass through set values.
@@ -18,10 +22,43 @@ func TestAgentSessionSpec_TurnAccessors(t *testing.T) {
 	if zero.HistoryLimit() != 0 {
 		t.Errorf("default HistoryLimit = %d, want 0 (unbounded)", zero.HistoryLimit())
 	}
+	if zero.BatchSize() != 1 || zero.PollIntervalMs() != 500 || zero.DeliveryTimeoutSeconds() != 300 {
+		t.Errorf("defaults: batch=%d poll=%d delivery=%d, want 1/500/300",
+			zero.BatchSize(), zero.PollIntervalMs(), zero.DeliveryTimeoutSeconds())
+	}
 
-	set := AgentSessionSpec{MaxConcurrentTurns: 4, TurnRetentionSeconds: 60, MaxTurnInputBytes: 2048, TurnHistoryLimit: 10}
+	set := AgentSessionSpec{
+		MaxConcurrentTurns: 4, TurnRetentionSeconds: 60, MaxTurnInputBytes: 2048, TurnHistoryLimit: 10,
+		TurnBatchSize: 8, TurnPollIntervalMs: 250, TurnDeliveryTimeoutSeconds: 120,
+	}
 	if set.ConcurrentTurns() != 4 || set.RetentionSeconds() != 60 || set.InputBytesCap() != 2048 || set.HistoryLimit() != 10 {
 		t.Errorf("set values must pass through: %+v", set)
+	}
+	if set.BatchSize() != 8 || set.PollIntervalMs() != 250 || set.DeliveryTimeoutSeconds() != 120 {
+		t.Errorf("set batch/poll/delivery must pass through: %+v", set)
+	}
+}
+
+// M2.17: the status carries cumulative usage + turn counters + last-turn time; the
+// hand-written DeepCopy must not alias the LastTurnTime pointer.
+func TestAgentSessionStatus_DeepCopy(t *testing.T) {
+	ts := metav1.Unix(1000, 0)
+	orig := &AgentSessionStatus{
+		Usage:        Usage{Tokens: 1234, Steps: 5},
+		Turns:        8,
+		FailedTurns:  1,
+		LastTurnTime: &ts,
+	}
+	cp := orig.DeepCopy()
+	if cp.Usage.Tokens != 1234 || cp.Turns != 8 || cp.FailedTurns != 1 {
+		t.Errorf("scalar status fields not copied: %+v", cp)
+	}
+	*cp.LastTurnTime = metav1.Unix(9999, 0)
+	if orig.LastTurnTime.Time.Equal(cp.LastTurnTime.Time) {
+		t.Error("LastTurnTime pointer aliased — mutating the copy changed the original")
+	}
+	if (&AgentSessionStatus{}).DeepCopy().LastTurnTime != nil {
+		t.Error("nil LastTurnTime must stay nil")
 	}
 }
 
