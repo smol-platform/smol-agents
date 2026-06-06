@@ -182,6 +182,10 @@ func main() {
 			setupLog.Error(err, "unable to register AgentPolicy gate webhook")
 			os.Exit(1)
 		}
+		if err := webhooks.SetupAgentPolicySelfWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentPolicy self-validation webhook")
+			os.Exit(1)
+		}
 		if err := webhooks.SetupAgentSessionWebhook(mgr); err != nil {
 			setupLog.Error(err, "unable to register AgentSession webhook")
 			os.Exit(1)
