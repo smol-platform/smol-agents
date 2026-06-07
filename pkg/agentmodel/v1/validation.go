@@ -143,6 +143,10 @@ func ValidateTool(t Tool) error {
 		if t.Spec.Function == nil || t.Spec.Function.Name == "" {
 			errs = append(errs, errors.New("spec.function.name is required for kind=function"))
 		}
+	case ToolTask:
+		// The team shared-task-list tool (P1) needs no extra spec — the op
+		// (list|claim|complete|create) + args are supplied at call time. The
+		// TaskInvoker is wired only inside a team context (WireTaskInvoker).
 	}
 	return errors.Join(errs...)
 }

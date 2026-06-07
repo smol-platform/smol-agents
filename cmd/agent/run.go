@@ -57,8 +57,10 @@ func runAgentRun(args []string) int {
 	// Register the loop-mode tool invokers (HTTP + MCP; M2.12/M2.14). The tool
 	// catalog itself is loaded from tools.json by RunOnce. WireAgentInvoker adds
 	// the kind=agent (A2A) invoker when the pod has in-cluster API access (M3 A1);
-	// without it kind=agent stays fail-closed.
-	toolInvokers := invokers.WireAgentInvoker(invokers.Default(leaser, nil))
+	// WireTaskInvoker adds the kind=task (team shared task list) invoker when the
+	// pod carries a team context (orchestration P1). Without each, that kind stays
+	// fail-closed.
+	toolInvokers := invokers.WireTaskInvoker(invokers.WireAgentInvoker(invokers.Default(leaser, nil)))
 
 	// pi-mono (M4.16): start the in-pod pi-bridge before the run so the harness's
 	// HTTP call to 127.0.0.1:8848 lands; SIGTERM it on exit. No-op for other kinds.

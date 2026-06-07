@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/teamtask"
 )
 
 // Default builds the production ToolInvoker set keyed by Tool.Spec.Kind that
@@ -53,5 +54,35 @@ func WireAgentInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.Tool
 		Depth:        depth,
 		MaxDepth:     maxDepth,
 	}
+	return base
+}
+
+// WireTaskInvoker best-effort-adds the kind=task (team shared task list) invoker
+// when the pod carries a team context: TEAM_NATS_URL + TEAM_NAMESPACE +
+// TEAM_NAME (injected by the operator when it spawns a team member; P3). It binds
+// the team's NATS KV bucket and claims as TEAM_MEMBER (falling back to RUN_NAME).
+// On any failure — env unset or the KV bind erroring — kind=task stays ABSENT so
+// the executor fail-closes the call (the team must grant access, D3). Mutates and
+// returns base for chaining.
+func WireTaskInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.ToolKind]agentruntime.ToolInvoker {
+	url := os.Getenv("TEAM_NATS_URL")
+	ns := os.Getenv("TEAM_NAMESPACE")
+	team := os.Getenv("TEAM_NAME")
+	if url == "" || ns == "" || team == "" {
+		return base
+	}
+	var opts []teamtask.NATSStoreOption
+	if creds := os.Getenv("TEAM_NATS_CREDS"); creds != "" {
+		opts = append(opts, teamtask.WithCredentials(creds))
+	}
+	store, err := teamtask.NewNATSStore(url, ns, team, opts...)
+	if err != nil {
+		return base // fail-closed: no store → no task invoker
+	}
+	owner := os.Getenv("TEAM_MEMBER")
+	if owner == "" {
+		owner = os.Getenv("RUN_NAME")
+	}
+	base[v1.ToolTask] = &TaskInvoker{Store: store, Owner: owner}
 	return base
 }
