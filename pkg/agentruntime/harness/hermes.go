@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
@@ -50,6 +52,10 @@ import (
 // broker) to authenticate to the gateway.
 type HermesHarness struct {
 	Client HTTPClient
+	// capsCache memoizes the per-endpoint capability probe (M3.10), keyed by the
+	// capabilities URL → bool (responses supported). Bounds repeat probes across
+	// turns in a long-lived session worker.
+	capsCache sync.Map
 }
 
 func (h *HermesHarness) Kind() v1.HarnessKind { return v1.HarnessHermes }
@@ -62,6 +68,15 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	spec := req.Spec.HTTP
 	if spec == nil || strings.TrimSpace(spec.URL) == "" {
 		return Response{}, errors.New("harness: hermes requires spec.http.url (the gateway /v1/chat/completions endpoint)")
+	}
+	// The Responses API (M3.10) is a distinct request/response shape; handle it
+	// in its own path so the chat-completions path below stays byte-identical.
+	if spec.API == "responses" {
+		return h.runResponses(ctx, req, spec)
+	}
+	// The async /v1/runs API (M3.11) submits + polls; handled in hermes_runs.go.
+	if spec.API == "runs" {
+		return h.runAsync(ctx, req, spec)
 	}
 	client := h.Client
 	if client == nil {
@@ -180,12 +195,13 @@ func (h *HermesHarness) Run(ctx context.Context, req Request) (Response, error) 
 	if respField == "" {
 		respField = "choices.0.message.content"
 	}
-	in, out := parseUsage(res.Body)
+	in, out, costMilli := parseUsage(res.Body)
 	return Response{
-		Output:     []byte(extractField(res.Body, respField)),
-		TokensIn:   in,
-		TokensOut:  out,
-		DurationMs: res.DurationMs,
+		Output:       []byte(extractField(res.Body, respField)),
+		TokensIn:     in,
+		TokensOut:    out,
+		CostUSDMilli: costMilli,
+		DurationMs:   res.DurationMs,
 	}, nil
 }
 
@@ -262,15 +278,227 @@ func jsonOrString(v string) any {
 	return v
 }
 
-// parseUsage extracts OpenAI usage.{prompt,completion}_tokens from a response
-// body. Missing/garbled usage yields (0, 0).
-func parseUsage(body []byte) (in, out int64) {
+// runResponses drives the OpenAI Responses API (/v1/responses, M3.10):
+// instructions → "instructions", the prompt → "input", and the output[] array
+// is parsed for the final text + the gateway's internal tool calls. Usage is
+// read via the dual-shape parseUsage (M2.7), which handles the Responses
+// input/output_tokens. Isolated from the chat path so that stays byte-identical.
+func (h *HermesHarness) runResponses(ctx context.Context, req Request, spec *v1.HarnessHTTPSpec) (Response, error) {
+	client := h.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	env := effectiveEnv(req)
+	// Fail loud BEFORE any request if the gateway explicitly reports it cannot
+	// serve the Responses API (M3.10) — a misconfigured baseURL otherwise produces
+	// a confusing 404/parse error mid-run.
+	if err := h.probeResponsesCapability(ctx, client, spec, env); err != nil {
+		return Response{}, err
+	}
+	body := map[string]any{
+		"model": hermesModel(env),
+		"input": promptFromInput(req.Input),
+	}
+	if strings.TrimSpace(req.Instructions) != "" {
+		body["instructions"] = req.Instructions
+	}
+	if req.Budget.MaxTokens > 0 {
+		body["max_output_tokens"] = req.Budget.MaxTokens
+	}
+	if req.Seed != 0 {
+		body["seed"] = req.Seed
+	}
+	for k, v := range env {
+		if field, ok := strings.CutPrefix(k, "BODY_"); ok && field != "" {
+			body[field] = jsonOrString(v)
+		}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return Response{}, fmt.Errorf("harness: marshal: %w", err)
+	}
+
+	ctx, cancel := budgetTimeout(ctx, req.Budget)
+	defer cancel()
+
+	reqHeaders := map[string]string{"Content-Type": "application/json"}
+	for k, v := range spec.Headers {
+		reqHeaders[k] = v
+	}
+	for k, v := range env {
+		if name, ok := strings.CutPrefix(k, "HEADER_"); ok && v != "" {
+			reqHeaders[name] = v
+		}
+	}
+	switch req.Spec.SessionPolicy {
+	case v1.SessionPersistent:
+		if sid := env["HERMES_SESSION_ID"]; sid != "" {
+			reqHeaders["X-Hermes-Session-Id"] = sid
+		}
+	default:
+		reqHeaders["X-Hermes-Session-Id"] = newEphemeralSessionID()
+	}
+
+	newReq := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, spec.URL, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range reqHeaders {
+			r.Header.Set(k, v)
+		}
+		return r, nil
+	}
+	res, err := doWithRetry(ctx, client, newReq, spec.Retry)
+	if err != nil {
+		return Response{DurationMs: res.DurationMs}, err
+	}
+	output, toolCalls := parseResponsesOutput(res.Body)
+	in, out, costMilli := parseUsage(res.Body)
+	return Response{
+		Output:       output,
+		ToolCalls:    toolCalls,
+		TokensIn:     in,
+		TokensOut:    out,
+		CostUSDMilli: costMilli,
+		DurationMs:   res.DurationMs,
+	}, nil
+}
+
+// probeResponsesCapability fails loud when the gateway EXPLICITLY reports it
+// cannot serve the Responses API (M3.10). It GETs <base>/v1/capabilities (derived
+// from spec.URL) once per endpoint (cached) with the request's auth headers. A
+// probe error, a non-200, an unparseable body, or an absent responses_api field
+// is NOT fatal — only `"responses_api": false` blocks the run, so gateways
+// without a capabilities endpoint keep working unchanged.
+func (h *HermesHarness) probeResponsesCapability(ctx context.Context, client HTTPClient, spec *v1.HarnessHTTPSpec, env map[string]string) error {
+	url := capabilitiesURL(spec.URL)
+	if v, ok := h.capsCache.Load(url); ok {
+		if supported, _ := v.(bool); !supported {
+			return fmt.Errorf("harness: hermes gateway at %s reports responses_api unsupported (M3.10)", url)
+		}
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil // can't build the probe → proceed (best-effort)
+	}
+	for k, v := range env {
+		if name, ok := strings.CutPrefix(k, "HEADER_"); ok && v != "" {
+			req.Header.Set(name, v)
+		}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil // probe failed → proceed; the real request surfaces a hard error
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil // no capabilities endpoint (older gateway) → proceed
+	}
+	var caps struct {
+		ResponsesAPI *bool `json:"responses_api"`
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if json.Unmarshal(b, &caps) != nil || caps.ResponsesAPI == nil {
+		return nil // unparseable / field absent → proceed
+	}
+	h.capsCache.Store(url, *caps.ResponsesAPI)
+	if !*caps.ResponsesAPI {
+		return fmt.Errorf("harness: hermes gateway at %s reports responses_api unsupported (M3.10)", url)
+	}
+	return nil
+}
+
+// capabilitiesURL derives the gateway's /v1/capabilities URL from the responses
+// URL by swapping the final path segment (.../v1/responses → .../v1/capabilities).
+func capabilitiesURL(responsesURL string) string {
+	i := strings.LastIndex(responsesURL, "/")
+	if i < 0 {
+		return responsesURL + "/capabilities"
+	}
+	return responsesURL[:i+1] + "capabilities"
+}
+
+// parseResponsesOutput walks the /v1/responses output[] array: it concatenates
+// message output_text into the answer and pairs function_call /
+// function_call_output (by call_id) into ToolCallRecords (the gateway's INTERNAL
+// tool log — audit, not schema-validated StepToolCalls). A malformed body
+// degrades to empty output.
+func parseResponsesOutput(body []byte) ([]byte, []v1.ToolCallRecord) {
+	var r struct {
+		Output []struct {
+			Type      string          `json:"type"`
+			CallID    string          `json:"call_id"`
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+			Output    json.RawMessage `json:"output"`
+			Content   []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, nil
+	}
+	var sb strings.Builder
+	calls := map[string]*v1.ToolCallRecord{}
+	var order []string
+	for _, o := range r.Output {
+		switch o.Type {
+		case "message":
+			for _, c := range o.Content {
+				if c.Type == "output_text" {
+					sb.WriteString(c.Text)
+				}
+			}
+		case "function_call":
+			calls[o.CallID] = &v1.ToolCallRecord{Tool: o.Name, Arguments: o.Arguments}
+			order = append(order, o.CallID)
+		case "function_call_output":
+			if tc, ok := calls[o.CallID]; ok {
+				tc.Result = o.Output
+			}
+		}
+	}
+	recs := make([]v1.ToolCallRecord, 0, len(order))
+	for _, id := range order {
+		recs = append(recs, *calls[id])
+	}
+	return []byte(sb.String()), recs
+}
+
+// parseUsage extracts token usage from a response body, accepting BOTH the chat
+// shape (usage.prompt_tokens/completion_tokens) and the Responses shape
+// (usage.input_tokens/output_tokens). The two never cross-zero: a non-zero
+// value in either field wins, so a body carrying only one shape — or a 0 in one
+// and a real count in the other — still reports the real counts (the top
+// correctness hazard: a mis-parse that silently zeroes the token budget). Also
+// returns best-effort cost in integer milli-USD from total_cost_usd when the
+// gateway reports it. Missing/garbled usage yields (0, 0, 0).
+func parseUsage(body []byte) (in, out, costMilli int64) {
 	var r struct {
 		Usage struct {
 			PromptTokens     int64 `json:"prompt_tokens"`
 			CompletionTokens int64 `json:"completion_tokens"`
+			InputTokens      int64 `json:"input_tokens"`
+			OutputTokens     int64 `json:"output_tokens"`
 		} `json:"usage"`
+		TotalCostUSD float64 `json:"total_cost_usd"`
 	}
 	_ = json.Unmarshal(body, &r)
-	return r.Usage.PromptTokens, r.Usage.CompletionTokens
+	in = firstNonZeroI64(r.Usage.PromptTokens, r.Usage.InputTokens)
+	out = firstNonZeroI64(r.Usage.CompletionTokens, r.Usage.OutputTokens)
+	if r.TotalCostUSD > 0 {
+		costMilli = int64(r.TotalCostUSD*1000 + 0.5)
+	}
+	return in, out, costMilli
+}
+
+func firstNonZeroI64(a, b int64) int64 {
+	if a != 0 {
+		return a
+	}
+	return b
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
@@ -40,6 +41,21 @@ func TestRegistry_UnknownKindErrors(t *testing.T) {
 	r := Default()
 	if _, err := r.For("nope"); err == nil {
 		t.Error("expected error for unknown kind")
+	}
+}
+
+// M4.14: the deprecated "pi" alias and the canonical "inflection-pi" both
+// resolve to the same (Inflection) harness.
+func TestRegistry_InflectionPiAlias(t *testing.T) {
+	r := Default()
+	for _, k := range []v1.HarnessKind{v1.HarnessPi, v1.HarnessInflectionPi} {
+		h, err := r.For(k)
+		if err != nil {
+			t.Fatalf("For(%q): %v", k, err)
+		}
+		if h.Kind() != v1.HarnessInflectionPi {
+			t.Errorf("For(%q) → kind %q, want inflection-pi", k, h.Kind())
+		}
 	}
 }
 
@@ -149,6 +165,150 @@ func TestClaudeCodeHarness_RunsCommand(t *testing.T) {
 	}
 	if !strings.Contains(string(resp.Output), "claude-output") {
 		t.Errorf("output missing expected: %q", resp.Output)
+	}
+}
+
+// M3.16/M3.19: instructions go via --append-system-prompt, a captured session id
+// resumes via --resume, and the parsed session_id surfaces on Response.SessionID.
+func TestClaudeCodeHarness_SystemPromptAndResume(t *testing.T) {
+	var got []string
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		got = args
+		return exec.CommandContext(ctx, "/bin/sh", "-c",
+			`echo '{"result":"hi","session_id":"sess-9","total_cost_usd":0.002,"usage":{"input_tokens":4,"output_tokens":2}}'`)
+	}}
+	resp, err := h.Run(context.Background(), Request{
+		Spec:         v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{OutputFormat: "json"}},
+		Instructions: "be terse",
+		Input:        json.RawMessage(`{"prompt":"hello"}`),
+		SessionID:    "prior-7",
+		Budget:       v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	j := strings.Join(got, " ")
+	if !strings.Contains(j, "--append-system-prompt be terse") {
+		t.Errorf("instructions must go via --append-system-prompt: %q", j)
+	}
+	if !strings.Contains(j, "--resume prior-7") {
+		t.Errorf("a captured session id must resume: %q", j)
+	}
+	if resp.SessionID != "sess-9" {
+		t.Errorf("Response.SessionID = %q, want sess-9 (captured from session_id)", resp.SessionID)
+	}
+	if resp.CostUSDMilli != 2 || resp.TokensIn != 4 {
+		t.Errorf("richness = cost %d / in %d, want 2 / 4", resp.CostUSDMilli, resp.TokensIn)
+	}
+}
+
+// M3.18: with MCP servers declared, claude gets --mcp-config <path> + auto-allows
+// each server's mcp__<name>__* tools.
+func TestClaudeCodeHarness_MCPServers(t *testing.T) {
+	var got []string
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		got = args
+		return exec.CommandContext(ctx, "/bin/sh", "-c", `echo '{"result":"x"}'`)
+	}}
+	_, _ = h.Run(context.Background(), Request{
+		Spec: v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{
+			OutputFormat: "json",
+			MCPServers:   []v1.MCPServerSpec{{Name: "fs", Transport: "stdio", Command: []string{"mcp-fs"}}},
+		}},
+		Input:  json.RawMessage(`{"prompt":"hi"}`),
+		Budget: v1.Budget{MaxWallClockSeconds: 10},
+	})
+	j := strings.Join(got, " ")
+	if !strings.Contains(j, "--mcp-config "+v1.ClaudeMCPConfigPath) {
+		t.Errorf("missing --mcp-config: %q", j)
+	}
+	if !strings.Contains(j, "--allowedTools mcp__fs__*") {
+		t.Errorf("missing auto-allow mcp__fs__*: %q", j)
+	}
+}
+
+// M3.20: apiKeyHelperSecret makes claude run an apiKeyHelper (`agent lease <name>`)
+// for short-lived creds; absent → no --settings (static key).
+func TestClaudeCodeHarness_APIKeyHelper(t *testing.T) {
+	capture := func(cli *v1.HarnessCLISpec) string {
+		var got []string
+		h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			got = args
+			return exec.CommandContext(ctx, "/bin/sh", "-c", `echo '{"result":"x"}'`)
+		}}
+		_, _ = h.Run(context.Background(), Request{
+			Spec:   v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: cli},
+			Input:  json.RawMessage(`{"prompt":"hi"}`),
+			Budget: v1.Budget{MaxWallClockSeconds: 10},
+		})
+		return strings.Join(got, " ")
+	}
+	withHelper := capture(&v1.HarnessCLISpec{OutputFormat: "json", APIKeyHelperSecret: "ANTHROPIC_API_KEY"})
+	if !strings.Contains(withHelper, `--settings`) || !strings.Contains(withHelper, `agent lease ANTHROPIC_API_KEY`) {
+		t.Errorf("opted-in run must carry the apiKeyHelper settings: %q", withHelper)
+	}
+	if withoutHelper := capture(&v1.HarnessCLISpec{OutputFormat: "json"}); strings.Contains(withoutHelper, "--settings") {
+		t.Errorf("no apiKeyHelperSecret must emit no --settings: %q", withoutHelper)
+	}
+}
+
+// M3.21: ApprovalMode "never" maps to codex --ask-for-approval never (headless);
+// other modes leave codex's default approval policy.
+func TestCodexHarness_ApprovalMapping(t *testing.T) {
+	capture := func(am string) string {
+		var got []string
+		h := &CodexHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			got = args
+			return exec.CommandContext(ctx, "true")
+		}}
+		_, _ = h.Run(context.Background(), Request{
+			Spec:   v1.HarnessSpec{Kind: v1.HarnessCodex, CLI: &v1.HarnessCLISpec{ApprovalMode: am}},
+			Input:  json.RawMessage(`"hi"`),
+			Budget: v1.Budget{MaxWallClockSeconds: 10},
+		})
+		return strings.Join(got, " ")
+	}
+	if g := capture("never"); !strings.Contains(g, "--ask-for-approval never") {
+		t.Errorf("never → %q", g)
+	}
+	if g := capture(""); strings.Contains(g, "--ask-for-approval") {
+		t.Errorf("unset must add no approval flag: %q", g)
+	}
+}
+
+// M3.21/M3.23: codex argv carries --skip-git-repo-check + -C <wd> +
+// --output-last-message, and resumes a persistent session via `exec resume <id>`.
+func TestCodexHarness_ArgvAndResume(t *testing.T) {
+	capture := func(req Request) []string {
+		var got []string
+		h := &CodexHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			got = args
+			return exec.CommandContext(ctx, "true")
+		}}
+		_, _ = h.Run(context.Background(), req)
+		return got
+	}
+
+	args := capture(Request{
+		Spec:       v1.HarnessSpec{Kind: v1.HarnessCodex},
+		Input:      json.RawMessage(`"hi"`),
+		WorkingDir: "/var/agentfs",
+		Budget:     v1.Budget{MaxWallClockSeconds: 10},
+	})
+	j := strings.Join(args, " ")
+	if args[0] != "exec" || !strings.Contains(j, "--skip-git-repo-check") ||
+		!strings.Contains(j, "-C /var/agentfs") || !strings.Contains(j, "--output-last-message ") {
+		t.Errorf("base argv missing expected flags: %q", j)
+	}
+
+	r := capture(Request{
+		Spec:      v1.HarnessSpec{Kind: v1.HarnessCodex, SessionPolicy: v1.SessionPersistent},
+		Input:     json.RawMessage(`"hi"`),
+		SessionID: "thread-7",
+		Budget:    v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if len(r) < 3 || r[0] != "exec" || r[1] != "resume" || r[2] != "thread-7" {
+		t.Errorf("resume argv = %v, want [exec resume thread-7 ...]", r)
 	}
 }
 
@@ -354,10 +514,222 @@ func TestHermesHarness_EphemeralUsesUniqueSession(t *testing.T) {
 	}
 }
 
+// M3.10: parseResponsesOutput concatenates message text and pairs
+// function_call/function_call_output by call_id.
+func TestParseResponsesOutput(t *testing.T) {
+	body := []byte(`{"output":[
+		{"type":"message","content":[{"type":"output_text","text":"hello "},{"type":"output_text","text":"world"}]},
+		{"type":"function_call","call_id":"c1","name":"search","arguments":{"q":"x"}},
+		{"type":"function_call_output","call_id":"c1","output":{"hits":3}}
+	]}`)
+	out, calls := parseResponsesOutput(body)
+	if string(out) != "hello world" {
+		t.Errorf("output = %q, want 'hello world'", out)
+	}
+	if len(calls) != 1 || calls[0].Tool != "search" || string(calls[0].Result) != `{"hits":3}` {
+		t.Errorf("function_call pairing wrong: %+v", calls)
+	}
+}
+
+// M3.10: API=responses drives the Responses request shape + output parsing,
+// reusing the dual-shape usage parse (input/output_tokens).
+func TestHermesHarness_ResponsesAPI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(b), `"input"`) {
+			t.Errorf("responses request must carry input: %s", b)
+		}
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":7,"output_tokens":3}}`))
+	}))
+	defer srv.Close()
+	h := &HermesHarness{Client: srv.Client()}
+	resp, err := h.Run(context.Background(), Request{
+		Spec:   v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL, API: "responses"}},
+		Input:  json.RawMessage(`{"prompt":"hi"}`),
+		Budget: v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if string(resp.Output) != "ok" {
+		t.Errorf("output = %q", resp.Output)
+	}
+	if resp.TokensIn != 7 || resp.TokensOut != 3 {
+		t.Errorf("tokens = %d/%d, want 7/3", resp.TokensIn, resp.TokensOut)
+	}
+}
+
+// M3.11: the async /v1/runs path submits, polls to terminal, fails on
+// status:failed, and on cancel fires POST /v1/runs/{id}/stop (orphan fix).
+func TestHermesHarness_AsyncRuns(t *testing.T) {
+	t.Run("completes", func(t *testing.T) {
+		var gets int
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /v1/runs", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"r1","status":"queued"}`)) })
+		mux.HandleFunc("GET /v1/runs/r1", func(w http.ResponseWriter, _ *http.Request) {
+			if gets++; gets < 2 {
+				_, _ = w.Write([]byte(`{"id":"r1","status":"in_progress"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"r1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":2}}`))
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		resp, err := (&HermesHarness{Client: srv.Client()}).Run(context.Background(), Request{
+			Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL + "/v1/runs", API: "runs", PollIntervalMs: 10}},
+			Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+		})
+		if err != nil || string(resp.Output) != "ok" || resp.TokensIn != 5 || resp.TokensOut != 2 {
+			t.Errorf("async completes: err=%v out=%q tok=%d/%d", err, resp.Output, resp.TokensIn, resp.TokensOut)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /v1/runs", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"r1","status":"queued"}`)) })
+		mux.HandleFunc("GET /v1/runs/r1", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"id":"r1","status":"failed","error":"boom"}`))
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		if _, err := (&HermesHarness{Client: srv.Client()}).Run(context.Background(), Request{
+			Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL + "/v1/runs", API: "runs", PollIntervalMs: 10}},
+			Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+		}); err == nil {
+			t.Error("status:failed must error")
+		}
+	})
+
+	t.Run("cancel-stops", func(t *testing.T) {
+		stopped := make(chan struct{}, 1)
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /v1/runs", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"id":"r1","status":"queued"}`)) })
+		mux.HandleFunc("GET /v1/runs/r1", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"id":"r1","status":"in_progress"}`))
+		})
+		mux.HandleFunc("POST /v1/runs/r1/stop", func(http.ResponseWriter, *http.Request) {
+			select {
+			case stopped <- struct{}{}:
+			default:
+			}
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+		if _, err := (&HermesHarness{Client: srv.Client()}).Run(ctx, Request{
+			Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL + "/v1/runs", API: "runs", PollIntervalMs: 10}},
+			Input: json.RawMessage(`{"prompt":"hi"}`),
+		}); err == nil {
+			t.Error("cancel must return an error")
+		}
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+			t.Error("cancel must POST /v1/runs/r1/stop (orphan fix)")
+		}
+	})
+}
+
+// M3.10: a gateway that explicitly reports responses_api:false fails the run loud
+// BEFORE any /v1/responses request; responses_api:true proceeds.
+func TestHermesHarness_ResponsesCapabilityGate(t *testing.T) {
+	gate := func(t *testing.T, capsBody string) (*HermesHarness, string, *bool) {
+		posted := new(bool)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/capabilities", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(capsBody)) })
+		mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, _ *http.Request) {
+			*posted = true
+			_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}`))
+		})
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return &HermesHarness{Client: srv.Client()}, srv.URL + "/v1/responses", posted
+	}
+
+	// responses_api:false → fail loud, no POST.
+	h, url, posted := gate(t, `{"responses_api":false}`)
+	if _, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: url, API: "responses"}},
+		Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+	}); err == nil {
+		t.Error("responses_api:false must fail loud")
+	} else if *posted {
+		t.Error("must NOT POST /v1/responses when capability is false")
+	}
+
+	// responses_api:true → proceeds.
+	h2, url2, _ := gate(t, `{"responses_api":true}`)
+	resp, err := h2.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: url2, API: "responses"}},
+		Input: json.RawMessage(`{"prompt":"hi"}`), Budget: v1.Budget{MaxWallClockSeconds: 10},
+	})
+	if err != nil || string(resp.Output) != "ok" {
+		t.Errorf("responses_api:true must proceed: err=%v out=%q", err, resp.Output)
+	}
+}
+
+// M2.7: parseUsage accepts both the chat and Responses token shapes and never
+// cross-zeroes — the top correctness hazard (a mis-parse zeroing the budget).
+func TestParseUsage_DualShape(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		in, out, cost int64
+	}{
+		{"chat", `{"usage":{"prompt_tokens":10,"completion_tokens":5}}`, 10, 5, 0},
+		{"responses", `{"usage":{"input_tokens":12,"output_tokens":7}}`, 12, 7, 0},
+		// chat prompt is real but chat completion is 0 → responses output wins.
+		{"no-cross-zero", `{"usage":{"prompt_tokens":3,"completion_tokens":0,"input_tokens":0,"output_tokens":9}}`, 3, 9, 0},
+		{"cost", `{"usage":{"prompt_tokens":1,"completion_tokens":1},"total_cost_usd":0.0123}`, 1, 1, 12},
+		{"empty", `{}`, 0, 0, 0},
+	}
+	for _, c := range cases {
+		in, out, cost := parseUsage([]byte(c.body))
+		if in != c.in || out != c.out || cost != c.cost {
+			t.Errorf("%s: got (%d,%d,%d) want (%d,%d,%d)", c.name, in, out, cost, c.in, c.out, c.cost)
+		}
+	}
+}
+
 func TestHermesHarness_RequiresURL(t *testing.T) {
 	h := &HermesHarness{}
 	if _, err := h.Run(context.Background(), Request{Spec: v1.HarnessSpec{Kind: v1.HarnessHermes}}); err == nil {
 		t.Error("expected error when http.url is missing")
+	}
+}
+
+// M2.27: a non-zero Run seed is forwarded as the OpenAI `seed` field (a
+// best-effort determinism hint, not a bit-exact guarantee); a zero seed omits
+// the field entirely so the backend keeps its default behavior.
+func TestHermesHarness_SeedForwarding(t *testing.T) {
+	run := func(t *testing.T, seed int64) map[string]any {
+		t.Helper()
+		var gotBody map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &gotBody)
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+		}))
+		defer srv.Close()
+		h := &HermesHarness{Client: srv.Client()}
+		if _, err := h.Run(context.Background(), Request{
+			Spec:         v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+			Instructions: "x",
+			Input:        json.RawMessage(`{"prompt":"hi"}`),
+			Seed:         seed,
+			Budget:       v1.Budget{MaxWallClockSeconds: 5, MaxTokens: 64},
+		}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return gotBody
+	}
+
+	if got := run(t, 99)["seed"]; got != float64(99) {
+		t.Errorf("seed = %v, want 99 forwarded", got)
+	}
+	if body := run(t, 0); func() bool { _, ok := body["seed"]; return ok }() {
+		t.Errorf("seed must be omitted when zero, body had seed=%v", body["seed"])
 	}
 }
 
@@ -444,6 +816,19 @@ func TestHermesHarness_Seed(t *testing.T) {
 	if gotBody["seed"] != float64(7) {
 		t.Errorf("seed = %v, want 7", gotBody["seed"])
 	}
+
+	// M2.27: Seed=0 (unset) must omit the field entirely, not send seed:0.
+	gotBody = nil
+	if _, err := h.Run(context.Background(), Request{
+		Spec:  v1.HarnessSpec{Kind: v1.HarnessHermes, HTTP: &v1.HarnessHTTPSpec{URL: srv.URL}},
+		Input: json.RawMessage(`{"prompt":"hi"}`),
+		Seed:  0,
+	}); err != nil {
+		t.Fatalf("Run (seed=0): %v", err)
+	}
+	if _, ok := gotBody["seed"]; ok {
+		t.Errorf("seed=0 must be omitted, got %v", gotBody["seed"])
+	}
 }
 
 func TestExtractField_Variants(t *testing.T) {
@@ -494,6 +879,30 @@ func TestRunCLI_StderrSurfacedOnError(t *testing.T) {
 	}
 }
 
+// M3.16: claude --print exits 0 even when the turn errored (is_error in the JSON
+// envelope). The harness must surface that as an error so the run is folded
+// Failed — not reported as a silent success — while still parsing usage.
+func TestClaudeCodeHarness_IsErrorSurfaced(t *testing.T) {
+	envelope := `{"result":"tool failed: permission denied","is_error":true,"usage":{"input_tokens":10,"output_tokens":3},"total_cost_usd":0.001}`
+	h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", "printf '%s' '"+envelope+"'")
+	}}
+	resp, err := h.Run(context.Background(), Request{
+		Spec:   v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: &v1.HarnessCLISpec{OutputFormat: "json"}},
+		Input:  json.RawMessage(`"hi"`),
+		Budget: v1.Budget{MaxWallClockSeconds: 30},
+	})
+	if err == nil {
+		t.Fatal("is_error:true must surface as an error, not a silent success")
+	}
+	if !strings.Contains(err.Error(), "is_error") {
+		t.Errorf("error must name is_error, got %v", err)
+	}
+	if resp.TokensIn != 10 || resp.TokensOut != 3 {
+		t.Errorf("usage must survive the error (folded into the failed run): %d/%d", resp.TokensIn, resp.TokensOut)
+	}
+}
+
 // TestMergeEnv_InheritsParentEnv guards the fix for CLI harnesses crashing on a
 // missing HOME/PATH: the subprocess env must inherit the parent process env
 // (image HOME/PATH) with harness vars overriding on duplicate keys.
@@ -518,6 +927,39 @@ func TestMergeEnv_InheritsParentEnv(t *testing.T) {
 	}
 	if last != "SMOL_TEST_INHERIT=override" {
 		t.Errorf("harness env must override inherited (last wins), got %q", last)
+	}
+}
+
+// M3.17: ApprovalMode + AllowedTools/DisallowedTools map to claude permission
+// flags.
+func TestClaudeCodeHarness_PermissionMapping(t *testing.T) {
+	capture := func(cli *v1.HarnessCLISpec) []string {
+		var got []string
+		h := &ClaudeCodeHarness{Cmd: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			got = args
+			return exec.CommandContext(ctx, "true")
+		}}
+		_, _ = h.Run(context.Background(), Request{
+			Spec:   v1.HarnessSpec{Kind: v1.HarnessClaudeCode, CLI: cli},
+			Input:  json.RawMessage(`"hi"`),
+			Budget: v1.Budget{MaxWallClockSeconds: 10},
+		})
+		return got
+	}
+	joined := func(a []string) string { return strings.Join(a, " ") }
+
+	if g := joined(capture(&v1.HarnessCLISpec{ApprovalMode: "acceptEdits"})); !strings.Contains(g, "--permission-mode acceptEdits") {
+		t.Errorf("acceptEdits → %q", g)
+	}
+	if g := joined(capture(&v1.HarnessCLISpec{ApprovalMode: "never"})); !strings.Contains(g, "--dangerously-skip-permissions") {
+		t.Errorf("never → %q", g)
+	}
+	if g := joined(capture(&v1.HarnessCLISpec{AllowedTools: []string{"Read"}, DisallowedTools: []string{"Bash"}})); !strings.Contains(g, "--allowedTools Read") || !strings.Contains(g, "--disallowedTools Bash") {
+		t.Errorf("tool lists → %q", g)
+	}
+	// safe / unset → no permission flag.
+	if g := joined(capture(&v1.HarnessCLISpec{ApprovalMode: "safe"})); strings.Contains(g, "--permission-mode") || strings.Contains(g, "--dangerously-skip-permissions") {
+		t.Errorf("safe must add no permission flag: %q", g)
 	}
 }
 

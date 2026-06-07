@@ -74,6 +74,13 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat", server.chat)
+	// OpenAI chat-completions wire (what pkg/agentruntime/openaillm — the
+	// production Mode=loop client in `agent run`/`serve-session` — speaks). Lets
+	// an operator-scheduled loop pod drive against this same scripted mock, so
+	// loop-mode tool invocation (and A2A) can be exercised as a real pod, not
+	// only in-process. The scripted rt.LLMDecision is translated to an OpenAI
+	// response (tool_calls or content).
+	mux.HandleFunc("POST /v1/chat/completions", server.chatCompletions)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -136,8 +143,89 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(d)
 }
 
+// chatCompletions serves the OpenAI chat-completions wire. It picks the next
+// scripted decision (per-agent, keyed on the system message so parent/child
+// agents script independently; global-sequence/body-hash fallback) and renders
+// it as an OpenAI response openaillm can parse.
+func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	key := keyFor(body)
+	if sys := systemMessage(body); sys != "" {
+		key = keyForString(sys)
+	}
+	d := s.next(key)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(decisionToOpenAI(d))
+}
+
+// systemMessage extracts the first system message's content (the Agent's
+// instructions — stable across the loop, unlike the growing history) from an
+// OpenAI request body, or "" if absent.
+func systemMessage(body []byte) string {
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return ""
+	}
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// decisionToOpenAI renders a scripted rt.LLMDecision as an OpenAI
+// chat-completions response: a tool call → choices[0].message.tool_calls;
+// otherwise the FinalAnswer output (or a canned done answer) → assistant
+// content. Shapes match pkg/agentruntime/openaillm's parser.
+func decisionToOpenAI(d rt.LLMDecision) map[string]any {
+	msg := map[string]any{"role": "assistant"}
+	finish := "stop"
+	switch {
+	case d.ToolCall != nil:
+		args := string(d.ToolCall.Arguments)
+		if args == "" {
+			args = "{}"
+		}
+		msg["tool_calls"] = []map[string]any{{
+			"id":       "call_1",
+			"type":     "function",
+			"function": map[string]any{"name": d.ToolCall.Tool, "arguments": args},
+		}}
+		finish = "tool_calls"
+	case d.FinalAnswer != nil:
+		msg["content"] = string(d.FinalAnswer.Output)
+	default:
+		msg["content"] = `{"answer":"done"}`
+	}
+	return map[string]any{
+		"choices": []map[string]any{{"index": 0, "message": msg, "finish_reason": finish}},
+		"usage": map[string]any{
+			"prompt_tokens":     d.TokensIn,
+			"completion_tokens": d.TokensOut,
+		},
+	}
+}
+
 func keyFor(body []byte) string {
 	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func keyForString(s string) string {
+	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
 

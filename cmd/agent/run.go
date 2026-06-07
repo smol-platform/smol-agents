@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/invokers"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime/openaillm"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 )
@@ -50,12 +54,34 @@ func runAgentRun(args []string) int {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
-	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser))
+	// Register the loop-mode tool invokers (HTTP + MCP; M2.12/M2.14). The tool
+	// catalog itself is loaded from tools.json by RunOnce. WireAgentInvoker adds
+	// the kind=agent (A2A) invoker when the pod has in-cluster API access (M3 A1);
+	// without it kind=agent stays fail-closed.
+	toolInvokers := invokers.WireAgentInvoker(invokers.Default(leaser, nil))
+
+	// pi-mono (M4.16): start the in-pod pi-bridge before the run so the harness's
+	// HTTP call to 127.0.0.1:8848 lands; SIGTERM it on exit. No-op for other kinds.
+	stopBridge := maybeStartPiBridge(ctx, *dir)
+	defer stopBridge()
+
+	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser),
+		agentruntime.WithInvokers(toolInvokers))
 	wire := agentruntime.ResultToWire(res, runErr)
 
 	// Full result to stdout for log-based debugging.
 	os.Stdout.Write(marshalRunResult(wire))
 	os.Stdout.Write([]byte("\n"))
+
+	// M2.9: when the result won't fit the termination cap, park the FULL RunResult
+	// in the per-tenant overflow sink (if configured) and stamp Trace.OverflowRef
+	// BEFORE clamping, so the trimmed message points at the recoverable detail. No
+	// sink configured → the full result lives in the stdout logs only.
+	if !termMessageFits(wire) {
+		if sink := overflowSinkFromEnv(ctx); sink != nil {
+			wire = stampOverflowTrace(wire, sink, os.Getenv("POD_NAMESPACE"), os.Getenv("RUN_NAME"))
+		}
+	}
 
 	// The termination message is the controller's primary signal and must stay
 	// valid JSON under the kubelet's ~4KiB cap. clampForTerminationMessage trims
@@ -110,6 +136,14 @@ func clampForTerminationMessage(wire agentruntime.RunResult) agentruntime.RunRes
 	if termMessageFits(wire) {
 		return wire
 	}
+	// Drop the steps entirely, but keep the trace summary honest about it (M2.3):
+	// the step/tool-call counts already survive in wire.Trace.
+	if wire.Trace != nil {
+		if b, err := json.Marshal(wire.Steps); err == nil {
+			wire.Trace.DroppedBytes = int64(len(b))
+		}
+		wire.Trace.Truncated = true
+	}
 	wire.Steps = nil
 	return wire
 }
@@ -117,6 +151,63 @@ func clampForTerminationMessage(wire agentruntime.RunResult) agentruntime.RunRes
 func termMessageFits(wire agentruntime.RunResult) bool {
 	b, err := json.Marshal(wire)
 	return err == nil && len(b) <= terminationMessageBudget
+}
+
+// overflowSinkFromEnv builds the trace-overflow S3 sink from the AGENTFS_S3_* env
+// (the run's own object store). Returns nil when no bucket is set — a run with no
+// object store keeps the full trace in pod logs only (M2.9, "no-op without
+// creds"). Object credentials come from the pod's ambient AWS identity (IRSA),
+// not a tenant secret; SSE inherits the bucket config so the overflow object is
+// encrypted like every other AgentFS object.
+func overflowSinkFromEnv(ctx context.Context) agentfs.S3 {
+	bucket := os.Getenv("AGENTFS_S3_BUCKET")
+	if bucket == "" {
+		return nil
+	}
+	s3, err := agentfs.NewAWSS3(ctx, agentfs.AWSS3Config{
+		Bucket:         bucket,
+		Region:         os.Getenv("AGENTFS_S3_REGION"),
+		Endpoint:       os.Getenv("AGENTFS_S3_ENDPOINT"),
+		ForcePathStyle: os.Getenv("AGENTFS_S3_FORCE_PATH_STYLE") == "true",
+		SSEAlgorithm:   os.Getenv("AGENTFS_S3_SSE"),
+		KMSKeyARN:      os.Getenv("AGENTFS_S3_KMS_KEY_ARN"),
+	})
+	if err != nil {
+		return nil
+	}
+	return s3
+}
+
+// overflowKey is the per-tenant (D1) key the full RunResult is parked at when the
+// termination message can't hold the step detail.
+func overflowKey(ns, run string) string {
+	if ns == "" {
+		ns = "default"
+	}
+	if run == "" {
+		run = "run"
+	}
+	return fmt.Sprintf("runs/%s/%s/trace.json", ns, run)
+}
+
+// stampOverflowTrace uploads the full RunResult JSON to the sink and stamps
+// Trace.OverflowRef so the clamped termination message points at it (M2.9).
+// Best-effort: a Put error leaves the ref empty (the full result is still in the
+// stdout logs). The SSE algorithm is inherited from the sink's bucket config.
+func stampOverflowTrace(wire agentruntime.RunResult, sink agentfs.S3, ns, run string) agentruntime.RunResult {
+	body, err := json.Marshal(wire)
+	if err != nil {
+		return wire
+	}
+	key := overflowKey(ns, run)
+	if _, err := sink.Put(key, bytes.NewReader(body), agentfs.PutMeta{ContentType: "application/json"}); err != nil {
+		return wire
+	}
+	if wire.Trace == nil {
+		wire.Trace = &v1.TraceSummary{}
+	}
+	wire.Trace.OverflowRef = key
+	return wire
 }
 
 // elideStepPayloads copies steps, stripping each tool call's argument and result
@@ -131,6 +222,10 @@ func elideStepPayloads(steps []v1.Step) []v1.Step {
 		if len(s.ToolCalls) > 0 {
 			tcs := make([]v1.ToolCallRecord, len(s.ToolCalls))
 			for j, tc := range s.ToolCalls {
+				// Record the elided sizes before dropping payloads, so the trace
+				// stays honest about what was removed (M2.3).
+				tc.ArgsBytes = int64(len(tc.Arguments))
+				tc.ResultBytes = int64(len(tc.Result))
 				tc.Arguments = nil
 				tc.Result = nil
 				tcs[j] = tc

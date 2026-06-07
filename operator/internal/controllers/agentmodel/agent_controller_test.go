@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,6 +31,9 @@ func newAgentReconcilerForTest(t *testing.T, initial ...client.Object) *AgentRec
 	if err := amv1.AddToScheme(sch); err != nil {
 		t.Fatalf("amv1 scheme: %v", err)
 	}
+	if err := rbacv1.AddToScheme(sch); err != nil {
+		t.Fatalf("rbacv1 scheme: %v", err)
+	}
 	c := fake.NewClientBuilder().
 		WithScheme(sch).
 		WithObjects(initial...).
@@ -45,6 +49,168 @@ func harnessAgent(name, ns string) *amv1.Agent {
 	a.Spec.Budget = pure.Budget{MaxSteps: 1, MaxTokens: 1024, MaxWallClockSeconds: 60, MaxToolCalls: 0}
 	a.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessHermes, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
 	return a
+}
+
+// loopAgent is a minimal valid loop-mode Agent (has a ModelRef) for policy-gate
+// tests.
+func loopAgent(name, ns, provider string) *amv1.Agent {
+	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+	a.Spec.Model = pure.ModelRef{ProviderRef: provider, Name: "m"}
+	a.Spec.Instructions = "hi"
+	a.Spec.Budget = pure.Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0}
+	return a
+}
+
+func reconcileAgent(t *testing.T, r *AgentReconciler, ns, name string) *amv1.Agent {
+	t.Helper()
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: name}}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	got := &amv1.Agent{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, got); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	return got
+}
+
+// M1.5: a namespace AgentPolicy that excludes the Agent's provider flips it to
+// Failed/PolicyViolation at reconcile; a conforming policy leaves it Ready.
+func TestAgentReconciler_PolicyGate_DeniesDisallowedProvider(t *testing.T) {
+	agent := loopAgent("alice", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	policy := &amv1.AgentPolicy{ObjectMeta: metav1.ObjectMeta{Name: "only-openai", Namespace: "tenant-a"},
+		Spec: pure.AgentPolicySpec{AllowedProviders: []string{"openai"}}}
+
+	r := newAgentReconcilerForTest(t, agent, provider, policy)
+	got := reconcileAgent(t, r, "tenant-a", "alice")
+	if got.Status.Phase != "Failed" || got.Status.Reason != "PolicyViolation" {
+		t.Fatalf("want Failed/PolicyViolation, got %q/%q (%s)", got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
+func TestAgentReconciler_PolicyGate_AllowsConformingProvider(t *testing.T) {
+	agent := loopAgent("bob", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	policy := &amv1.AgentPolicy{ObjectMeta: metav1.ObjectMeta{Name: "allow-anthropic", Namespace: "tenant-a"},
+		Spec: pure.AgentPolicySpec{AllowedProviders: []string{"anthropic"}}}
+
+	r := newAgentReconcilerForTest(t, agent, provider, policy)
+	got := reconcileAgent(t, r, "tenant-a", "bob")
+	if got.Status.Phase != "Ready" {
+		t.Fatalf("want Ready, got %q/%q (%s)", got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
+// M2.15: a loop agent with a kind=mcp tool on a stdio (non-http) URL is failed
+// closed unless the URL is on the operator allow-list; http(s) MCP is unaffected.
+func TestAgentReconciler_StdioMCPAllowList(t *testing.T) {
+	provider := func() *amv1.ModelProvider {
+		return &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	}
+	stdioTool := func() *amv1.Tool {
+		return &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "stdio-mcp", Namespace: "tenant-a"},
+			Spec: pure.ToolSpec{Kind: pure.ToolMCP, MCP: &pure.MCPSpec{URL: "mcp://local-server"}}}
+	}
+	loopMCP := func(name string) *amv1.Agent {
+		a := loopAgent(name, "tenant-a", "anthropic")
+		a.Spec.Tools = []pure.ToolRef{{Name: "stdio-mcp"}}
+		return a
+	}
+
+	// Not allow-listed → Failed/StdioMCPNotAllowed.
+	r := newAgentReconcilerForTest(t, loopMCP("loopy"), provider(), stdioTool())
+	if got := reconcileAgent(t, r, "tenant-a", "loopy"); got.Status.Phase != "Failed" || got.Status.Reason != "StdioMCPNotAllowed" {
+		t.Fatalf("un-allow-listed stdio MCP → want Failed/StdioMCPNotAllowed, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+
+	// Allow-listed → passes the stdio gate.
+	r2 := newAgentReconcilerForTest(t, loopMCP("loopy2"), provider(), stdioTool())
+	r2.AllowedStdioMCP = map[string]bool{"mcp://local-server": true}
+	if got := reconcileAgent(t, r2, "tenant-a", "loopy2"); got.Status.Reason == "StdioMCPNotAllowed" {
+		t.Errorf("allow-listed stdio MCP must pass the gate, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+
+	// http(s) MCP is unaffected by the stdio gate, even with an empty allow-list.
+	httpTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "http-mcp", Namespace: "tenant-a"},
+		Spec: pure.ToolSpec{Kind: pure.ToolMCP, MCP: &pure.MCPSpec{URL: "https://mcp.example/mcp"}}}
+	loopH := loopAgent("httpy", "tenant-a", "anthropic")
+	loopH.Spec.Tools = []pure.ToolRef{{Name: "http-mcp"}}
+	rH := newAgentReconcilerForTest(t, loopH, provider(), httpTool)
+	if got := reconcileAgent(t, rH, "tenant-a", "httpy"); got.Status.Reason == "StdioMCPNotAllowed" {
+		t.Errorf("http MCP must not hit the stdio gate, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+func TestIsStdioMCPTool(t *testing.T) {
+	mcp := func(url string) pure.ToolSpec { return pure.ToolSpec{Kind: pure.ToolMCP, MCP: &pure.MCPSpec{URL: url}} }
+	if !isStdioMCPTool(mcp("mcp://x")) {
+		t.Error("mcp:// must be stdio")
+	}
+	for _, u := range []string{"https://x/mcp", "http://x/mcp", ""} {
+		if isStdioMCPTool(mcp(u)) {
+			t.Errorf("%q must not be stdio", u)
+		}
+	}
+	if isStdioMCPTool(pure.ToolSpec{Kind: pure.ToolHTTP, HTTP: &pure.HTTPSpec{URL: "mcp://x"}}) {
+		t.Error("non-mcp kind must not be stdio-mcp")
+	}
+}
+
+// M2.16: a loop-mode agent referencing a tool whose kind has no production
+// invoker (agent/function) is failed closed; a harness-mode agent with the same
+// inert tool ref is not false-positived.
+func TestAgentReconciler_ToolKindUnsupported(t *testing.T) {
+	// kind=function has no production invoker (test-only) and stays reserved even
+	// after A2A (kind=agent) was wired — so it is the canonical fail-closed case.
+	fnTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "fn", Namespace: "tenant-a"}, Spec: pure.ToolSpec{Kind: pure.ToolFunction, Function: &pure.FunctionSpec{Name: "noop"}}}
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+
+	loop := loopAgent("loopy", "tenant-a", "anthropic")
+	loop.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
+	r := newAgentReconcilerForTest(t, loop, provider, fnTool)
+	got := reconcileAgent(t, r, "tenant-a", "loopy")
+	if got.Status.Phase != "Failed" || got.Status.Reason != "ToolKindUnsupported" {
+		t.Fatalf("loop agent w/ kind:function tool → want Failed/ToolKindUnsupported, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+
+	h := harnessAgent("harn", "tenant-a")
+	h.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
+	r2 := newAgentReconcilerForTest(t, h, fnTool)
+	got2 := reconcileAgent(t, r2, "tenant-a", "harn")
+	if got2.Status.Reason == "ToolKindUnsupported" {
+		t.Fatalf("harness-mode inert tool ref must NOT be failed as ToolKindUnsupported (got %q/%q)", got2.Status.Phase, got2.Status.Reason)
+	}
+}
+
+func TestAgentReconciler_A2ARBACGrant(t *testing.T) {
+	// A loop Agent that declares a kind=agent tool is now supported (A2A wired)
+	// and reconciles to Ready, and the operator grants it the namespaced A2A
+	// Role + RoleBinding so its run pods may create child AgentRuns.
+	agentTool := &amv1.Tool{
+		ObjectMeta: metav1.ObjectMeta{Name: "delegate", Namespace: "tenant-a"},
+		Spec:       pure.ToolSpec{Kind: pure.ToolAgent, Agent: &pure.AgentTargetSpec{Ref: pure.ToolRef{Name: "child"}}},
+	}
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	loop := loopAgent("composer", "tenant-a", "anthropic")
+	loop.Spec.Tools = []pure.ToolRef{{Name: "delegate"}}
+
+	r := newAgentReconcilerForTest(t, loop, provider, agentTool)
+	got := reconcileAgent(t, r, "tenant-a", "composer")
+	if got.Status.Phase != "Ready" {
+		t.Fatalf("loop agent w/ kind=agent tool → want Ready, got %q/%q", got.Status.Phase, got.Status.Reason)
+	}
+	roleName := builders.AgentA2ARoleName("composer")
+	role := &rbacv1.Role{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: roleName}, role); err != nil {
+		t.Fatalf("A2A Role %q not created: %v", roleName, err)
+	}
+	rb := &rbacv1.RoleBinding{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: roleName}, rb); err != nil {
+		t.Fatalf("A2A RoleBinding %q not created: %v", roleName, err)
+	}
+	if len(rb.Subjects) == 0 || rb.Subjects[0].Name != builders.AgentSAName("composer") {
+		t.Errorf("A2A RoleBinding must bind the agent's run SA %q, got %+v", builders.AgentSAName("composer"), rb.Subjects)
+	}
 }
 
 func TestToPure_RoundTrip(t *testing.T) {

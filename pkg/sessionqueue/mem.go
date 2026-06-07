@@ -77,4 +77,7 @@ func (q *MemQueue) FetchResult(ctx context.Context, key, turnID string, timeout 
 	}
 }
 
+// UpdateRetention is a no-op for the in-memory queue (no durable retention).
+func (q *MemQueue) UpdateRetention(time.Duration) error { return nil }
+
 func (q *MemQueue) Close() error { return nil }

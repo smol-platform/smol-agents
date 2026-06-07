@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -19,6 +20,7 @@ import (
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
@@ -238,8 +240,91 @@ func TestAgentRunReconciler_MarkTerminal_ClearsStaleReason(t *testing.T) {
 // The runtime's own reason ("budget:tokens" for an Expired run that still
 // exits 0) is the most specific signal and must win over whatever pod-level
 // reason markTerminal left behind.
+// M3.12: a Hermes run that belongs to an AgentSession gets a stable
+// HERMES_SESSION_ID (sess-<session UID>) + persistent session policy injected
+// into a COPY of the agent; the stored Agent is never mutated.
+func TestHermesSessionAgent_InjectsSessionID(t *testing.T) {
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "sess-1", Namespace: "tenant-a", UID: "uid-xyz"}}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, session)
+	hermes := harnessAgent("alice", "tenant-a") // HarnessHermes
+
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	run.Spec.SessionRef = "sess-1"
+	out := r.hermesSessionAgent(context.Background(), run, hermes)
+	if out.Spec.Harness.SessionPolicy != pure.SessionPersistent {
+		t.Errorf("sessionPolicy not set to persistent")
+	}
+	var got string
+	for _, e := range out.Spec.Harness.Env {
+		if e.Name == "HERMES_SESSION_ID" {
+			got = e.Value
+		}
+	}
+	if got != "sess-uid-xyz" {
+		t.Errorf("HERMES_SESSION_ID = %q, want sess-uid-xyz", got)
+	}
+	if len(hermes.Spec.Harness.Env) != 0 {
+		t.Errorf("original agent env mutated: %+v", hermes.Spec.Harness.Env)
+	}
+
+	noSess := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	if r.hermesSessionAgent(context.Background(), noSess, hermes) != hermes {
+		t.Errorf("no sessionRef must return the agent unchanged")
+	}
+}
+
+// M3.12: a session's MemoryScope is injected as HERMES_SESSION_KEY; absent → none.
+func TestHermesSessionAgent_MemoryScope(t *testing.T) {
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "tenant-a", UID: "u"}}
+	session.Spec.MemoryScope = "team-shared"
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, session)
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	run.Spec.SessionRef = "s"
+
+	out := r.hermesSessionAgent(context.Background(), run, harnessAgent("alice", "tenant-a"))
+	var key string
+	for _, e := range out.Spec.Harness.Env {
+		if e.Name == "HERMES_SESSION_KEY" {
+			key = e.Value
+		}
+	}
+	if key != "team-shared" {
+		t.Errorf("HERMES_SESSION_KEY = %q, want team-shared", key)
+	}
+
+	// No MemoryScope → no HERMES_SESSION_KEY.
+	noScope := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s2", Namespace: "tenant-a", UID: "u2"}}
+	r2 := newRunReconcilerForTest(t, interceptor.Funcs{}, noScope)
+	run2 := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a"}}
+	run2.Spec.SessionRef = "s2"
+	for _, e := range r2.hermesSessionAgent(context.Background(), run2, harnessAgent("alice", "tenant-a")).Spec.Harness.Env {
+		if e.Name == "HERMES_SESSION_KEY" {
+			t.Error("no MemoryScope must inject no HERMES_SESSION_KEY")
+		}
+	}
+}
+
+// M4.18: a pod killed by activeDeadlineSeconds carries the reason at the POD
+// level — terminationReason must surface it (pod:DeadlineExceeded), preferring
+// the pod-level reason over container status, and falling back to pod:Failed.
+func TestTerminationReason_PrefersPodLevel(t *testing.T) {
+	deadline := &corev1.Pod{Status: corev1.PodStatus{Reason: "DeadlineExceeded"}}
+	if got := terminationReason(deadline); got != "pod:DeadlineExceeded" {
+		t.Errorf("deadline pod → %q, want pod:DeadlineExceeded", got)
+	}
+	container := &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+		{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled"}}},
+	}}}
+	if got := terminationReason(container); got != "pod:OOMKilled" {
+		t.Errorf("container-terminated pod → %q, want pod:OOMKilled", got)
+	}
+	if got := terminationReason(&corev1.Pod{}); got != "pod:Failed" {
+		t.Errorf("bare failed pod → %q, want pod:Failed", got)
+	}
+}
+
 func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
-	r := &AgentRunReconciler{}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
 	r.markTerminal(run, pure.PhaseCompleted, "") // pod said Succeeded, no reason
 	pod := runPodWithTerminationMessage(agentruntime.RunResult{
@@ -247,7 +332,7 @@ func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
 		TerminationReason: "budget:tokens",
 		Usage:             pure.Usage{Steps: 1, Tokens: 16102},
 	})
-	r.foldRunResult(run, pod)
+	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.State != pure.PhaseExpired {
 		t.Errorf("state should be refined to Expired, got %q", run.Status.State)
 	}
@@ -262,7 +347,7 @@ func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
 // A runtime error wins over both any prior reason and over the runtime's own
 // TerminationReason (an Error is more diagnostic than the bare reason).
 func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
-	r := &AgentRunReconciler{}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
 	r.markTerminal(run, pure.PhaseFailed, "pod:Error")
 	pod := runPodWithTerminationMessage(agentruntime.RunResult{
@@ -270,9 +355,331 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 		TerminationReason: "harness:timeout",
 		Error:             "harness: http 502: upstream refused",
 	})
-	r.foldRunResult(run, pod)
+	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.TerminationReason != "harness: http 502: upstream refused" {
 		t.Errorf("error should win, got %q", run.Status.TerminationReason)
+	}
+}
+
+// M2.26: foldArtifacts maps the sidecar's termination-message manifest into
+// Status.Artifacts; egress-requested-but-unreported folds to Failed; an
+// unconfigured pod leaves Status.Artifacts nil.
+func TestAgentRunReconciler_FoldArtifacts(t *testing.T) {
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	sidecar := builders.StorageFSSidecarName
+	artifactEnv := []corev1.EnvVar{{Name: "AGENTFS_ARTIFACTS", Value: `[{"Name":"out","Glob":"out/*"}]`}}
+
+	mb, _ := json.Marshal(agentfs.ArtifactManifest{
+		State: agentfs.ArtifactComplete,
+		Refs:  []agentfs.ArtifactRef{{Name: "out", Path: "out/r.json", S3Key: "artifacts/ns/r1/out/r.json", SizeBytes: 12, SHA256: "abc"}},
+	})
+	reported := &corev1.Pod{
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: sidecar, Env: artifactEnv}}},
+		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+			Name: sidecar, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: string(mb)}},
+		}}},
+	}
+	run := sampleRun()
+	r.foldArtifacts(run, reported)
+	if run.Status.Artifacts == nil || run.Status.Artifacts.State != agentfs.ArtifactComplete {
+		t.Fatalf("manifest not folded: %+v", run.Status.Artifacts)
+	}
+	if len(run.Status.Artifacts.Refs) != 1 || run.Status.Artifacts.Refs[0].S3Key != "artifacts/ns/r1/out/r.json" {
+		t.Errorf("ref not mapped: %+v", run.Status.Artifacts.Refs)
+	}
+
+	// Configured but the sidecar reported nothing → Failed.
+	silent := &corev1.Pod{
+		Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: sidecar, Env: artifactEnv}}},
+		Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+			Name: sidecar, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+		}}},
+	}
+	run2 := sampleRun()
+	r.foldArtifacts(run2, silent)
+	if run2.Status.Artifacts == nil || run2.Status.Artifacts.State != pure.ArtifactStateFailed {
+		t.Errorf("egress requested but unreported must fold to Failed, got %+v", run2.Status.Artifacts)
+	}
+
+	// No artifact env → no fold (nil).
+	run3 := sampleRun()
+	r.foldArtifacts(run3, &corev1.Pod{})
+	if run3.Status.Artifacts != nil {
+		t.Errorf("unconfigured pod must leave Artifacts nil, got %+v", run3.Status.Artifacts)
+	}
+}
+
+func getRun(t *testing.T, r *AgentRunReconciler, ns, name string) *amv1.AgentRun {
+	t.Helper()
+	got := &amv1.AgentRun{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, got); err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	return got
+}
+
+func runPodExists(r *AgentRunReconciler, ns, name string) bool {
+	return r.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, &corev1.Pod{}) == nil
+}
+
+// M4.4: a session.required Agent is served by its resident AgentSession worker,
+// so a bare standalone AgentRun (no sessionRef) against it is a misuse — it
+// fails fast with reason agent:requires-session and NO pod is created. A
+// session-linked turn-run (sessionRef set) skips the gate.
+func TestAgentRunReconciler_SessionRequiredRejectsStandaloneRun(t *testing.T) {
+	agent := sampleAgent()
+	agent.Spec.Session = &pure.SessionSpec{Required: true}
+	run := sampleRun() // no SessionRef
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, run)
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := getRun(t, r, run.Namespace, run.Name)
+	if got.Status.State != pure.PhaseFailed || got.Status.TerminationReason != "agent:requires-session" {
+		t.Fatalf("standalone run vs resident agent: state=%s reason=%q, want Failed/agent:requires-session",
+			got.Status.State, got.Status.TerminationReason)
+	}
+	if runPodExists(r, run.Namespace, run.Name) {
+		t.Error("a rejected resident-agent run must not create a pod")
+	}
+
+	// Control: a session-linked turn-run (sessionRef set) is NOT rejected by the
+	// gate (it proceeds past it — it is the legitimate per-turn run path).
+	turn := sampleRun()
+	turn.Name = "turn-001"
+	turn.Spec.SessionRef = "sess-1"
+	r2 := newRunReconcilerForTest(t, interceptor.Funcs{}, sampleAgentSessionRequired(), turn)
+	req2 := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: turn.Namespace, Name: turn.Name}}
+	if _, err := r2.Reconcile(context.Background(), req2); err != nil {
+		t.Fatalf("Reconcile (turn-run): %v", err)
+	}
+	if got := getRun(t, r2, turn.Namespace, turn.Name); got.Status.TerminationReason == "agent:requires-session" {
+		t.Errorf("a session-linked turn-run must not be rejected by the resident-agent gate")
+	}
+}
+
+func sampleAgentSessionRequired() *amv1.Agent {
+	a := sampleAgent()
+	a.Spec.Session = &pure.SessionSpec{Required: true}
+	return a
+}
+
+// M1.12: the per-tenant concurrency gate holds a run Pending when the namespace
+// (or Agent) is at its Running-runs cap, and admits otherwise.
+func mkRun(name, ns, ref string) *amv1.AgentRun {
+	r := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+	r.Spec.AgentRef = ref
+	r.Spec.Input = []byte(`{}`)
+	return r
+}
+
+func TestAdmitRunConcurrency_NamespaceCap(t *testing.T) {
+	quota := &amv1.AgentRunQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "q", Namespace: "tenant-a"},
+		Spec:       pure.AgentRunQuotaSpec{MaxConcurrentRuns: 2},
+	}
+	rec := newRunReconcilerForTest(t, interceptor.Funcs{}, quota, mkRun("run-a", "tenant-a", "alice"), mkRun("run-b", "tenant-a", "bob"))
+	for _, n := range []string{"run-a", "run-b"} { // seed both Running
+		got := getRun(t, rec, "tenant-a", n)
+		got.Status.State = pure.PhaseRunning
+		if err := rec.Status().Update(context.Background(), got); err != nil {
+			t.Fatalf("seed running: %v", err)
+		}
+	}
+	newRun := mkRun("run-c", "tenant-a", "carol")
+	handled, _, _ := rec.admitRunConcurrency(context.Background(), newRun, harnessAgent("carol", "tenant-a"))
+	if !handled || newRun.Status.State != pure.PhasePending {
+		t.Fatalf("at-cap run must be held Pending; handled=%v state=%q", handled, newRun.Status.State)
+	}
+	if newRun.Status.TerminationReason != "namespace at concurrency cap 2" {
+		t.Errorf("reason = %q", newRun.Status.TerminationReason)
+	}
+}
+
+func TestAdmitRunConcurrency_UnderCapAdmits(t *testing.T) {
+	quota := &amv1.AgentRunQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "q", Namespace: "tenant-a"},
+		Spec:       pure.AgentRunQuotaSpec{MaxConcurrentRuns: 5},
+	}
+	rec := newRunReconcilerForTest(t, interceptor.Funcs{}, quota, mkRun("run-a", "tenant-a", "alice"))
+	got := getRun(t, rec, "tenant-a", "run-a")
+	got.Status.State = pure.PhaseRunning
+	_ = rec.Status().Update(context.Background(), got)
+
+	handled, _, _ := rec.admitRunConcurrency(context.Background(), mkRun("run-b", "tenant-a", "bob"), harnessAgent("bob", "tenant-a"))
+	if handled {
+		t.Fatalf("under cap must admit (handled=false)")
+	}
+}
+
+func TestAdmitRunConcurrency_PerAgentCap(t *testing.T) {
+	rec := newRunReconcilerForTest(t, interceptor.Funcs{}, mkRun("run-a", "tenant-a", "alice"))
+	got := getRun(t, rec, "tenant-a", "run-a")
+	got.Status.State = pure.PhaseRunning
+	_ = rec.Status().Update(context.Background(), got)
+
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.MaxConcurrentRuns = 1 // alice already has 1 Running
+	newRun := mkRun("run-b", "tenant-a", "alice")
+	handled, _, _ := rec.admitRunConcurrency(context.Background(), newRun, agent)
+	if !handled || newRun.Status.State != pure.PhasePending {
+		t.Fatalf("per-agent cap must hold the second alice run; handled=%v state=%q", handled, newRun.Status.State)
+	}
+}
+
+// M5.3: a gated run parks in RequiresAction (no pod, no cost) until a token-
+// matched approval lets it proceed; deny → Cancelled; stale token ignored; TTL
+// → Expired.
+func TestPreRunApproval_GateThenApprove(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 3600}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile 1: %v", err)
+	}
+	got := getRun(t, r, "tenant-a", "run-001")
+	if got.Status.State != pure.PhaseRequiresAction {
+		t.Fatalf("want RequiresAction, got %q", got.Status.State)
+	}
+	if got.Status.PendingAction == nil || got.Status.PendingAction.Token == "" || got.Status.PendingAction.Kind != "pre-run" {
+		t.Fatalf("pending token not minted: %+v", got.Status.PendingAction)
+	}
+	if runPodExists(r, "tenant-a", "run-001") {
+		t.Fatalf("no pod must exist while awaiting approval")
+	}
+
+	got.Spec.Decision = &pure.Decision{Token: got.Status.PendingAction.Token, Approve: true, DecidedBy: "ops"}
+	if err := r.Update(context.Background(), got); err != nil {
+		t.Fatalf("patch decision: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile 2: %v", err)
+	}
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State == pure.PhaseRequiresAction {
+		t.Fatalf("approval should clear the gate; still RequiresAction")
+	}
+	if after.Status.PendingAction != nil {
+		t.Errorf("PendingAction should be cleared after approval, got %+v", after.Status.PendingAction)
+	}
+}
+
+func TestPreRunApproval_Deny(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 3600}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	_, _ = r.Reconcile(context.Background(), req)
+	got := getRun(t, r, "tenant-a", "run-001")
+	got.Spec.Decision = &pure.Decision{Token: got.Status.PendingAction.Token, Approve: false, Reason: "nope"}
+	if err := r.Update(context.Background(), got); err != nil {
+		t.Fatalf("patch decision: %v", err)
+	}
+	_, _ = r.Reconcile(context.Background(), req)
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State != pure.PhaseCancelled {
+		t.Fatalf("deny → want Cancelled, got %q", after.Status.State)
+	}
+}
+
+func TestPreRunApproval_StaleTokenIgnored(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 3600}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	_, _ = r.Reconcile(context.Background(), req)
+	got := getRun(t, r, "tenant-a", "run-001")
+	got.Spec.Decision = &pure.Decision{Token: "wrong-token", Approve: true}
+	if err := r.Update(context.Background(), got); err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	_, _ = r.Reconcile(context.Background(), req)
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State != pure.PhaseRequiresAction {
+		t.Fatalf("stale token must keep the run parked, got %q", after.Status.State)
+	}
+}
+
+func TestPreRunApproval_ExpireOnTTL(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a")
+	agent.Spec.Approval = &pure.ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 1}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, sampleRun())
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "run-001"}}
+
+	// Seed an already-old pending action (the fake client may not persist an
+	// initial Status, so set it explicitly).
+	seed := getRun(t, r, "tenant-a", "run-001")
+	seed.Status.State = pure.PhaseRequiresAction
+	seed.Status.PendingAction = &pure.PendingAction{
+		Kind: "pre-run", Token: "tok1",
+		RequestedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+	}
+	if err := r.Status().Update(context.Background(), seed); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	after := getRun(t, r, "tenant-a", "run-001")
+	if after.Status.State != pure.PhaseExpired {
+		t.Fatalf("past-TTL approval → want Expired, got %q", after.Status.State)
+	}
+}
+
+// M1.4: a namespace RedactionPolicy masks the folded Status.Output and any
+// secret in a Step's tool-call result; with no policy the fold is byte-identical
+// (zero-overhead fast path). RedactJSON re-marshals via map[string]any, so key
+// order is sorted and the masked output is deterministic.
+func TestAgentRunReconciler_FoldRunResult_Redaction(t *testing.T) {
+	policy := &amv1.AgentPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "redact", Namespace: "tenant-a"},
+		Spec:       pure.AgentPolicySpec{Redaction: &pure.RedactionPolicy{Patterns: []string{`sk-[a-z0-9]+`}}},
+	}
+	rr := agentruntime.RunResult{
+		Phase:  pure.PhaseCompleted,
+		Output: json.RawMessage(`{"key":"sk-deadbeef","n":1}`),
+		Steps: []pure.Step{{Index: 0, Kind: pure.StepToolCall, ToolCalls: []pure.ToolCallRecord{
+			{Tool: "fetch", Result: json.RawMessage(`{"token":"sk-secret99"}`)},
+		}}},
+	}
+
+	// Policy present → secrets masked.
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, policy)
+	run := sampleRun()
+	r.foldRunResult(context.Background(), run, runPodWithTerminationMessage(rr))
+	if got := string(run.Status.Output); got != `{"key":"[REDACTED]","n":1}` {
+		t.Errorf("Output not redacted: %s", got)
+	}
+	if got := string(run.Status.Steps[0].ToolCalls[0].Result); got != `{"token":"[REDACTED]"}` {
+		t.Errorf("Step tool-call result not redacted: %s", got)
+	}
+
+	// No policy → byte-identical fold.
+	r2 := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run2 := sampleRun()
+	r2.foldRunResult(context.Background(), run2, runPodWithTerminationMessage(rr))
+	if got := string(run2.Status.Output); got != `{"key":"sk-deadbeef","n":1}` {
+		t.Errorf("no-policy output must be byte-identical: %s", got)
+	}
+}
+
+// M2.2: the run's trace summary folds into Status.Trace.
+func TestAgentRunReconciler_FoldRunResult_Trace(t *testing.T) {
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run := sampleRun()
+	pod := runPodWithTerminationMessage(agentruntime.RunResult{
+		Phase: pure.PhaseCompleted,
+		Trace: &pure.TraceSummary{StepCount: 3, ToolCallCount: 5, Truncated: true},
+	})
+	r.foldRunResult(context.Background(), run, pod)
+	if run.Status.Trace == nil || run.Status.Trace.StepCount != 3 || run.Status.Trace.ToolCallCount != 5 || !run.Status.Trace.Truncated {
+		t.Fatalf("Status.Trace = %+v, want {3,5,truncated}", run.Status.Trace)
 	}
 }
 
@@ -280,7 +687,7 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 // markTerminal already set — for a normal Completed run that's the empty
 // string, and the status should land empty.
 func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) {
-	r := &AgentRunReconciler{}
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run := sampleRun()
 	r.markPending(run, "PodPending", "Pod is Pending")
 	r.markTerminal(run, pure.PhaseCompleted, "")
@@ -290,7 +697,7 @@ func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) 
 		Steps:  []pure.Step{{Index: 0, Kind: pure.StepFinal, TokensIn: 60, TokensOut: 40}},
 		Usage:  pure.Usage{Steps: 1, Tokens: 100},
 	})
-	r.foldRunResult(run, pod)
+	r.foldRunResult(context.Background(), run, pod)
 	if run.Status.TerminationReason != "" {
 		t.Errorf("clean success should leave empty terminationReason, got %q", run.Status.TerminationReason)
 	}

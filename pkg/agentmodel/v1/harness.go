@@ -3,6 +3,8 @@ package v1
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -40,11 +42,20 @@ const (
 	HarnessClaudeCode HarnessKind = "claude-code"
 	// HarnessCodex runs OpenAI's `codex exec` CLI as a subprocess (CLI kind).
 	HarnessCodex HarnessKind = "codex"
-	// HarnessPi is a FALSE FRIEND: it drives Inflection AI's hosted Pi inference
-	// HTTP API (default https://api.inflection.ai/external/api/inference), NOT
-	// Mario Zechner's pi-mono coding-agent CLI. For pi-mono use HarnessGenericCLI
-	// with a custom image — see docs/design/harness-authoring.md.
+	// HarnessInflectionPi drives Inflection AI's hosted Pi inference HTTP API
+	// (default https://api.inflection.ai/external/api/inference). This is the
+	// canonical name; the old "pi" kind was a FALSE FRIEND for Mario Zechner's
+	// pi-mono coding-agent CLI and is now the deprecated alias HarnessPi (M4.14).
+	HarnessInflectionPi HarnessKind = "inflection-pi"
+	// HarnessPi is the DEPRECATED alias for HarnessInflectionPi — still accepted
+	// (CanonicalHarnessKind maps it) but emits a deprecation path; new specs
+	// should use "inflection-pi".
 	HarnessPi HarnessKind = "pi"
+	// HarnessPiMono drives Mario Zechner's `pi-mono` coding-agent CLI via an
+	// in-pod pi-bridge HTTP server (M4.14/M4.15) — distinct from the hosted
+	// Inflection Pi above. Kind registration only here; the HTTP harness impl +
+	// bridge land in M4.15/M4.16.
+	HarnessPiMono HarnessKind = "pi-mono"
 	// HarnessAider runs the `aider` CLI as a subprocess (CLI kind).
 	HarnessAider HarnessKind = "aider"
 	// HarnessGoose runs Block's `goose run` CLI as a subprocess (CLI kind).
@@ -57,17 +68,31 @@ const (
 	// OpenAI-compatible /v1/chat/completions API (HTTP kind). Only HTTP kinds
 	// (hermes/pi/generic-http) unpack multimodal input.images; CLI kinds drop them.
 	HarnessHermes HarnessKind = "hermes"
+	// HarnessOpenClaw drives an OpenClaw agent-loop daemon over a WebSocket RPC
+	// (M4.20). It is WS-first (the single-POST generic-http harness can't speak
+	// its session-open→send→reply envelope) and requires spec.http.url (ws://).
+	HarnessOpenClaw HarnessKind = "openclaw"
 )
 
 // Valid returns true iff k is a known kind. Unknown kinds are rejected
 // at admission so a typo doesn't silently fall through to a no-op.
 func (k HarnessKind) Valid() bool {
 	switch k {
-	case HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessAider, HarnessGoose,
-		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes:
+	case HarnessClaudeCode, HarnessCodex, HarnessInflectionPi, HarnessPi, HarnessPiMono, HarnessAider, HarnessGoose,
+		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes, HarnessOpenClaw:
 		return true
 	}
 	return false
+}
+
+// CanonicalHarnessKind resolves a deprecated kind alias to its canonical kind
+// ("pi" → "inflection-pi"); all other kinds pass through unchanged. The harness
+// registry resolves through this so a deprecated alias still finds its impl.
+func CanonicalHarnessKind(k HarnessKind) HarnessKind {
+	if k == HarnessPi {
+		return HarnessInflectionPi
+	}
+	return k
 }
 
 // SessionPolicy controls whether a SINGLE harness AgentRun reuses state across
@@ -124,6 +149,37 @@ type HarnessSpec struct {
 	// (kind=claude-code|codex|aider|goose|generic-cli).
 	// +optional
 	CLI *HarnessCLISpec `json:"cli,omitempty"`
+
+	// PiMono carries config for kind=pi-mono (the pi coding agent driven over
+	// HTTP via the in-pod pi-bridge, M4.15). Ignored for other kinds.
+	// +optional
+	PiMono *HarnessPiMonoSpec `json:"piMono,omitempty"`
+}
+
+// HarnessPiMonoSpec configures the pi-mono harness (M4.15): the in-pod pi-bridge
+// wraps the pi CLI and the harness drives it over HTTP. pi-mono is the first
+// CLI-family harness to report honest tokens + tool-calls (parsed from pi's
+// --mode json output by the bridge).
+type HarnessPiMonoSpec struct {
+	// Model is the pi model to run (passed to pi --model). +optional
+	Model string `json:"model,omitempty"`
+	// Provider names the model provider the bridge configures for pi. +optional
+	Provider string `json:"provider,omitempty"`
+	// Mode is the pi run mode (default "json", required for token/tool parsing).
+	// +optional
+	Mode string `json:"mode,omitempty"`
+	// URL overrides the bridge endpoint (default http://127.0.0.1:8848/run).
+	// +optional
+	URL string `json:"url,omitempty"`
+	// BridgePort is the in-pod bridge port (default 8848). +optional
+	// +kubebuilder:validation:Minimum=1
+	BridgePort int32 `json:"bridgePort,omitempty"`
+	// ExtraArgs are appended to the pi invocation. +optional
+	ExtraArgs []string `json:"extraArgs,omitempty"`
+	// ActiveDeadlineSeconds caps a single pi run's wall-clock at the pod level
+	// (M4.18); a runaway pi prompt is killed → DeadlineExceeded. +optional
+	// +kubebuilder:validation:Minimum=0
+	ActiveDeadlineSeconds int32 `json:"activeDeadlineSeconds,omitempty"`
 }
 
 // HarnessEnvVar is a typed env var with optional secret broker reference.
@@ -166,17 +222,105 @@ type HarnessCLISpec struct {
 	// +optional
 	ExtraFlags []string `json:"extraFlags,omitempty"`
 
-	// PassthroughEnv is DEAD as of v0.2.0 — it has no reader: the CLI driver's
-	// mergeEnv (pkg/agentruntime/harness/cli.go) already inherits the full parent
-	// environment, so this allow-list is never consulted. Use Env (literal) or
-	// Env[].SecretRef (broker). Slated for removal or implementation.
+	// OutputFormat selects the CLI's machine-readable output (when it supports
+	// one) so the harness can parse tokens/cost/tool-calls. Empty = the kind's
+	// default (claude-code/codex parse "json"; generic-cli stays "text").
+	// +kubebuilder:validation:Enum=text;json;stream-json
 	// +optional
-	PassthroughEnv []string `json:"passthroughEnv,omitempty"`
+	OutputFormat string `json:"outputFormat,omitempty"`
+
+	// ApprovalMode maps to the CLI's permission posture (claude-code
+	// --permission-mode, codex --ask-for-approval). "" / "safe" keep the safe
+	// headless default; "never" enables the opt-in danger flag and is
+	// admission-refused unless the resolved RuntimeClass is a microVM (D3).
+	// +kubebuilder:validation:Enum=safe;acceptEdits;never
+	// +optional
+	ApprovalMode string `json:"approvalMode,omitempty"`
+
+	// AllowedTools / DisallowedTools map to the CLI's permission allow/deny
+	// lists (e.g. claude-code --allowedTools / --disallowedTools).
+	// +optional
+	AllowedTools []string `json:"allowedTools,omitempty"`
+	// +optional
+	DisallowedTools []string `json:"disallowedTools,omitempty"`
+
+	// APIKeyHelperSecret opts into short-lived provider credentials for claude-code
+	// (M3.20): instead of a static ANTHROPIC_API_KEY, claude is configured with an
+	// apiKeyHelper that runs `/agent lease <secret>` to fetch a fresh broker-leased
+	// key, and re-invokes it on TTL/401. Empty = the static key (default). The
+	// named secret must be one the broker is configured to serve.
+	// +optional
+	APIKeyHelperSecret string `json:"apiKeyHelperSecret,omitempty"`
+
+	// CodexBaseURL / CodexModel configure codex's provider (M3.21): when BaseURL is
+	// set the operator renders ~/.codex/config.toml with a [model_providers.platform]
+	// pointing at it (wire_api="responses") and the harness sets CODEX_HOME so codex
+	// routes through the platform's Responses gateway instead of the public OpenAI
+	// API. Empty = codex's built-in defaults.
+	// +optional
+	CodexBaseURL string `json:"codexBaseURL,omitempty"`
+	// +optional
+	CodexModel string `json:"codexModel,omitempty"`
+
+	// MCPServers declares MCP servers claude-code connects to (M3.18). The operator
+	// renders them to a claude mcp-config file mounted with the run spec; the
+	// harness passes --mcp-config and auto-allows mcp__<name>__* tools. stdio
+	// servers must resolve to an operator-approved image (cluster allow-list,
+	// D7/D11); http/sse URLs to internal/private hosts are rejected at admission.
+	// +optional
+	MCPServers []MCPServerSpec `json:"mcpServers,omitempty"`
+}
+
+// ClaudeMCPConfigFile is the run-spec ConfigMap key (and filename) holding the
+// rendered claude mcp-config; ClaudeMCPConfigPath is where it mounts (must equal
+// builders.RunSpecMountPath + "/" + ClaudeMCPConfigFile — the harness reads it
+// without importing the operator builders). M3.18.
+const (
+	ClaudeMCPConfigFile = "claude-mcp.json"
+	ClaudeMCPConfigPath = "/etc/smol-agents/run/" + ClaudeMCPConfigFile
+
+	// CodexConfigFile is the run-spec ConfigMap key (and filename) holding the
+	// rendered codex config.toml; CodexConfigMountPath is where it mounts. The
+	// codex harness copies it to $CODEX_HOME/config.toml at startup (M3.21).
+	CodexConfigFile      = "codex-config.toml"
+	CodexConfigMountPath = "/etc/smol-agents/run/" + CodexConfigFile
+)
+
+// MCPServerSpec declares one MCP server for claude-code (M3.18). Exactly one
+// transport: stdio (a Command, restricted to the operator's cluster allow-list)
+// or http/sse (a URL — internal/private hosts rejected at admission). Env carries
+// non-secret values; MCP secrets come through the broker, never inline.
+type MCPServerSpec struct {
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=stdio;http;sse
+	Transport string `json:"transport"`
+	// +optional
+	Command []string `json:"command,omitempty"`
+	// +optional
+	URL string `json:"url,omitempty"`
+	// +optional
+	Env []HarnessEnvVar `json:"env,omitempty"`
 }
 
 // HarnessHTTPSpec configures HTTP-based harnesses (pi, generic-http).
 type HarnessHTTPSpec struct {
 	URL string `json:"url"`
+
+	// API selects the Hermes endpoint family: "" / "chat" → /v1/chat/completions
+	// (default, back-compat), "responses" → /v1/responses, "runs" → async
+	// /v1/runs. Only valid for the Hermes kind (M3.9).
+	// +kubebuilder:validation:Enum=chat;responses;runs
+	// +optional
+	API string `json:"api,omitempty"`
+
+	// Stream prefers a streaming/SSE transport where the API supports it (M3.9).
+	// Currently a hint for the async /v1/runs poller. +optional
+	Stream bool `json:"stream,omitempty"`
+
+	// PollIntervalMs is the async /v1/runs poll cadence in ms (0 → 1000). M3.11.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	PollIntervalMs int32 `json:"pollIntervalMs,omitempty"`
 
 	// +optional
 	Method string `json:"method,omitempty"` // POST default
@@ -323,9 +467,19 @@ func ValidateHarness(h HarnessSpec) error {
 		errs = append(errs, fmt.Errorf("harness.sessionPolicy=%q is invalid", h.SessionPolicy))
 	}
 	switch h.Kind {
-	case HarnessGenericHTTP, HarnessPi, HarnessHermes:
+	case HarnessGenericHTTP, HarnessPi, HarnessInflectionPi, HarnessHermes, HarnessOpenClaw:
 		if h.HTTP == nil || strings.TrimSpace(h.HTTP.URL) == "" {
 			errs = append(errs, errors.New("harness.http.url is required for kind="+string(h.Kind)))
+		}
+		if h.HTTP != nil {
+			switch h.HTTP.API {
+			case "", "chat", "responses", "runs":
+			default:
+				errs = append(errs, fmt.Errorf("harness.http.api=%q is invalid", h.HTTP.API))
+			}
+			if h.HTTP.API != "" && h.HTTP.API != "chat" && h.Kind != HarnessHermes {
+				errs = append(errs, errors.New("harness.http.api (responses/runs) is only valid for kind=hermes"))
+			}
 		}
 		if h.HTTP != nil && h.HTTP.Retry != nil {
 			r := h.HTTP.Retry
@@ -333,11 +487,36 @@ func ValidateHarness(h HarnessSpec) error {
 				errs = append(errs, errors.New("harness.http.retry values must be ≥ 0"))
 			}
 		}
+	case HarnessPiMono:
+		// pi-mono talks to the in-pod pi-bridge: no URL is required (it defaults
+		// to http://127.0.0.1:8848/run). Mode, when set, must be json (the only
+		// mode that yields honest tokens + tool-calls).
+		if h.PiMono != nil {
+			if m := h.PiMono.Mode; m != "" && m != "json" {
+				errs = append(errs, fmt.Errorf("harness.piMono.mode=%q is invalid (only json)", m))
+			}
+			if h.PiMono.BridgePort < 0 {
+				errs = append(errs, errors.New("harness.piMono.bridgePort must be ≥ 0"))
+			}
+		}
 	case HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI:
-		// CLI block is optional — defaults wired by the runtime — but if
-		// present its MaxOutputBytes must be sane.
-		if h.CLI != nil && h.CLI.MaxOutputBytes < 0 {
-			errs = append(errs, errors.New("harness.cli.maxOutputBytes must be ≥ 0"))
+		// CLI block is optional — defaults wired by the runtime — but if present
+		// its MaxOutputBytes must be sane and its enums valid.
+		if h.CLI != nil {
+			if h.CLI.MaxOutputBytes < 0 {
+				errs = append(errs, errors.New("harness.cli.maxOutputBytes must be ≥ 0"))
+			}
+			switch h.CLI.OutputFormat {
+			case "", "text", "json", "stream-json":
+			default:
+				errs = append(errs, fmt.Errorf("harness.cli.outputFormat=%q is invalid", h.CLI.OutputFormat))
+			}
+			switch h.CLI.ApprovalMode {
+			case "", "safe", "acceptEdits", "never":
+			default:
+				errs = append(errs, fmt.Errorf("harness.cli.approvalMode=%q is invalid", h.CLI.ApprovalMode))
+			}
+			errs = append(errs, validateMCPServers(h.CLI.MCPServers)...)
 		}
 	}
 	for i, e := range h.Env {
@@ -349,4 +528,57 @@ func ValidateHarness(h HarnessSpec) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// validateMCPServers checks claude MCP server declarations (M3.18): unique names,
+// stdio ⇒ command, http/sse ⇒ an http(s) URL to a non-internal host. The stdio
+// IMAGE allow-list (D7/D11) is enforced operator-side (it knows the cluster list).
+func validateMCPServers(servers []MCPServerSpec) []error {
+	var errs []error
+	seen := map[string]bool{}
+	for i, s := range servers {
+		if strings.TrimSpace(s.Name) == "" {
+			errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].name is required", i))
+		} else if seen[s.Name] {
+			errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d]: duplicate name %q", i, s.Name))
+		}
+		seen[s.Name] = true
+		switch s.Transport {
+		case "stdio":
+			if len(s.Command) == 0 {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d] (stdio) requires command", i))
+			}
+		case "http", "sse":
+			if strings.TrimSpace(s.URL) == "" {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d] (%s) requires url", i, s.Transport))
+				continue
+			}
+			u, err := url.Parse(s.URL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].url %q must be http(s)", i, s.URL))
+				continue
+			}
+			if isInternalMCPHost(u.Hostname()) {
+				errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].url %q targets an internal/private host (rejected)", i, s.URL))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("harness.cli.mcpServers[%d].transport=%q is invalid (stdio|http|sse)", i, s.Transport))
+		}
+	}
+	return errs
+}
+
+// isInternalMCPHost reports whether host is loopback/private/link-local or an
+// internal name — a remote MCP URL pointing there is an SSRF/exfil surface the
+// agent's egress cage can't see (the gateway, not the pod, dials it).
+func isInternalMCPHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || host == "localhost" ||
+		strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+	return false
 }

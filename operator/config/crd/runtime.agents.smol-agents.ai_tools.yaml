@@ -82,7 +82,7 @@ spec:
                         secretName: { type: string, description: 'Name of the Secret holding the credential.' }
                 agent:
                   type: object
-                  description: Agent-to-agent target; RESERVED — no invoker in v0.2.0.
+                  description: 'Agent-to-agent (A2A) delegation target: an LLM tool call of kind=agent spawns a child AgentRun for the callee in the SAME namespace (M3).'
                   properties:
                     ref:
                       type: object
@@ -90,6 +90,8 @@ spec:
                       properties:
                         name: { type: string, description: 'Name of the target Agent.' }
                         namespace: { type: string, description: 'Namespace of the target Agent; defaults to this Tool''s namespace.' }
+                    maxTokens: { type: integer, format: int64, minimum: 0, description: 'Token budget cap for the child run; the effective child budget is min(this, parent-remaining). 0 = parent-remaining (M3.5).' }
+                    timeoutSeconds: { type: integer, minimum: 0, description: 'Per-call wall-clock cap on the child delegation; 0 = bounded only by the parent run deadline (M3.5).' }
                 function:
                   type: object
                   description: In-process function target; TEST-ONLY.

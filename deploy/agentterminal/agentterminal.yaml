@@ -1,0 +1,91 @@
+# Terminal attach gateway (M4.10). Deploys SEPARATELY from the agent's Knative
+# path — it dials each agent's ClusterIP terminal Service directly, bypassing the
+# activator. Authenticates humans via the bundled Dex (deploy/oidc), resolves an
+# AttachGrant, mints an audience-bound attach token, and reverse-proxies WSS to
+# the role-selected ttyd.
+#
+# DEPLOYMENT-GATED: authored, not live-verified here. The signing-key Secret and
+# Dex TLS trust are provided out-of-band.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agentterminal
+  namespace: smol-system
+---
+# Cluster-wide read of AttachGrants (humans attach to agents in tenant
+# namespaces). No write — the gateway never creates grants.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentterminal
+rules:
+  - apiGroups: ["runtime.agents.smol-agents.ai"]
+    resources: ["attachgrants"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["runtime.agents.smol-agents.ai"]
+    resources: ["attachgrants/status"]
+    verbs: ["update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentterminal
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: agentterminal }
+subjects:
+  - { kind: ServiceAccount, name: agentterminal, namespace: smol-system }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agentterminal
+  namespace: smol-system
+  labels:
+    app.kubernetes.io/name: smol-agents
+    app.kubernetes.io/component: agentterminal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: agentterminal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: smol-agents
+        app.kubernetes.io/component: agentterminal
+    spec:
+      serviceAccountName: agentterminal
+      containers:
+        - name: agentterminal
+          image: ghcr.io/smol-platform/smol-agents/agentterminal:latest
+          args:
+            - --addr=:8443
+            - --signing-key-file=/etc/agentterminal/signing.key
+            - --trust-domain=smol-agents.ai
+            - --oidc-issuer=https://dex.smol-oidc.svc.cluster.local:5556/dex
+            - --oidc-jwks-url=https://dex.smol-oidc.svc.cluster.local:5556/dex/keys
+            - --oidc-client-id=agentterminal
+          ports:
+            - { name: https, containerPort: 8443 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8443 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: signing, mountPath: /etc/agentterminal, readOnly: true }
+      volumes:
+        - name: signing
+          secret: { secretName: agentterminal-signing }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agentterminal
+  namespace: smol-system
+spec:
+  selector:
+    app.kubernetes.io/component: agentterminal
+  ports:
+    - { name: https, port: 443, targetPort: 8443 }

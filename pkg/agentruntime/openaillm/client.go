@@ -114,8 +114,17 @@ func (c *Client) Chat(ctx context.Context, req agentruntime.ChatRequest) (rt.LLM
 	}
 
 	msg := out.Choices[0].Message
+	// Reasoning models on OpenAI-compatible endpoints (z.ai glm-4.6, deepseek-r1,
+	// …) split the reply: the chain-of-thought goes in reasoning_content and the
+	// answer in content. After a tool turn glm-4.6 sometimes returns an EMPTY
+	// content with the answer text only in reasoning_content — so fall back rather
+	// than fold a silently-empty final answer. content wins whenever it's present.
+	content := msg.Content
+	if strings.TrimSpace(content) == "" {
+		content = msg.ReasoningContent
+	}
 	dec := rt.LLMDecision{
-		Reasoning: msg.Content,
+		Reasoning: content,
 		TokensIn:  out.Usage.PromptTokens,
 		TokensOut: out.Usage.CompletionTokens,
 	}
@@ -128,17 +137,20 @@ func (c *Client) Chat(ctx context.Context, req agentruntime.ChatRequest) (rt.LLM
 		return dec, nil
 	}
 	// Final answer: wrap the text content as a JSON string (Output is RawMessage).
-	ans, _ := json.Marshal(msg.Content)
+	ans, _ := json.Marshal(content)
 	dec.FinalAnswer = &rt.FinalAnswer{Output: ans}
 	return dec, nil
 }
 
 type chatMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	Name       string         `json:"name,omitempty"`
+	Role string `json:"role"`
+	// Content is the answer text. omitempty keeps reasoning_content out of the
+	// REQUEST messages we build (we only ever read it from responses).
+	Content          string         `json:"content,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	ToolCalls        []wireToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	Name             string         `json:"name,omitempty"`
 }
 
 type wireToolCall struct {

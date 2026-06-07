@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 02 — Agent-to-agent composition (A2A)  (milestone M3)
+#
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#     kubectl apply -f docs/examples/02-agent-to-agent.yaml
+#     # watch the parent spawn a child run:
+#     kubectl -n tenant-a get agentruns -l agents.smol-agents.ai/parent-run=compose-001 -w
+#
+# A `kind: agent` Tool lets one Agent call another. At runtime the parent's
+# in-pod AgentRunInvoker creates a CHILD AgentRun for the target Agent, blocks
+# until it is terminal, and folds the child's output back as the tool result.
+#
+# Trust model (D1): the child runs in the SAME namespace only, with its own
+# sandbox + budget + SPIFFE id; the parent's run pod is granted a namespaced
+# Role (<agent>-a2a) permitting exactly create/get/list/watch on agentruns —
+# never cluster-wide, never cross-tenant. Recursion is bounded (depth-1 default).
+# ─────────────────────────────────────────────────────────────────────────────
+# The CHILD: a specialist the parent delegates to. An ordinary loop Agent.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: summarizer
+  namespace: tenant-a
+spec:
+  model:
+    providerRef: openai
+    name: gpt-4o-mini
+  instructions: "Summarize the input into exactly three bullet points."
+  budget:
+    maxSteps: 4
+    maxTokens: 8000
+    maxWallClockSeconds: 90
+    maxToolCalls: 0
+---
+# The kind=agent Tool: the edge from parent → child. spec.agent.ref names the
+# target Agent; maxTokens/timeoutSeconds bound the child run the parent spawns.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata:
+  name: delegate-summarize
+  namespace: tenant-a
+spec:
+  kind: agent
+  description: "Hand a document to the summarizer agent and get bullets back."
+  agent:
+    ref:
+      name: summarizer            # same-namespace target (cross-tenant is rejected)
+  inputSchema:
+    type: object
+    properties:
+      document: { type: string }
+  outputSchema:
+    type: object
+---
+# The PARENT: an orchestrator that uses the delegate tool. Declaring a kind=agent
+# tool is what makes the operator grant this Agent its A2A RBAC.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: orchestrator
+  namespace: tenant-a
+spec:
+  model:
+    providerRef: openai
+    name: gpt-4o
+  instructions: |
+    Break the task down. When you need a summary, call delegate-summarize with
+    the document, then weave its bullets into your final answer.
+  tools:
+    - name: delegate-summarize
+  budget:
+    maxSteps: 8
+    maxTokens: 60000
+    maxWallClockSeconds: 240
+    maxToolCalls: 4
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: compose-001
+  namespace: tenant-a
+spec:
+  agentRef: orchestrator
+  input:
+    task: "Summarize the attached RFC and tell me if it affects our API."
+    document: "<the RFC text…>"

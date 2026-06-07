@@ -19,27 +19,27 @@ spec:
           type: object
           description: |-
             AgentPolicy is a namespace-scoped guardrail (allow-lists + budget
-            cap + output redaction). WARNING: as of v0.2.0 NO controller
-            reconciles or enforces this CR — declaring one has NO runtime
-            effect. Tracked as a P1 gap
-            (docs/design/agentnetwork-agentpolicy-interaction.md).
+            cap + output redaction). Composed across all policies in the
+            namespace and ENFORCED at admission (the Agent/AgentRun validating
+            webhook), at reconcile (a backstop that flips a violating Agent to
+            Failed/PolicyViolation), and on the fold (Output/Steps redaction).
           required: [spec]
           properties:
             spec:
               type: object
-              description: AgentPolicySpec declares the intended guardrails (currently unenforced).
+              description: AgentPolicySpec declares the namespace guardrails (enforced — see the CRD description).
               properties:
                 allowedProviders:
                   type: array
-                  description: ModelProvider allow-list for agents in this namespace — NOT enforced yet.
+                  description: ModelProvider allow-list for agents in this namespace (enforced via the AgentPolicy webhook + reconcile gate).
                   items: { type: string }
                 allowedTools:
                   type: array
-                  description: Tool allow-list for agents in this namespace — NOT enforced yet.
+                  description: Tool allow-list for agents in this namespace (enforced via the AgentPolicy webhook + reconcile gate).
                   items: { type: string }
                 maxBudget:
                   type: object
-                  description: Per-run budget ceiling — NOT enforced yet.
+                  description: Per-run budget ceiling (enforced via the AgentPolicy webhook + reconcile gate).
                   properties:
                     maxSteps: { type: integer, minimum: 1, description: 'Ceiling on plan-act-observe steps per run.' }
                     maxTokens: { type: integer, minimum: 1, description: 'Ceiling on total LLM tokens per run.' }
@@ -47,9 +47,9 @@ spec:
                     maxToolCalls: { type: integer, minimum: 0, description: 'Ceiling on total tool invocations per run.' }
                 redaction:
                   type: object
-                  description: Output/Steps redaction policy — NOT applied yet.
+                  description: Output/Steps redaction policy (applied on the run-result fold).
                   properties:
                     patterns:
                       type: array
-                      description: Regular expressions masked from Output/Steps — NOT applied yet.
+                      description: Regular expressions masked from Output/Steps (applied on the run-result fold).
                       items: { type: string }

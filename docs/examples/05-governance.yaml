@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 05 — Governance & containment floor  (milestone M1)
+#
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#     kubectl apply -f docs/examples/05-governance.yaml
+#
+# This layers the multi-tenant guardrails (D1) onto a namespace:
+#   • AgentPolicy   — provider/tool allow-list + per-run budget ceiling, enforced
+#                     by BOTH an admission webhook (apply-time) and a reconcile
+#                     backstop (a tightened policy flips existing Agents Failed).
+#   • kata-fc       — every run executes in a Firecracker microVM (own kernel),
+#                     scheduled onto an AgentNodePool; no node pool ⇒ the run
+#                     fail-closes at Pending/NoKVMCapacity rather than running
+#                     unisolated.
+#   • default-deny egress is the floor for every run pod; an AgentNetwork
+#                     (examples 02/06's pattern) layers an allow-list on top.
+#
+# Try the guardrail: change the Agent below to providerRef a provider NOT in
+# allowedProviders and `kubectl apply` — admission rejects it with an
+# "AgentPolicy allow-list" error.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentPolicy
+metadata:
+  name: default                     # the namespace's effective policy
+  namespace: tenant-a
+spec:
+  allowedProviders:
+    - openai                        # only this ModelProvider may be referenced
+  allowedTools:
+    - web-search                    # only these Tools may be attached
+  maxBudget:                        # per-run ceiling applied on top of each Agent's own budget
+    maxSteps: 20
+    maxTokens: 200000
+    maxWallClockSeconds: 600
+    maxToolCalls: 30
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: governed-researcher
+  namespace: tenant-a
+spec:
+  model:
+    providerRef: openai             # ✓ in the allow-list (try changing it → rejected)
+    name: gpt-4o
+  instructions: "Answer concisely."
+  budget:
+    maxSteps: 8
+    maxTokens: 50000
+    maxWallClockSeconds: 120
+    maxToolCalls: 6
+  # Pin the microVM runtime explicitly (kata-fc is also the cluster default).
+  # The run schedules only onto an AgentNodePool advertising this isolation;
+  # otherwise it holds at Pending/NoKVMCapacity (fail-closed, never unisolated).
+  sandbox:
+    runtimeClass: kata-fc
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: governed-001
+  namespace: tenant-a
+spec:
+  agentRef: governed-researcher
+  input:
+    question: "Summarize our Q3 incident trends."
+# Requires a kata AgentNodePool, e.g.
+# operator/config/samples/agentnodepool_kata_arm64.yaml — the operator compiles
+# it into a Karpenter NodePool that provisions bare-metal (KVM) nodes.

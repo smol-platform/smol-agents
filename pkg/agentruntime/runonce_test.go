@@ -13,8 +13,64 @@ import (
 	"strings"
 	"testing"
 
+	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
+
+// M2.2: ResultToWire computes the trace summary (step + tool-call counts) from
+// the steps before any clamp.
+func TestResultToWire_TraceCounts(t *testing.T) {
+	res := Result{
+		Phase: v1.PhaseCompleted,
+		Steps: []v1.Step{
+			{Kind: v1.StepToolCall, ToolCalls: []v1.ToolCallRecord{{Tool: "a"}, {Tool: "b"}}},
+			{Kind: v1.StepFinal},
+		},
+	}
+	w := ResultToWire(res, nil)
+	if w.Trace == nil || w.Trace.StepCount != 2 || w.Trace.ToolCallCount != 2 {
+		t.Fatalf("trace = %+v, want stepCount=2 toolCallCount=2", w.Trace)
+	}
+}
+
+// M2.13: a loop-mode tool call dispatches through the injected invoker (the HTTP
+// path now works end-to-end: tools.json catalog + WithInvokers). Without the
+// invoker the same call is rejected (usage.toolCalls stays 0), proving the
+// wiring is what makes it succeed.
+func TestRunTurn_LoopToolViaInjectedInvoker(t *testing.T) {
+	agent := v1.Agent{Spec: v1.AgentSpec{
+		Mode:         v1.ModeLoop,
+		Model:        v1.ModelRef{ProviderRef: "p", Name: "m"},
+		Instructions: "use the tool",
+		Budget:       v1.Budget{MaxSteps: 5, MaxTokens: 1000, MaxWallClockSeconds: 60, MaxToolCalls: 3},
+		Tools:        []v1.ToolRef{{Name: "fetch"}},
+	}}
+	tool := v1.Tool{Name: "fetch", Spec: v1.ToolSpec{Kind: v1.ToolHTTP}}
+	script := func() *FakeLLM {
+		return &FakeLLM{Script: []rt.LLMDecision{
+			{ToolCall: &rt.ToolCall{Tool: "fetch", Arguments: json.RawMessage(`{"q":"x"}`)}, TokensIn: 1, TokensOut: 1},
+			{FinalAnswer: &rt.FinalAnswer{Output: json.RawMessage(`{"done":true}`)}},
+		}}
+	}
+	inv := &InProcessInvoker{Handlers: map[string]func(json.RawMessage) (json.RawMessage, error){
+		"fetch": func(json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{"hit":3}`), nil },
+	}}
+
+	res, err := RunTurn(context.Background(), agent, v1.AgentRunSpec{Input: json.RawMessage(`{"prompt":"go"}`)}, nil, script(),
+		WithTools([]v1.Tool{tool}), WithInvokers(map[v1.ToolKind]ToolInvoker{v1.ToolHTTP: inv}))
+	if err != nil {
+		t.Fatalf("RunTurn: %v", err)
+	}
+	if res.Phase != v1.PhaseCompleted || res.Usage.ToolCalls != 1 {
+		t.Fatalf("want Completed with 1 tool call, got %s / toolCalls=%d", res.Phase, res.Usage.ToolCalls)
+	}
+
+	res2, _ := RunTurn(context.Background(), agent, v1.AgentRunSpec{Input: json.RawMessage(`{"prompt":"go"}`)}, nil, script(),
+		WithTools([]v1.Tool{tool}))
+	if res2.Usage.ToolCalls != 0 {
+		t.Errorf("without an invoker the tool call must not count, got %d", res2.Usage.ToolCalls)
+	}
+}
 
 func writeSpec(t *testing.T, dir, name string, v any) {
 	t.Helper()

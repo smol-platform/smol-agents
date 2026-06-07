@@ -27,6 +27,26 @@ func TestCanTransition_AllowedEdges(t *testing.T) {
 	}
 }
 
+// M5.6: lock the pre-run-approval lifecycle as a named contract — Running⇄
+// RequiresAction and RequiresAction→{Cancelled,Expired,Failed} are legal and
+// RequiresAction is non-terminal (so reconcile keeps requeuing a parked run).
+func TestCanTransition_PreRunApprovalEdges(t *testing.T) {
+	for _, e := range [][2]Phase{
+		{PhaseRunning, PhaseRequiresAction},
+		{PhaseRequiresAction, PhaseRunning},
+		{PhaseRequiresAction, PhaseCancelled},
+		{PhaseRequiresAction, PhaseExpired},
+		{PhaseRequiresAction, PhaseFailed},
+	} {
+		if err := CanTransition(e[0], e[1]); err != nil {
+			t.Errorf("M5 edge %s → %s should be legal: %v", e[0], e[1], err)
+		}
+	}
+	if PhaseRequiresAction.Terminal() {
+		t.Errorf("RequiresAction must be non-terminal")
+	}
+}
+
 func TestCanTransition_TerminalIsAbsorbing(t *testing.T) {
 	for _, term := range []Phase{PhaseCompleted, PhaseFailed, PhaseCancelled, PhaseExpired} {
 		for _, dest := range []Phase{PhasePending, PhaseRunning, PhaseCompleted} {

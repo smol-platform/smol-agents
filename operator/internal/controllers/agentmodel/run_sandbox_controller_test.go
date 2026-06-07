@@ -15,6 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/plan"
 )
 
 func sandboxReconciler(t *testing.T, mut func(*AgentRunReconciler), initial ...client.Object) *AgentRunReconciler {
@@ -86,9 +88,10 @@ func TestResolveRunSandbox(t *testing.T) {
 
 func TestEnsureRunEgressPolicy(t *testing.T) {
 	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a1", Namespace: "tenant-a"}}
 	r := sandboxReconciler(t, nil, run)
 
-	if err := r.ensureRunEgressPolicy(context.Background(), run); err != nil {
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
 		t.Fatalf("ensureRunEgressPolicy: %v", err)
 	}
 	var np networkingv1.NetworkPolicy
@@ -98,8 +101,24 @@ func TestEnsureRunEgressPolicy(t *testing.T) {
 	if len(np.OwnerReferences) == 0 || np.OwnerReferences[0].Name != "r1" {
 		t.Errorf("egress NP not owned by the run: %+v", np.OwnerReferences)
 	}
+	// M1.19: with no bound AgentNetwork the run reports the default-deny floor.
+	if run.Status.EgressEnforcement != "default-deny" || len(run.Status.Networks) != 0 {
+		t.Errorf("status egress = %q networks=%v, want default-deny / none", run.Status.EgressEnforcement, run.Status.Networks)
+	}
 	// Idempotent.
-	if err := r.ensureRunEgressPolicy(context.Background(), run); err != nil {
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
 		t.Fatalf("second ensureRunEgressPolicy: %v", err)
+	}
+}
+
+// M1.19: the egress-posture label is "tiered" only when a bound AgentNetwork
+// layers an allow-list on the floor.
+func TestEgressEnforcementLabel(t *testing.T) {
+	if got := egressEnforcementLabel(plan.NetworkPlan{}); got != "default-deny" {
+		t.Errorf("empty plan = %q, want default-deny", got)
+	}
+	withAllow := plan.NetworkPlan{AllowRules: []pure.EgressRule{{CIDR: "203.0.113.0/24"}}}
+	if got := egressEnforcementLabel(withAllow); got != "tiered" {
+		t.Errorf("plan with allow rules = %q, want tiered", got)
 	}
 }

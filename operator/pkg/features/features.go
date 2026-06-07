@@ -33,6 +33,7 @@ const (
 	EBPF             Feature = "ebpf"
 	Knative          Feature = "knative"
 	Observability    Feature = "observability"
+	EgressFloor      Feature = "egress"
 )
 
 // All returns every supported feature in stable order. The order is

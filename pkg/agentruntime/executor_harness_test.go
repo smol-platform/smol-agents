@@ -13,26 +13,53 @@ import (
 
 // stubRunner is a fake HarnessRunner used to drive Mode=harness tests.
 type stubRunner struct {
-	output    []byte
-	tokensIn  int64
-	tokensOut int64
-	toolCalls []v1.ToolCallRecord
-	err       error
+	output       []byte
+	tokensIn     int64
+	tokensOut    int64
+	toolCalls    []v1.ToolCallRecord
+	costUSDMilli int64
+	err          error
 
 	gotWorkingDir string // captured for the WorkingDir-binding test
+	gotSession    string // captured resume session id (M3.19)
+	sessionID     string // returned as Response.SessionID (M3.19)
 }
 
 func (s *stubRunner) RunHarness(_ context.Context, _ v1.HarnessSpec, _ string,
 	_ json.RawMessage, workingDir string, _ map[string]string,
-	_ v1.Budget, _ int64,
+	_ v1.Budget, _ int64, sessionID string,
 ) (harness.Response, error) {
 	s.gotWorkingDir = workingDir
+	s.gotSession = sessionID
 	return harness.Response{
-		Output:    s.output,
-		TokensIn:  s.tokensIn,
-		TokensOut: s.tokensOut,
-		ToolCalls: s.toolCalls,
+		Output:       s.output,
+		TokensIn:     s.tokensIn,
+		TokensOut:    s.tokensOut,
+		ToolCalls:    s.toolCalls,
+		CostUSDMilli: s.costUSDMilli,
+		SessionID:    s.sessionID,
 	}, s.err
+}
+
+// M3.19: the executor threads ResumeSessionID into the harness and captures the
+// harness's returned SessionID into the Result (folded to status.HarnessSessionID).
+func TestExecutor_HarnessSessionResume(t *testing.T) {
+	r := &stubRunner{output: []byte(`{"ok":true}`), sessionID: "sess-new"}
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	e.Harness = r
+	e.ResumeSessionID = "sess-prior"
+
+	res, err := e.Run(context.Background(), harnessAgent(), json.RawMessage(`{"prompt":"hi"}`), 0)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if r.gotSession != "sess-prior" {
+		t.Errorf("ResumeSessionID not threaded to harness: got %q, want sess-prior", r.gotSession)
+	}
+	if res.SessionID != "sess-new" {
+		t.Errorf("Result.SessionID = %q, want sess-new (captured from Response)", res.SessionID)
+	}
 }
 
 func harnessAgent() v1.Agent {
@@ -98,6 +125,25 @@ func TestExecutor_HarnessMode_StepsAndToolCallsSurfaced(t *testing.T) {
 	}
 	if res.Usage.ToolCalls != 1 {
 		t.Errorf("usage.ToolCalls = %d, want 1", res.Usage.ToolCalls)
+	}
+}
+
+// M2.8: a harness-reported cost folds into Usage.CostUSDMilli (observability
+// only) and never affects the budget verdict.
+func TestExecutor_HarnessMode_CostFolds(t *testing.T) {
+	e := New()
+	e.Clock = &FakeClock{T: time.Unix(0, 0)}
+	e.Harness = &stubRunner{output: []byte(`{"answer":"ok"}`), tokensIn: 10, tokensOut: 5, costUSDMilli: 1234}
+
+	res, err := e.Run(context.Background(), harnessAgent(), json.RawMessage(`{"prompt":"hi"}`), 0)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Phase != v1.PhaseCompleted {
+		t.Errorf("phase=%s, want Completed (cost must never gate)", res.Phase)
+	}
+	if res.Usage.CostUSDMilli != 1234 {
+		t.Errorf("usage.CostUSDMilli = %d, want 1234", res.Usage.CostUSDMilli)
 	}
 }
 
@@ -197,7 +243,7 @@ func TestExecutor_HarnessMode_RequiresRunner(t *testing.T) {
 type envCapturingRunner struct{ gotEnv map[string]string }
 
 func (s *envCapturingRunner) RunHarness(_ context.Context, _ v1.HarnessSpec, _ string,
-	_ json.RawMessage, _ string, env map[string]string, _ v1.Budget, _ int64,
+	_ json.RawMessage, _ string, env map[string]string, _ v1.Budget, _ int64, _ string,
 ) (harness.Response, error) {
 	s.gotEnv = env
 	return harness.Response{Output: []byte(`{"ok":true}`), TokensIn: 1, TokensOut: 1}, nil

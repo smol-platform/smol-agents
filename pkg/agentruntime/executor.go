@@ -20,7 +20,7 @@ import (
 type HarnessRunner interface {
 	RunHarness(ctx context.Context, spec v1.HarnessSpec, instructions string,
 		input json.RawMessage, workingDir string, env map[string]string,
-		budget v1.Budget, seed int64) (harness.Response, error)
+		budget v1.Budget, seed int64, sessionID string) (harness.Response, error)
 }
 
 // SecretLeaser leases a named secret from the broker so the executor can
@@ -47,6 +47,11 @@ type Executor struct {
 	// Secrets resolves harness env secretRef entries via the broker. Optional;
 	// required only when an Agent declares a harness env with a secretRef.
 	Secrets SecretLeaser
+
+	// ResumeSessionID, when set, is passed to the harness to resume a prior
+	// conversation (M3.19: claude --resume / codex exec resume). Sourced from
+	// AgentRunSpec.ResumeSessionID by RunTurn.
+	ResumeSessionID string
 }
 
 // New returns a default Executor. Caller must set LLM (for Mode=loop)
@@ -66,6 +71,10 @@ type Result struct {
 	Usage             v1.Usage
 	TerminationReason string
 	Output            json.RawMessage
+	// SessionID is the harness's own session/thread id when it reports one
+	// (claude-code session_id, codex thread), captured so a later run can resume
+	// the conversation (M3.19). Empty for loop mode / harnesses with no session.
+	SessionID string
 }
 
 // Run executes the agent against `input` and returns the Result. The
@@ -212,8 +221,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-					Error: "tool not in allow-list"}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
+					Error: "tool not in allow-list",
+				}},
 				Error: ErrToolNotInAllowList.Error(),
 			})
 			continue
@@ -230,12 +241,14 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			continue
 		}
 
-		// Validate args vs input schema.
-		if err := v1.MatchesSchema(tool.Spec.InputSchema, tc.Arguments); err != nil {
+		// Validate args vs input schema (real JSON-Schema validation, M2.11).
+		if err := ValidateAgainstSchema(tool.Spec.InputSchema, tc.Arguments); err != nil {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-					Error: err.Error()}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
+					Error: err.Error(),
+				}},
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
 				Error: ErrInvalidArgs.Error(),
 			})
@@ -258,8 +271,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		if !ok {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool,
-					Error: fmt.Sprintf("no invoker for kind %q", tool.Spec.Kind)}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool:  tc.Tool,
+					Error: fmt.Sprintf("no invoker for kind %q", tool.Spec.Kind),
+				}},
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
 				Error: ErrToolNotFound.Error(),
 			})
@@ -274,8 +289,10 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCall,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-					Error: err.Error(), DurationMs: callEnd.Sub(callStart).Milliseconds()}},
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
+					Error: err.Error(), DurationMs: callEnd.Sub(callStart).Milliseconds(),
+				}},
 				Error: err.Error(),
 			})
 			usage.ToolCalls++
@@ -283,14 +300,16 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			continue
 		}
 
-		// Validate observation vs output schema.
-		if err := v1.MatchesSchema(tool.Spec.OutputSchema, obs.Output); err != nil {
+		// Validate observation vs output schema (real JSON-Schema validation, M2.11).
+		if err := ValidateAgainstSchema(tool.Spec.OutputSchema, obs.Output); err != nil {
 			steps = append(steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepObservationRejected,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
-				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
+				ToolCalls: []v1.ToolCallRecord{{
+					Tool: tc.Tool, Arguments: tc.Arguments,
 					Result: obs.Output, Error: err.Error(),
-					DurationMs: callEnd.Sub(callStart).Milliseconds()}},
+					DurationMs: callEnd.Sub(callStart).Milliseconds(),
+				}},
 				Error: ErrInvalidObservation.Error(),
 			})
 			usage.ToolCalls++
@@ -301,10 +320,17 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		steps = append(steps, v1.Step{
 			Index: int32(len(steps)), Kind: v1.StepObservation,
 			StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
-			ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Arguments: tc.Arguments,
-				Result: obs.Output, DurationMs: callEnd.Sub(callStart).Milliseconds()}},
+			ToolCalls: []v1.ToolCallRecord{{
+				Tool: tc.Tool, Arguments: tc.Arguments,
+				Result: obs.Output, DurationMs: callEnd.Sub(callStart).Milliseconds(),
+			}},
 		})
 		usage.ToolCalls++
+		// A2A child-usage roll-up: a kind=agent tool reports the child run's
+		// tokens/tool-calls in the Observation; fold them in field-wise (the
+		// next loop iteration's budget check stops the parent if this overruns).
+		usage.Tokens += obs.Tokens
+		usage.ToolCalls += obs.ToolCalls
 		usage.WallClockUsed = e.Clock.Since(startedAt)
 	}
 
@@ -391,11 +417,15 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 
 	startedAt := e.Clock.Now()
 	resp, err := e.Harness.RunHarness(ctx, *agent.Spec.Harness, agent.Spec.Instructions,
-		input, agent.Spec.EffectiveWorkingDir(), env, agent.Spec.Budget, seed)
+		input, agent.Spec.EffectiveWorkingDir(), env, agent.Spec.Budget, seed, e.ResumeSessionID)
 	endedAt := e.Clock.Now()
 
-	usage := v1.Usage{Steps: 1, Tokens: resp.TokensIn + resp.TokensOut,
-		ToolCalls: int32(len(resp.ToolCalls)), WallClockUsed: e.Clock.Since(startedAt)}
+	usage := v1.Usage{
+		Steps: 1, Tokens: resp.TokensIn + resp.TokensOut,
+		ToolCalls:     int32(len(resp.ToolCalls)),
+		CostUSDMilli:  resp.CostUSDMilli, // observability only — not read by AllowsStep
+		WallClockUsed: e.Clock.Since(startedAt),
+	}
 
 	// One Step captures the whole bounded call. ToolCalls carries the harness's
 	// own tool log when it surfaces one (e.g. Hermes via the Responses API);
@@ -426,10 +456,11 @@ func (e *Executor) runHarness(ctx context.Context, agent v1.Agent, input json.Ra
 		}, nil
 	}
 	return Result{
-		Phase:  v1.PhaseCompleted,
-		Steps:  []v1.Step{step},
-		Usage:  usage,
-		Output: harnessOutputJSON(resp.Output),
+		Phase:     v1.PhaseCompleted,
+		Steps:     []v1.Step{step},
+		Usage:     usage,
+		Output:    harnessOutputJSON(resp.Output),
+		SessionID: resp.SessionID, // captured for resume (M3.19)
 	}, nil
 }
 

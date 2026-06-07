@@ -5,14 +5,18 @@ package agentmodel
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
@@ -26,6 +30,11 @@ import (
 type AgentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// AllowedStdioMCP is the operator's cluster allow-list of approved stdio MCP
+	// server URLs (D7/D11, M2.15). A kind=mcp tool with a stdio (non-http) URL is
+	// admission-refused unless its URL is in this set — arbitrary tenant stdio is
+	// denied fail-closed. http(s) MCP is unaffected. Empty = no stdio permitted.
+	AllowedStdioMCP map[string]bool
 }
 
 // SetupWithManager wires the controller. We Own ServiceAccount so the
@@ -35,7 +44,25 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.Agent{}).
 		Owns(&corev1.ServiceAccount{}).
+		Watches(&amv1.AgentPolicy{}, handler.EnqueueRequestsFromMapFunc(r.agentsInNamespace)).
 		Complete(r)
+}
+
+// agentsInNamespace maps an AgentPolicy event to every Agent in the same
+// namespace, so tightening (or relaxing) a policy re-evaluates its dependents
+// within one reconcile rather than waiting for the next spec bump.
+func (r *AgentReconciler) agentsInNamespace(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list amv1.AgentList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
+			Namespace: list.Items[i].Namespace, Name: list.Items[i].Name,
+		}})
+	}
+	return reqs
 }
 
 // Reconcile is the per-Agent entrypoint.
@@ -88,6 +115,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Resolve every referenced Tool.
 	resolved := make([]string, 0, len(agent.Spec.Tools))
+	hasAgentTool := false
 	for _, ref := range agent.Spec.Tools {
 		ns := ref.Namespace
 		if ns == "" {
@@ -102,11 +130,62 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}
 			return ctrl.Result{}, err
 		}
+		// Fail closed (D3) on a loop-mode tool whose kind has no production
+		// invoker yet (agent/function). Harness-mode tool refs are inert — don't
+		// false-positive them.
+		if agent.Spec.Mode != pure.ModeHarness && !pure.SupportedLoopToolKinds()[tool.Spec.Kind] {
+			r.setStatus(agent, "Failed", "ToolKindUnsupported",
+				fmt.Sprintf("tool %q kind %q has no loop-mode invoker", tool.Name, tool.Spec.Kind))
+			return ctrl.Result{}, r.Status().Update(ctx, agent)
+		}
+		// Fail closed (D7/D11, M2.15): a kind=mcp tool with a stdio (non-http) URL
+		// must resolve to an operator-approved server; arbitrary tenant stdio is
+		// denied. http(s) MCP is unaffected.
+		if agent.Spec.Mode != pure.ModeHarness && isStdioMCPTool(tool.Spec) && !r.AllowedStdioMCP[tool.Spec.MCP.URL] {
+			r.setStatus(agent, "Failed", "StdioMCPNotAllowed",
+				fmt.Sprintf("tool %q stdio MCP %q is not on the operator allow-list", tool.Name, tool.Spec.MCP.URL))
+			return ctrl.Result{}, r.Status().Update(ctx, agent)
+		}
+		if tool.Spec.Kind == pure.ToolAgent {
+			hasAgentTool = true
+		}
 		resolved = append(resolved, tool.Name)
+	}
+
+	// A2A (M3.6/D1): an Agent that declares a kind=agent tool gets a namespaced
+	// Role+RoleBinding granting its run pods authority to create + observe CHILD
+	// AgentRuns in their OWN namespace only. A non-A2A Agent's pods keep zero
+	// apiserver authority. Created before Ready so the grant exists by the time a
+	// run pod schedules.
+	if hasAgentTool {
+		if err := r.ensureA2ARBAC(ctx, agent); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure A2A RBAC: %w", err)
+		}
 	}
 
 	agent.Status.ResolvedTools = resolved
 	agent.Status.ResolvedProvider = providerName
+
+	// Enforce namespace AgentPolicy allow-lists at reconcile time (the
+	// belt-and-suspenders backstop to the admission webhook): a disallowed
+	// resolved provider or tool flips the Agent to Failed/PolicyViolation. A
+	// transient list error fails open (we don't strand a valid Agent on an
+	// apiserver hiccup); a tightened policy re-enqueues dependents via Watches.
+	if eff, err := effectivePolicyFor(ctx, r.Client, agent.Namespace); err == nil && !eff.Empty {
+		if providerName != "" && !eff.AllowsProvider(agent.Spec.Model.ProviderRef) {
+			r.setStatus(agent, "Failed", "PolicyViolation",
+				fmt.Sprintf("provider %q is not in the AgentPolicy allow-list", agent.Spec.Model.ProviderRef))
+			return ctrl.Result{}, r.Status().Update(ctx, agent)
+		}
+		for _, tool := range resolved {
+			if !eff.AllowsTool(tool) {
+				r.setStatus(agent, "Failed", "PolicyViolation",
+					fmt.Sprintf("tool %q is not in the AgentPolicy allow-list", tool))
+				return ctrl.Result{}, r.Status().Update(ctx, agent)
+			}
+		}
+	}
+
 	r.setStatus(agent, "Ready", "Reconciled", "")
 	logger.Info("agent ready", "tools", len(resolved), "provider", providerName)
 	return ctrl.Result{}, r.Status().Update(ctx, agent)
@@ -128,6 +207,37 @@ func (r *AgentReconciler) ensureServiceAccount(ctx context.Context, agent *amv1.
 	return getErr
 }
 
+// ensureA2ARBAC creates (once) the namespaced Role + RoleBinding that let an
+// A2A-capable Agent's run pods create/observe child AgentRuns in their own
+// namespace (M3.6/D1). Both are owned by the Agent (GC'd with it) and bind the
+// Agent's run ServiceAccount. Idempotent; pre-existing objects are left as-is.
+func (r *AgentReconciler) ensureA2ARBAC(ctx context.Context, agent *amv1.Agent) error {
+	role := builders.AgentA2ARole(agent)
+	if err := ctrl.SetControllerReference(agent, role, r.Scheme); err != nil {
+		return err
+	}
+	existingRole := &rbacv1.Role{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: role.Namespace, Name: role.Name}, existingRole); apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, role); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	rb := builders.AgentA2ARoleBinding(agent)
+	if err := ctrl.SetControllerReference(agent, rb, r.Scheme); err != nil {
+		return err
+	}
+	existingRB := &rbacv1.RoleBinding{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: rb.Namespace, Name: rb.Name}, existingRB); apierrors.IsNotFound(err) {
+		return r.Create(ctx, rb)
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
 // toPure unwraps the K8s wrapper into the pure Agent shape so the
 // existing pkg/agentmodel/v1.ValidateAgent function can run.
 func toPure(a *amv1.Agent) pure.Agent {
@@ -139,4 +249,15 @@ func (r *AgentReconciler) setStatus(a *amv1.Agent, phase, reason, msg string) {
 	a.Status.Reason = reason
 	a.Status.Message = msg
 	a.Status.ObservedGeneration = a.Generation
+}
+
+// isStdioMCPTool reports whether a tool is a kind=mcp tool targeting a stdio
+// (non-http) MCP server — the subject of the M2.15 operator allow-list gate.
+// http(s) MCP URLs (handled by MCPInvoker) are not stdio.
+func isStdioMCPTool(spec pure.ToolSpec) bool {
+	if spec.Kind != pure.ToolMCP || spec.MCP == nil || spec.MCP.URL == "" {
+		return false
+	}
+	u := spec.MCP.URL
+	return !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://")
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -154,6 +155,32 @@ func cliExtraFlags(req Request) []string {
 	return nil
 }
 
+// claudePermArgs maps the typed CLI permission posture (M3.14 fields) to claude
+// flags (M3.17): ApprovalMode "acceptEdits" → --permission-mode acceptEdits;
+// "never" → --dangerously-skip-permissions (the opt-in danger flag, which the
+// operator admission gate refuses on a non-microVM runtime, D3); "" / "safe"
+// keep the default headless posture. AllowedTools/DisallowedTools map to the
+// claude permission allow/deny lists.
+func claudePermArgs(req Request) []string {
+	if req.Spec.CLI == nil {
+		return nil
+	}
+	var args []string
+	switch req.Spec.CLI.ApprovalMode {
+	case "acceptEdits":
+		args = append(args, "--permission-mode", "acceptEdits")
+	case "never":
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	for _, t := range req.Spec.CLI.AllowedTools {
+		args = append(args, "--allowedTools", t)
+	}
+	for _, t := range req.Spec.CLI.DisallowedTools {
+		args = append(args, "--disallowedTools", t)
+	}
+	return args
+}
+
 // ClaudeCodeHarness invokes `claude --print "<prompt>"`.
 type ClaudeCodeHarness struct {
 	Cmd commandFunc // nil → exec.CommandContext
@@ -167,12 +194,65 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 		flag = req.Spec.CLI.PromptFlag
 	}
 	prompt := promptFromInput(req.Input)
-	if req.Instructions != "" {
-		prompt = req.Instructions + "\n\n" + prompt
+	// --output-format json lets us parse real tokens/cost/session-id (M2.5); the
+	// flag goes before ExtraFlags + the prompt so a tenant override can't drop it.
+	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
+	args := []string{flag}
+	if jsonOut {
+		args = append(args, "--output-format", "json")
 	}
-	args := append([]string{flag}, cliExtraFlags(req)...)
+	// Instructions belong in the system prompt, not stuffed into the user turn
+	// (M3.16) — --append-system-prompt adds them to claude's system prompt.
+	if req.Instructions != "" {
+		args = append(args, "--append-system-prompt", req.Instructions)
+	}
+	// Resume a prior conversation when a session id was captured (M3.19); claude
+	// reloads the transcript from its session store (HOME on AgentFS for durable).
+	if req.SessionID != "" {
+		args = append(args, "--resume", req.SessionID)
+	}
+	// apiKeyHelper (M3.20): short-lived broker-leased creds. claude runs the helper
+	// command (and re-runs it on TTL/401) instead of holding a static key.
+	if req.Spec.CLI != nil && req.Spec.CLI.APIKeyHelperSecret != "" {
+		settings, _ := json.Marshal(map[string]string{"apiKeyHelper": "/agent lease " + req.Spec.CLI.APIKeyHelperSecret})
+		args = append(args, "--settings", string(settings))
+	}
+	// MCP servers (M3.18): point claude at the operator-rendered mcp-config and
+	// auto-allow each server's mcp__<name>__* tools so they're usable headlessly.
+	if req.Spec.CLI != nil && len(req.Spec.CLI.MCPServers) > 0 {
+		args = append(args, "--mcp-config", v1.ClaudeMCPConfigPath)
+		for _, s := range req.Spec.CLI.MCPServers {
+			args = append(args, "--allowedTools", "mcp__"+s.Name+"__*")
+		}
+	}
+	args = append(args, claudePermArgs(req)...)
+	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
-	return runCLI(ctx, req, "claude", args, h.Cmd)
+
+	resp, err := runCLI(ctx, req, "claude", args, h.Cmd)
+	if err != nil || !jsonOut {
+		return resp, err
+	}
+	out, in, outTok, costMilli, sessionID, isErr := parseClaudeJSON(resp.Output)
+	resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli, resp.SessionID = out, in, outTok, costMilli, sessionID
+	// claude --print exits 0 even when the turn errored (is_error). Surface it as
+	// a harness error so the run is folded Failed, not a silent success (M3.16).
+	// resp (with usage) is returned too, so token/cost accounting still lands.
+	if isErr {
+		return resp, fmt.Errorf("claude-code reported is_error: %s", errSnippet(out))
+	}
+	return resp, nil
+}
+
+// errSnippet trims harness output to a short, single-line diagnostic for an
+// error message (the full output is already captured in the step).
+func errSnippet(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
 }
 
 // CodexHarness invokes `codex exec "<prompt>"`.
@@ -187,9 +267,85 @@ func (h *CodexHarness) Run(ctx context.Context, req Request) (Response, error) {
 	if req.Instructions != "" {
 		prompt = req.Instructions + "\n\n" + prompt
 	}
-	args := append([]string{"exec"}, cliExtraFlags(req)...)
+	// --json emits the thread-event stream we parse for real tokens/cost/tool
+	// records (M2.6); it goes right after `exec` so a tenant override can't drop
+	// it. Without OutputFormat=json codex behaves exactly as before (raw stdout).
+	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
+
+	// `exec`, or `exec resume <id>` to continue a persistent session (M3.23).
+	args := []string{"exec"}
+	if req.Spec.SessionPolicy == v1.SessionPersistent && req.SessionID != "" {
+		args = append(args, "resume", req.SessionID)
+	}
+	if jsonOut {
+		args = append(args, "--json")
+	}
+	// codex refuses to run outside a git repo; the AgentFS workspace isn't one.
+	args = append(args, "--skip-git-repo-check")
+	if req.WorkingDir != "" {
+		args = append(args, "-C", req.WorkingDir)
+	}
+	// --output-last-message writes the final assistant message to a file we read
+	// back for a reliable Output (more robust than scraping the JSONL stream).
+	var lastMsgFile string
+	if f, ferr := os.CreateTemp("", "codex-last-*.txt"); ferr == nil {
+		lastMsgFile = f.Name()
+		_ = f.Close()
+		defer func() { _ = os.Remove(lastMsgFile) }()
+		args = append(args, "--output-last-message", lastMsgFile)
+	}
+	args = append(args, codexApprovalArgs(req)...)
+	args = append(args, cliExtraFlags(req)...)
 	args = append(args, prompt)
-	return runCLI(ctx, req, "codex", args, h.Cmd)
+
+	// Route codex through the platform Responses gateway (M3.21): copy the
+	// operator-rendered config.toml into a writable CODEX_HOME (codex writes thread
+	// state there, so it can't read it from the read-only run-spec mount) and make
+	// sure the subprocess sees CODEX_HOME.
+	if req.Spec.CLI != nil && req.Spec.CLI.CodexBaseURL != "" {
+		home := os.Getenv("CODEX_HOME")
+		if home == "" {
+			home = "/tmp/.codex"
+		}
+		if err := os.MkdirAll(home, 0o700); err == nil {
+			if cfg, rerr := os.ReadFile(v1.CodexConfigMountPath); rerr == nil {
+				_ = os.WriteFile(filepath.Join(home, "config.toml"), cfg, 0o600)
+			}
+		}
+		if req.Env == nil {
+			req.Env = map[string]string{}
+		}
+		req.Env["CODEX_HOME"] = home
+	}
+
+	resp, err := runCLI(ctx, req, "codex", args, h.Cmd)
+	if err != nil {
+		return resp, err
+	}
+	if jsonOut {
+		out, in, outTok, costMilli, calls := parseCodexJSONL(resp.Output)
+		resp.Output, resp.TokensIn, resp.TokensOut, resp.CostUSDMilli, resp.ToolCalls = out, in, outTok, costMilli, calls
+	}
+	// Prefer codex's own last-message file when it wrote one (most reliable Output).
+	if lastMsgFile != "" {
+		if b, rerr := os.ReadFile(lastMsgFile); rerr == nil {
+			if trimmed := bytes.TrimSpace(b); len(trimmed) > 0 {
+				resp.Output = trimmed
+			}
+		}
+	}
+	return resp, nil
+}
+
+// codexApprovalArgs maps the shared ApprovalMode to codex's approval policy
+// (M3.21): "never" → --ask-for-approval never, the opt-in headless posture
+// (microVM-gated at admission, D3). Other modes leave codex's default approval
+// policy in place. Codex's sandbox flag is a separate codex-spec concern.
+func codexApprovalArgs(req Request) []string {
+	if req.Spec.CLI != nil && req.Spec.CLI.ApprovalMode == "never" {
+		return []string{"--ask-for-approval", "never"}
+	}
+	return nil
 }
 
 // AiderHarness invokes `aider --message "<prompt>" --no-pretty --yes`.

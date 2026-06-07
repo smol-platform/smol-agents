@@ -40,6 +40,11 @@ type ToolCall struct {
 type Observation struct {
 	Output     json.RawMessage `json:"output"`
 	DurationMs int64           `json:"durationMs"`
+	// Tokens / ToolCalls are usage consumed INSIDE the tool — non-zero only for a
+	// kind=agent (A2A) tool, where the child run's usage rolls up into the parent
+	// field-wise. WallClock is the parent's own elapsed time and is never summed.
+	Tokens    int64 `json:"tokens,omitempty"`
+	ToolCalls int32 `json:"toolCalls,omitempty"`
 }
 
 // FinalAnswer is the terminal output of a Run.

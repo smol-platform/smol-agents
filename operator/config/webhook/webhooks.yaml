@@ -104,3 +104,107 @@ webhooks:
         apiVersions: [v1]
         resources: [agentnetworks]
         operations: [CREATE, UPDATE]
+---
+# AgentPolicy admission gate (M1.6): rejects an Agent whose resolved provider/tools
+# fall outside the namespace AgentPolicy allow-list, and an AgentRun whose effective
+# budget exceeds the policy cap, at ADMISSION (the primary, fail-closed enforcement;
+# the Agent/AgentRun reconcilers run the same checks as a backstop). The validator
+# handlers are registered by SetupAgentPolicyGateWebhook (cmd/manager/main.go); this
+# config is what makes the apiserver actually call them. failurePolicy: Fail +
+# timeoutSeconds: 5 (D3) — a transient list error / empty policy fails OPEN in the
+# handler, so a write is never wrongly denied on an apiserver hiccup.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: smol-agents-operator-validating-agentpolicy-gate
+  annotations:
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
+webhooks:
+  - name: validate.agent.runtime.agents.smol-agents.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-runtime-agents-smol-agents-ai-v1-agent
+    rules:
+      - apiGroups: [runtime.agents.smol-agents.ai]
+        apiVersions: [v1]
+        resources: [agents]
+        operations: [CREATE, UPDATE]
+  - name: validate.agentrun.runtime.agents.smol-agents.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-runtime-agents-smol-agents-ai-v1-agentrun
+    rules:
+      - apiGroups: [runtime.agents.smol-agents.ai]
+        apiVersions: [v1]
+        resources: [agentruns]
+        operations: [CREATE, UPDATE]
+---
+# AgentPolicy self-validation webhook (M1.7): rejects a malformed AgentPolicy at apply
+# (a redaction regex that does not compile, or an invalid budget) so the gate webhook +
+# reconcilers can trust that every stored policy is well-formed. Without this a bad
+# redaction pattern would be admitted and then silently skipped on the fold path,
+# weakening redaction. Handler registered by SetupAgentPolicySelfWebhook. The reconciler
+# runs the same ValidateAgentPolicy as a backstop.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: smol-agents-operator-validating-agentpolicy
+  annotations:
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
+webhooks:
+  - name: validate.agentpolicy.runtime.agents.smol-agents.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-runtime-agents-smol-agents-ai-v1-agentpolicy
+    rules:
+      - apiGroups: [runtime.agents.smol-agents.ai]
+        apiVersions: [v1]
+        resources: [agentpolicies]
+        operations: [CREATE, UPDATE]
+---
+# AgentSession admission webhook (M2.22): rejects an AgentSession whose spec.agentRef
+# does not resolve to an Agent in the same namespace, failing fast at apply instead of
+# a 15s Pending limbo. Handler registered by SetupAgentSessionWebhook (cmd/manager/main.go);
+# this config is what makes the apiserver call it (it was previously omitted, so the
+# webhook was silently inactive — same class of gap as the agentpolicy gate above). The
+# reconciler keeps NotFound→Pending as the backstop.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: smol-agents-operator-validating-agentsession
+  annotations:
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
+webhooks:
+  - name: validate.agentsession.runtime.agents.smol-agents.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-runtime-agents-smol-agents-ai-v1-agentsession
+    rules:
+      - apiGroups: [runtime.agents.smol-agents.ai]
+        apiVersions: [v1]
+        resources: [agentsessions]
+        operations: [CREATE, UPDATE]

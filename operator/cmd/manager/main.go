@@ -2,8 +2,12 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -38,7 +42,15 @@ func main() {
 	var defaultRunRuntimeClass string
 	var allowHostRuntime bool
 	var sessionNATSURL string
+	var natsAccountSeedFile string
+	var a2aMaxDepth int
 	var maxConcurrentReconciles int
+	var runDeadlineMultiplier float64
+	var defaultApprovalTimeout time.Duration
+	var defaultNamespaceRunConcurrency int
+	var enableAdmissionQueue bool
+	var maxRunPriority int
+	var allowedStdioMCP string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -48,13 +60,45 @@ func main() {
 		"permit runc (shared host kernel) for AgentRun pods on clusters with no sandbox runtime; otherwise runc is a fail-closed R-SBX-1 violation")
 	flag.StringVar(&sessionNATSURL, "session-nats-url", os.Getenv("SESSION_NATS_URL"),
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
+	flag.StringVar(&natsAccountSeedFile, "nats-account-seed-file", os.Getenv("NATS_ACCOUNT_SEED_FILE"),
+		"path to the NATS account signing seed (mounted Secret) used to mint per-namespace worker credentials (M2.20); empty leaves session workers connecting unauthenticated")
+	flag.IntVar(&a2aMaxDepth, "a2a-max-depth", 4,
+		"A2A delegation recursion ceiling injected into loop run pods (M3.5); a child at this depth may not spawn further children")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
 		"max parallel reconciles per agent-model controller (AgentRun/AgentSession)")
+	flag.Float64Var(&runDeadlineMultiplier, "run-deadline-multiplier", 1.5,
+		"scales an AgentRun's wall-clock budget into the pod ActiveDeadlineSeconds hard backstop (M1.10)")
+	flag.DurationVar(&defaultApprovalTimeout, "default-approval-timeout", time.Hour,
+		"expiry for an un-decided pre-run approval when the Agent sets none (M5)")
+	flag.IntVar(&defaultNamespaceRunConcurrency, "default-namespace-run-concurrency", 0,
+		"per-namespace cap on Running AgentRuns when no AgentRunQuota sets one (0 = unlimited, M1.12)")
+	flag.BoolVar(&enableAdmissionQueue, "enable-admission-queue", false,
+		"per-namespace priority ordering of queued runs at the concurrency cap (M1.13; off = M1.12 behavior)")
+	flag.IntVar(&maxRunPriority, "max-run-priority", 1000, "clamp for AgentRun.spec.priority (M1.13)")
+	flag.StringVar(&allowedStdioMCP, "allowed-stdio-mcp", "",
+		"comma-separated allow-list of approved stdio MCP server URLs (M2.15; empty = deny all stdio MCP)")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
+	// The A2A recursion ceiling reaches the run-pod builder via env (M3.5).
+	if a2aMaxDepth > 0 {
+		_ = os.Setenv("SMOL_AGENTS_A2A_MAX_DEPTH", strconv.Itoa(a2aMaxDepth))
+	}
+
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Load the NATS account signing seed for per-namespace worker credentials
+	// (M2.20). Mounted from a Secret; absent leaves session workers unauthenticated.
+	var natsAccountSeed []byte
+	if natsAccountSeedFile != "" {
+		b, rerr := os.ReadFile(natsAccountSeedFile)
+		if rerr != nil {
+			setupLog.Error(rerr, "unable to read --nats-account-seed-file", "path", natsAccountSeedFile)
+			os.Exit(1)
+		}
+		natsAccountSeed = bytes.TrimSpace(b)
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
@@ -95,15 +139,21 @@ func main() {
 	// runtime.agents.smol-agents.ai/v1 — agent-model CRDs.
 	if err := (&agentmodel.AgentReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		AllowedStdioMCP: parseAllowList(allowedStdioMCP),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register Agent controller")
 		os.Exit(1)
 	}
 	if err := (&agentmodel.AgentRunReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
-		AllowHostRuntime:        allowHostRuntime,
-		MaxConcurrentReconciles: maxConcurrentReconciles,
+		DefaultRunRuntimeClass:         defaultRunRuntimeClass,
+		AllowHostRuntime:               allowHostRuntime,
+		MaxConcurrentReconciles:        maxConcurrentReconciles,
+		RunDeadlineMultiplier:          runDeadlineMultiplier,
+		DefaultApprovalTimeout:         defaultApprovalTimeout,
+		DefaultNamespaceRunConcurrency: int32(defaultNamespaceRunConcurrency),
+		EnableAdmissionQueue:           enableAdmissionQueue,
+		MaxPriority:                    int32(maxRunPriority),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)
@@ -113,6 +163,7 @@ func main() {
 		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
 		AllowHostRuntime:        allowHostRuntime,
 		NATSURL:                 sessionNATSURL,
+		NATSAccountSeed:         natsAccountSeed,
 		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentSession controller")
@@ -122,6 +173,12 @@ func main() {
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentNetwork controller")
+		os.Exit(1)
+	}
+	if err := (&agentmodel.DynamicCredentialBackendReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register DynamicCredentialBackend controller")
 		os.Exit(1)
 	}
 
@@ -147,6 +204,18 @@ func main() {
 			setupLog.Error(err, "unable to register AgentNetwork webhook")
 			os.Exit(1)
 		}
+		if err := webhooks.SetupAgentPolicyGateWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentPolicy gate webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupAgentPolicySelfWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentPolicy self-validation webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupAgentSessionWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentSession webhook")
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -163,4 +232,15 @@ func main() {
 		setupLog.Error(err, "manager exit")
 		os.Exit(1)
 	}
+}
+
+// parseAllowList turns a comma-separated flag value into a set, trimming blanks.
+func parseAllowList(csv string) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range strings.Split(csv, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out[e] = true
+		}
+	}
+	return out
 }

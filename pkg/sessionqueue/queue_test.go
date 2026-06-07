@@ -6,6 +6,19 @@ import (
 	"time"
 )
 
+// Compile-time: both transports satisfy Queue (incl. M2.20 UpdateRetention).
+var (
+	_ Queue = (*MemQueue)(nil)
+	_ Queue = (*NATSQueue)(nil)
+)
+
+// M2.20: MemQueue has no durable retention, so UpdateRetention is a no-op.
+func TestMemQueue_UpdateRetentionNoOp(t *testing.T) {
+	if err := NewMemQueue().UpdateRetention(time.Hour); err != nil {
+		t.Errorf("MemQueue.UpdateRetention must be a no-op, got %v", err)
+	}
+}
+
 func TestMemQueue_RoundTrip(t *testing.T) {
 	q := NewMemQueue()
 	ctx := context.Background()

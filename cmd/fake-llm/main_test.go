@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/agentruntime/openaillm"
 )
 
 func TestKeyFor_Stable(t *testing.T) {
@@ -145,5 +148,49 @@ func TestServer_HTTPChat(t *testing.T) {
 	}
 	if got.FinalAnswer == nil || string(got.FinalAnswer.Output) != `{"answer":"world"}` {
 		t.Errorf("response wrong: %+v", got)
+	}
+}
+
+// TestChatCompletions_OpenAIWire drives the REAL production loop-mode client
+// (pkg/agentruntime/openaillm) against the OpenAI endpoint, proving the
+// LLMDecision→OpenAI translation round-trips: a scripted tool call surfaces as
+// a ToolCall decision, the next call surfaces as a FinalAnswer. This is the
+// seam that lets an operator-scheduled loop pod run against the mock.
+func TestChatCompletions_OpenAIWire(t *testing.T) {
+	s := &server{
+		plans:   map[string]ScriptedPlan{},
+		cursors: map[string]int{},
+		fallback: rt.LLMDecision{
+			FinalAnswer: &rt.FinalAnswer{Output: json.RawMessage(`{"answer":"done"}`)},
+		},
+		globalSequence: []rt.LLMDecision{
+			{ToolCall: &rt.ToolCall{Tool: "search", Arguments: json.RawMessage(`{"q":"x"}`)}},
+			{FinalAnswer: &rt.FinalAnswer{Output: json.RawMessage(`{"answer":"final"}`)}},
+		},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := openaillm.New(srv.URL, "")
+
+	d1, err := c.Chat(context.Background(), agentruntime.ChatRequest{Instructions: "agent A"})
+	if err != nil {
+		t.Fatalf("chat 1: %v", err)
+	}
+	if d1.ToolCall == nil || d1.ToolCall.Tool != "search" {
+		t.Fatalf("call 1: want ToolCall search, got %+v", d1)
+	}
+	if string(d1.ToolCall.Arguments) != `{"q":"x"}` {
+		t.Errorf("call 1 args = %q, want {\"q\":\"x\"}", d1.ToolCall.Arguments)
+	}
+
+	d2, err := c.Chat(context.Background(), agentruntime.ChatRequest{Instructions: "agent A"})
+	if err != nil {
+		t.Fatalf("chat 2: %v", err)
+	}
+	if d2.FinalAnswer == nil {
+		t.Fatalf("call 2: want FinalAnswer, got %+v", d2)
 	}
 }

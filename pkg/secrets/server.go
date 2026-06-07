@@ -38,6 +38,14 @@ type Server struct {
 	TraTVerifier trat.Verifier
 	CredPolicy   CredentialPolicy
 
+	// Interactive-caller policy (M4.12): when ClassifyConn is set, the broker
+	// classifies each connection's caller (the agent vs a PTY-spawned driver
+	// shell) and applies InteractivePolicy to lease/mint. nil ClassifyConn =
+	// every caller is treated as the agent (no behavior change). cmd/secret-proxy
+	// wires the /proc-based classifier on Linux.
+	InteractivePolicy InteractiveCallerPolicy
+	ClassifyConn      func(net.Conn) CallerClass
+
 	mu    sync.Mutex
 	ln    net.Listener
 	conns map[*serverConn]struct{}
@@ -148,6 +156,10 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	// Classify the caller once per connection (M4.12): agent vs PTY-spawned
+	// driver shell. Stable for the connection's life.
+	class := s.callerClass(c)
+
 	for {
 		var req request
 		if err := readFrame(c, &req); err != nil {
@@ -156,7 +168,7 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 			}
 			return
 		}
-		resp := s.dispatch(ctx, id, req)
+		resp := s.dispatch(ctx, id, class, req)
 		if err := writeFrame(c, resp); err != nil {
 			s.Logger.Debug("write frame", "err", err, "conn", sc.id)
 			return
@@ -167,14 +179,39 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 	}
 }
 
-func (s *Server) dispatch(ctx context.Context, principal spiffeid.ID, req request) response {
+// callerClass classifies the connection's caller (M4.12). Defaults to
+// CallerAgent when no classifier is wired (current behavior).
+func (s *Server) callerClass(c net.Conn) CallerClass {
+	if s.ClassifyConn == nil {
+		return CallerAgent
+	}
+	return s.ClassifyConn(c)
+}
+
+// interactiveGate applies the interactive-caller policy to a credential request
+// (lease/mint). It returns a non-nil deny response when the policy forbids a
+// PTY-spawned caller, and audits an allowed-but-interactive access.
+func (s *Server) interactiveGate(class CallerClass, name string) *response {
+	allow, audit := s.InteractivePolicy.Decide(class)
+	if !allow {
+		s.Logger.Warn("interactive caller denied by policy", "name", name, "policy", s.InteractivePolicy)
+		r := errResponse(ErrUnauthorized, "interactive (PTY-spawned) caller denied by broker policy")
+		return &r
+	}
+	if audit {
+		s.Logger.Warn("interactive caller leased credential (audited)", "name", name)
+	}
+	return nil
+}
+
+func (s *Server) dispatch(ctx context.Context, principal spiffeid.ID, class CallerClass, req request) response {
 	switch req.Kind {
 	case reqLease:
-		return s.handleLease(ctx, principal, req)
+		return s.handleLease(ctx, principal, class, req)
 	case reqRefresh:
-		return s.handleRefresh(ctx, principal, req)
+		return s.handleRefresh(ctx, principal, class, req)
 	case reqMint:
-		return s.handleMint(ctx, principal, req)
+		return s.handleMint(ctx, principal, class, req)
 	case reqClose:
 		return response{}
 	default:
@@ -182,13 +219,16 @@ func (s *Server) dispatch(ctx context.Context, principal spiffeid.ID, req reques
 	}
 }
 
-func (s *Server) handleLease(ctx context.Context, principal spiffeid.ID, req request) response {
+func (s *Server) handleLease(ctx context.Context, principal spiffeid.ID, class CallerClass, req request) response {
 	if req.Name == "" {
 		return errResponse(ErrInvalidRequest, "name is required")
 	}
 	if !s.Policy.Allowed(principal, req.Name) {
 		s.Logger.Warn("policy denied", "principal", principal, "name", req.Name)
 		return errResponse(ErrUnauthorized, fmt.Sprintf("%s not allowed for %s", principal, req.Name))
+	}
+	if deny := s.interactiveGate(class, req.Name); deny != nil {
+		return *deny
 	}
 	ttl := req.TTL
 	if ttl <= 0 {
@@ -216,7 +256,7 @@ func (s *Server) handleLease(ctx context.Context, principal spiffeid.ID, req req
 	return response{Lease: &l}
 }
 
-func (s *Server) handleRefresh(ctx context.Context, principal spiffeid.ID, req request) response {
+func (s *Server) handleRefresh(ctx context.Context, principal spiffeid.ID, class CallerClass, req request) response {
 	s.mu.Lock()
 	prev, ok := s.issued[req.Lease]
 	s.mu.Unlock()
@@ -230,8 +270,8 @@ func (s *Server) handleRefresh(ctx context.Context, principal spiffeid.ID, req r
 		return errResponse(ErrLeaseExpired, "lease expired")
 	}
 	// Re-validate policy + re-fetch backend so a newly-revoked policy
-	// blocks future refreshes (R-SEC-2 #2).
-	return s.handleLease(ctx, principal, request{Kind: reqLease, Name: prev.Name, TTL: prev.TTL})
+	// blocks future refreshes (R-SEC-2 #2). The interactive gate re-applies too.
+	return s.handleLease(ctx, principal, class, request{Kind: reqLease, Name: prev.Name, TTL: prev.TTL})
 }
 
 // handleMint mints a dynamic provider credential (R-SEGR). It (1) requires the
@@ -239,12 +279,15 @@ func (s *Server) handleRefresh(ctx context.Context, principal spiffeid.ID, req r
 // the TTS JWKS, (3) lets the CredentialPolicy authorize + narrow the request
 // from the verified claims, then (4) calls the DynamicBackend. The minted value
 // is returned to the calling sidecar (which injects it) — never logged.
-func (s *Server) handleMint(ctx context.Context, principal spiffeid.ID, req request) response {
+func (s *Server) handleMint(ctx context.Context, principal spiffeid.ID, class CallerClass, req request) response {
 	if s.Dynamic == nil || s.TraTVerifier == nil || s.CredPolicy == nil {
 		return errResponse(ErrInvalidRequest, "dynamic credential minting not configured")
 	}
 	if req.Name == "" {
 		return errResponse(ErrInvalidRequest, "credential name is required")
+	}
+	if deny := s.interactiveGate(class, req.Name); deny != nil {
+		return *deny
 	}
 	if req.TraT == "" {
 		return errResponse(ErrUnauthorized, "trat is required for mint")

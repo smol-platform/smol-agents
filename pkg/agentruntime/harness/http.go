@@ -23,7 +23,7 @@ type PiHarness struct {
 	Client HTTPClient
 }
 
-func (h *PiHarness) Kind() v1.HarnessKind { return v1.HarnessPi }
+func (h *PiHarness) Kind() v1.HarnessKind { return v1.HarnessInflectionPi }
 
 func (h *PiHarness) Run(ctx context.Context, req Request) (Response, error) {
 	spec := req.Spec.HTTP

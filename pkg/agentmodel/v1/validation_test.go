@@ -38,6 +38,91 @@ func TestValidateAgent_BadBudget(t *testing.T) {
 	}
 }
 
+// M5.2: pre-run approval input validation.
+func TestValidateAgent_ApprovalTimeout(t *testing.T) {
+	base := AgentSpec{
+		Model:        ModelRef{ProviderRef: "p", Name: "m"},
+		Instructions: "x",
+		Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0},
+	}
+	bad := base
+	bad.Approval = &ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: -1}
+	if err := ValidateAgent(Agent{Spec: bad}); err == nil {
+		t.Errorf("negative approvalTimeoutSeconds must be rejected")
+	}
+	ok := base
+	ok.Approval = &ApprovalPolicy{RequireApprovalBeforeRun: true, ApprovalTimeoutSeconds: 0}
+	if err := ValidateAgent(Agent{Spec: ok}); err != nil {
+		t.Errorf("zero timeout (= operator default) must be accepted: %v", err)
+	}
+}
+
+// M4.3: an interactive session needs a resident pod (required=true).
+func TestValidateAgent_Session(t *testing.T) {
+	base := AgentSpec{
+		Model:        ModelRef{ProviderRef: "p", Name: "m"},
+		Instructions: "x",
+		Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0},
+	}
+	bad := base
+	bad.Session = &SessionSpec{Interactive: true} // interactive without required
+	if err := ValidateAgent(Agent{Spec: bad}); err == nil {
+		t.Errorf("interactive session without required must be rejected")
+	}
+	ok := base
+	ok.Session = &SessionSpec{Required: true, Interactive: true}
+	if err := ValidateAgent(Agent{Spec: ok}); err != nil {
+		t.Errorf("required+interactive must pass: %v", err)
+	}
+}
+
+// M2.23: artifacts require agentfs storage, unique names, and relative globs.
+func TestValidateAgent_Artifacts(t *testing.T) {
+	base := AgentSpec{
+		Model:        ModelRef{ProviderRef: "p", Name: "m"},
+		Instructions: "x",
+		Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10},
+	}
+	withFS := base
+	withFS.Storage = &StorageSpec{Kind: StorageAgentFS, AgentFS: &AgentFSSpec{SizeGiB: 1}}
+
+	ok := withFS
+	ok.Artifacts = &ArtifactSpec{Outputs: []ArtifactRule{{Name: "out", Glob: "out/**/*.json"}}}
+	if err := ValidateAgent(Agent{Spec: ok}); err != nil {
+		t.Errorf("valid artifacts rejected: %v", err)
+	}
+
+	noFS := base
+	noFS.Artifacts = &ArtifactSpec{Outputs: []ArtifactRule{{Name: "out", Glob: "o/*"}}}
+	if err := ValidateAgent(Agent{Spec: noFS}); err == nil {
+		t.Errorf("artifacts without agentfs must be rejected")
+	}
+
+	dup := withFS
+	dup.Artifacts = &ArtifactSpec{Outputs: []ArtifactRule{{Name: "x", Glob: "a"}, {Name: "x", Glob: "b"}}}
+	if err := ValidateAgent(Agent{Spec: dup}); err == nil {
+		t.Errorf("duplicate artifact names must be rejected")
+	}
+
+	bad := withFS
+	bad.Artifacts = &ArtifactSpec{Outputs: []ArtifactRule{{Name: "x", Glob: "../escape"}}}
+	if err := ValidateAgent(Agent{Spec: bad}); err == nil {
+		t.Errorf("../ traversal glob must be rejected")
+	}
+}
+
+func TestValidateAgentRun_DecisionToken(t *testing.T) {
+	run := AgentRun{Spec: AgentRunSpec{AgentRef: "a", Input: json.RawMessage(`{}`)}}
+	run.Spec.Decision = &Decision{Approve: true} // no token
+	if err := ValidateAgentRun(run); err == nil {
+		t.Errorf("decision without token must be rejected")
+	}
+	run.Spec.Decision = &Decision{Token: "t", Approve: true}
+	if err := ValidateAgentRun(run); err != nil {
+		t.Errorf("decision with token must pass: %v", err)
+	}
+}
+
 func TestValidateTool_HappyPath(t *testing.T) {
 	tool := Tool{
 		Name: "search",
@@ -50,6 +135,25 @@ func TestValidateTool_HappyPath(t *testing.T) {
 	}
 	if err := ValidateTool(tool); err != nil {
 		t.Errorf("good tool rejected: %v", err)
+	}
+}
+
+// M3.5: A2A target bounds (maxTokens/timeoutSeconds) reject negative values.
+func TestValidateTool_AgentTargetBounds(t *testing.T) {
+	mk := func(mt int64, ts int32) Tool {
+		return Tool{Name: "deleg", Spec: ToolSpec{
+			Kind: ToolAgent, InputSchema: goodSchema(), OutputSchema: goodSchema(),
+			Agent: &AgentTargetSpec{Ref: ToolRef{Name: "child"}, MaxTokens: mt, TimeoutSeconds: ts},
+		}}
+	}
+	if err := ValidateTool(mk(1000, 60)); err != nil {
+		t.Errorf("valid bounds rejected: %v", err)
+	}
+	if err := ValidateTool(mk(-1, 0)); err == nil {
+		t.Errorf("negative maxTokens must be rejected")
+	}
+	if err := ValidateTool(mk(0, -5)); err == nil {
+		t.Errorf("negative timeoutSeconds must be rejected")
 	}
 }
 

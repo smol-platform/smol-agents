@@ -22,18 +22,24 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/observability"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
 )
-
-const maxTurnBytes = 1 << 20
 
 // Gateway publishes turns to the queue and fetches results. Stateless.
 type Gateway struct {
 	Queue   sessionqueue.Queue
 	MaxWait time.Duration // cap on synchronous ?wait (default 60s)
 	Logger  *slog.Logger
+	// Limits resolves a session's per-turn input cap (M2.20). Nil → every turn
+	// uses defaultInputCap, matching the gateway's pre-M2.20 behavior.
+	Limits *sessionLimits
 }
 
 func (g *Gateway) Handler() http.Handler {
@@ -45,10 +51,18 @@ func (g *Gateway) Handler() http.Handler {
 }
 
 func (g *Gateway) postTurn(w http.ResponseWriter, r *http.Request) {
-	key := sessionqueue.SessionKey(r.PathValue("ns"), r.PathValue("name"))
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxTurnBytes))
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	key := sessionqueue.SessionKey(ns, name)
+	// Per-session input cap (M2.20): read one byte past the cap so an over-limit
+	// body is rejected rather than silently truncated into a malformed turn.
+	limit := g.Limits.inputCap(r.Context(), ns, name)
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read body"})
+		return
+	}
+	if int64(len(body)) > limit {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "turn body exceeds the session's maxTurnInputBytes"})
 		return
 	}
 	// Validate it's a well-formed turn (the worker decodes it as AgentRunSpec).
@@ -110,6 +124,27 @@ func (g *Gateway) waitFor(r *http.Request) time.Duration {
 	return d
 }
 
+// buildK8sClient returns an in-cluster reader for AgentSessions (per-session
+// limits, M2.20), or nil when there's no in-cluster config (dev) — the gateway
+// then falls back to the default input cap and default retention.
+func buildK8sClient(logger *slog.Logger) client.Client {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		logger.Info("agentgateway: no in-cluster config; per-session limits disabled (default cap)")
+		return nil
+	}
+	sch := runtime.NewScheme()
+	if err := amv1.AddToScheme(sch); err != nil {
+		return nil
+	}
+	c, err := client.New(cfg, client.Options{Scheme: sch})
+	if err != nil {
+		logger.Error("agentgateway: build k8s client", "err", err)
+		return nil
+	}
+	return c
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -134,7 +169,9 @@ func main() {
 	}
 	defer q.Close()
 
-	g := &Gateway{Queue: q, MaxWait: *maxWait, Logger: logger}
+	// In-cluster client for per-session limits (M2.20); best-effort — without it
+	// every turn uses the default cap and stream retention stays at its default.
+	g := &Gateway{Queue: q, MaxWait: *maxWait, Logger: logger, Limits: newSessionLimits(buildK8sClient(logger), q)}
 	srv := &http.Server{Addr: *addr, Handler: g.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

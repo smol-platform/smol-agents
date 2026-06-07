@@ -19,6 +19,8 @@
 package builders
 
 import (
+	"encoding/json"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 
@@ -37,6 +39,11 @@ const (
 	// storageFSSidecarName / storageFSInitName are the storage AgentFS containers.
 	storageFSSidecarName = "agentfs-sidecar"
 	storageFSInitName    = "agentfs-init"
+
+	// StorageFSSidecarName is the exported serve-sidecar container name, used by
+	// the controller's artifact fold (M2.26) to find the sidecar's status +
+	// termination-message manifest.
+	StorageFSSidecarName = storageFSSidecarName
 
 	// agentFSShutdownGraceSeconds is the pod terminationGracePeriod floor when a
 	// durable AgentFS sidecar is attached, so its final backup-on-SIGTERM has
@@ -125,6 +132,32 @@ func AttachStorageFS(pod *corev1.Pod, input StorageMountInput) *corev1.Pod {
 		}
 	}
 	return pod
+}
+
+// ApplyArtifactCollection wires Agent.Spec.Artifacts (M2.26) onto the AgentFS
+// serve sidecar — the only container with S3 creds — so it collects + uploads
+// the declared workspace files on shutdown. It sets AGENTFS_ARTIFACTS (the
+// collection rules) + AGENTFS_ARTIFACT_PREFIX (a per-run key prefix in the
+// backup bucket). No-op unless durable AgentFS + spec.artifacts are both set;
+// the harness container is never touched (it holds no credentials). The sidecar
+// reports its manifest via its termination message (no k8s client / RBAC).
+func ApplyArtifactCollection(pod *corev1.Pod, agent *pure.AgentSpec, namespace, name string) {
+	if agent.Storage == nil || agent.Storage.AgentFS == nil || agent.Artifacts == nil || len(agent.Artifacts.Outputs) == 0 {
+		return
+	}
+	rules, err := json.Marshal(agent.Artifacts.Outputs)
+	if err != nil {
+		return
+	}
+	env := []corev1.EnvVar{
+		{Name: "AGENTFS_ARTIFACTS", Value: string(rules)},
+		{Name: "AGENTFS_ARTIFACT_PREFIX", Value: "artifacts/" + namespace + "/" + name},
+	}
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == storageFSSidecarName {
+			pod.Spec.InitContainers[i].Env = append(pod.Spec.InitContainers[i].Env, env...)
+		}
+	}
 }
 
 // ensureGracePeriod raises the pod's terminationGracePeriodSeconds to at least

@@ -40,6 +40,12 @@ type Queue interface {
 	// (synchronous gateway calls). Returns ErrNoResult on timeout.
 	FetchResult(ctx context.Context, sessionKey, turnID string, timeout time.Duration) ([]byte, error)
 
+	// UpdateRetention sets how long a delivered-but-unconsumed turn is retained
+	// (the durable replay window) — the gateway reconciles it to the max of the
+	// bound sessions' turnRetentionSeconds (M2.20). The NATS impl reconfigures the
+	// JetStream stream; MemQueue is a no-op (no retention). maxAge <= 0 is a no-op.
+	UpdateRetention(maxAge time.Duration) error
+
 	// Close releases transport resources.
 	Close() error
 }

@@ -3,6 +3,7 @@ package v1
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -44,9 +45,12 @@ func ValidateAgent(a Agent) error {
 		} else if err := ValidateHarness(*a.Spec.Harness); err != nil {
 			errs = append(errs, fmt.Errorf("spec.harness: %w", err))
 		}
-		// Persistent sessions need persistent storage.
+		// Persistent sessions need persistent storage — EXCEPT Hermes, whose
+		// cross-turn memory lives gateway-side (keyed by a session id), not in a
+		// workspace volume (M3.13 / D6). CLI kinds still require storage.
 		if a.Spec.Harness != nil &&
 			a.Spec.Harness.SessionPolicy == SessionPersistent &&
+			a.Spec.Harness.Kind != HarnessHermes &&
 			(a.Spec.Storage == nil || a.Spec.Storage.Kind == StorageNone) {
 			errs = append(errs, errors.New("harness.sessionPolicy=persistent requires spec.storage"))
 		}
@@ -66,8 +70,42 @@ func ValidateAgent(a Agent) error {
 	if err := ValidateStorage(a.Spec.Storage); err != nil {
 		errs = append(errs, fmt.Errorf("spec.storage: %w", err))
 	}
+	if a.Spec.Approval != nil && a.Spec.Approval.ApprovalTimeoutSeconds < 0 {
+		errs = append(errs, errors.New("spec.approval.approvalTimeoutSeconds must be >= 0"))
+	}
+	if a.Spec.Session != nil && a.Spec.Session.Interactive && !a.Spec.Session.Required {
+		errs = append(errs, errors.New("spec.session.interactive requires session.required=true (an attach plane needs a resident pod)"))
+	}
+	if a.Spec.Artifacts != nil {
+		errs = append(errs, validateArtifacts(a.Spec)...)
+	}
 
 	return errors.Join(errs...)
+}
+
+// validateArtifacts checks the ArtifactSpec: it needs AgentFS storage (the
+// workspace volume the sidecar reads), unique rule names, and workspace-relative
+// globs (no absolute paths or ".." traversal).
+func validateArtifacts(spec AgentSpec) []error {
+	var errs []error
+	if spec.Storage == nil || spec.Storage.Kind != StorageAgentFS {
+		errs = append(errs, errors.New("spec.artifacts requires spec.storage.kind=agentfs"))
+	}
+	seen := map[string]bool{}
+	for i, r := range spec.Artifacts.Outputs {
+		if r.Name == "" {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].name is required", i))
+		} else if seen[r.Name] {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].name %q is duplicated", i, r.Name))
+		}
+		seen[r.Name] = true
+		if r.Glob == "" {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].glob is required", i))
+		} else if strings.HasPrefix(r.Glob, "/") || strings.Contains(r.Glob, "..") {
+			errs = append(errs, fmt.Errorf("spec.artifacts.outputs[%d].glob must be workspace-relative (no leading / or ..)", i))
+		}
+	}
+	return errs
 }
 
 // ValidateTool — R-AM-API-2 + R-AM-TOOL-1.
@@ -97,6 +135,9 @@ func ValidateTool(t Tool) error {
 	case ToolAgent:
 		if t.Spec.Agent == nil || t.Spec.Agent.Ref.Name == "" {
 			errs = append(errs, errors.New("spec.agent.ref.name is required for kind=agent"))
+		}
+		if t.Spec.Agent != nil && (t.Spec.Agent.MaxTokens < 0 || t.Spec.Agent.TimeoutSeconds < 0) {
+			errs = append(errs, errors.New("spec.agent.maxTokens/timeoutSeconds must be >= 0"))
 		}
 	case ToolFunction:
 		if t.Spec.Function == nil || t.Spec.Function.Name == "" {
@@ -137,6 +178,9 @@ func ValidateAgentRun(r AgentRun) error {
 	}
 	for i, in := range r.Spec.Inputs {
 		errs = append(errs, validateRunInput(i, in)...)
+	}
+	if r.Spec.Decision != nil && r.Spec.Decision.Token == "" {
+		errs = append(errs, errors.New("spec.decision.token is required"))
 	}
 	return errors.Join(errs...)
 }
@@ -180,7 +224,19 @@ func ValidateAgentPolicy(p AgentPolicy) error {
 		return errors.New("name is required")
 	}
 	if p.Spec.MaxBudget != nil {
-		return p.Spec.MaxBudget.Validate()
+		if err := p.Spec.MaxBudget.Validate(); err != nil {
+			return err
+		}
+	}
+	// Reject a redaction pattern that does not compile, so a bad pattern is
+	// caught at admission rather than silently skipped (or panicking) on the
+	// fold path. Go's regexp is RE2, so compilation is the only failure mode.
+	if p.Spec.Redaction != nil {
+		for i, pat := range p.Spec.Redaction.Patterns {
+			if _, err := regexp.Compile(pat); err != nil {
+				return fmt.Errorf("spec.redaction.patterns[%d]: %w", i, err)
+			}
+		}
 	}
 	return nil
 }

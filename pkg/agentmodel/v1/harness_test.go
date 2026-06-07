@@ -6,10 +6,32 @@ import (
 	"time"
 )
 
+// M4.14: pi is a deprecated alias for the canonical inflection-pi; both
+// validate, and the alias canonicalizes (the registry resolves through it).
+func TestHarnessKind_InflectionPiAlias(t *testing.T) {
+	if !HarnessPi.Valid() || !HarnessInflectionPi.Valid() {
+		t.Fatalf("both pi (deprecated) and inflection-pi must be valid kinds")
+	}
+	if CanonicalHarnessKind(HarnessPi) != HarnessInflectionPi {
+		t.Errorf("pi must canonicalize to inflection-pi")
+	}
+	if CanonicalHarnessKind(HarnessHermes) != HarnessHermes {
+		t.Errorf("non-alias kinds must pass through unchanged")
+	}
+	// pi-mono is a DISTINCT kind (Mario Zechner's CLI), NOT an alias of the
+	// hosted Inflection pi — it must be valid and canonicalize to itself.
+	if !HarnessPiMono.Valid() {
+		t.Errorf("pi-mono must be a valid kind")
+	}
+	if CanonicalHarnessKind(HarnessPiMono) != HarnessPiMono {
+		t.Errorf("pi-mono must NOT canonicalize to inflection-pi (it is a separate harness)")
+	}
+}
+
 func TestHarnessKind_Valid(t *testing.T) {
 	for _, k := range []HarnessKind{
-		HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessAider, HarnessGoose,
-		HarnessGenericCLI, HarnessGenericHTTP,
+		HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessPiMono, HarnessInflectionPi, HarnessAider, HarnessGoose,
+		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes,
 	} {
 		if !k.Valid() {
 			t.Errorf("%s should be valid", k)
@@ -42,11 +64,109 @@ func TestValidateHarness_HTTPRequiresURL(t *testing.T) {
 	}
 }
 
+// M3.18: MCP server validation — transport enum, stdio⇒command, http/sse⇒url,
+// internal-host URLs rejected, unique names.
+func TestValidateHarness_MCPServers(t *testing.T) {
+	mk := func(s MCPServerSpec) error {
+		return ValidateHarness(HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{MCPServers: []MCPServerSpec{s}}})
+	}
+	if err := mk(MCPServerSpec{Name: "fs", Transport: "stdio", Command: []string{"mcp-fs"}}); err != nil {
+		t.Errorf("valid stdio rejected: %v", err)
+	}
+	if err := mk(MCPServerSpec{Name: "api", Transport: "http", URL: "https://mcp.example.com"}); err != nil {
+		t.Errorf("valid http rejected: %v", err)
+	}
+	if err := mk(MCPServerSpec{Name: "x", Transport: "stdio"}); err == nil {
+		t.Error("stdio without command must be rejected")
+	}
+	if err := mk(MCPServerSpec{Name: "x", Transport: "http"}); err == nil {
+		t.Error("http without url must be rejected")
+	}
+	if err := mk(MCPServerSpec{Name: "x", Transport: "carrier-pigeon", Command: []string{"c"}}); err == nil {
+		t.Error("invalid transport must be rejected")
+	}
+	for _, bad := range []string{"http://169.254.169.254/x", "http://localhost/x", "http://10.0.0.5/x", "http://svc.internal/x"} {
+		if err := mk(MCPServerSpec{Name: "x", Transport: "http", URL: bad}); err == nil {
+			t.Errorf("internal-host MCP URL %q must be rejected", bad)
+		}
+	}
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{MCPServers: []MCPServerSpec{
+		{Name: "dup", Transport: "stdio", Command: []string{"a"}},
+		{Name: "dup", Transport: "stdio", Command: []string{"b"}},
+	}}}); err == nil {
+		t.Error("duplicate MCP server names must be rejected")
+	}
+}
+
 func TestValidateHarness_CLIDefaultsAccepted(t *testing.T) {
 	for _, k := range []HarnessKind{HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI} {
 		if err := ValidateHarness(HarnessSpec{Kind: k}); err != nil {
 			t.Errorf("%s: %v", k, err)
 		}
+	}
+}
+
+// M3.14: the typed CLI seam validates OutputFormat/ApprovalMode enums.
+func TestValidateHarness_CLIEnums(t *testing.T) {
+	mk := func(of, am string) HarnessSpec {
+		return HarnessSpec{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{OutputFormat: of, ApprovalMode: am}}
+	}
+	if err := ValidateHarness(mk("json", "never")); err != nil {
+		t.Errorf("valid enums rejected: %v", err)
+	}
+	if err := ValidateHarness(mk("", "")); err != nil {
+		t.Errorf("empty (default) enums must pass: %v", err)
+	}
+	if err := ValidateHarness(mk("yaml", "")); err == nil {
+		t.Errorf("bad outputFormat must be rejected")
+	}
+	if err := ValidateHarness(mk("", "yolo")); err == nil {
+		t.Errorf("bad approvalMode must be rejected")
+	}
+}
+
+// M3.9: the Hermes API discriminator validates its enum and is rejected
+// (responses/runs) on non-Hermes HTTP kinds; default ("") is back-compat.
+func TestValidateHarness_HTTPAPIDiscriminator(t *testing.T) {
+	hermes := func(api string) HarnessSpec {
+		return HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "http://gw", API: api}}
+	}
+	for _, api := range []string{"", "chat", "responses", "runs"} {
+		if err := ValidateHarness(hermes(api)); err != nil {
+			t.Errorf("hermes api=%q must be valid: %v", api, err)
+		}
+	}
+	if err := ValidateHarness(hermes("bogus")); err == nil {
+		t.Errorf("bad api must be rejected")
+	}
+	// responses/runs on a non-Hermes HTTP kind is rejected; chat/"" is fine.
+	gen := func(api string) HarnessSpec {
+		return HarnessSpec{Kind: HarnessGenericHTTP, HTTP: &HarnessHTTPSpec{URL: "http://x", API: api}}
+	}
+	if err := ValidateHarness(gen("responses")); err == nil {
+		t.Errorf("api=responses on generic-http must be rejected")
+	}
+	if err := ValidateHarness(gen("")); err != nil {
+		t.Errorf("api=\"\" on generic-http must pass: %v", err)
+	}
+}
+
+// M3.13: Hermes persistent sessions don't require storage (gateway-side memory,
+// D6); CLI kinds still do.
+func TestValidateAgent_HermesPersistentNoStorage(t *testing.T) {
+	base := func(kind HarnessKind, http *HarnessHTTPSpec) Agent {
+		return Agent{Spec: AgentSpec{
+			Mode:         ModeHarness,
+			Instructions: "x",
+			Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10},
+			Harness:      &HarnessSpec{Kind: kind, HTTP: http, SessionPolicy: SessionPersistent},
+		}}
+	}
+	if err := ValidateAgent(base(HarnessHermes, &HarnessHTTPSpec{URL: "http://gw"})); err != nil {
+		t.Errorf("Hermes persistent without storage must pass: %v", err)
+	}
+	if err := ValidateAgent(base(HarnessClaudeCode, nil)); err == nil {
+		t.Errorf("claude-code persistent without storage must still be rejected")
 	}
 }
 

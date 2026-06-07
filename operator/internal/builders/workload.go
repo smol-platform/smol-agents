@@ -88,12 +88,19 @@ func BuildAgentPodSpec(cr *v1.SmolAgent) corev1.PodSpec {
 		VolumeMounts: agentVolumeMounts(),
 	}
 
+	// Serving-path overrides (M4.21): a heavier daemon (OpenClaw) can raise the
+	// agent container's compute and declare extra in-pod ports (e.g. control:18789).
+	if cr.Spec.Resources != nil {
+		agentContainer.Resources = *cr.Spec.Resources
+	}
+	agentContainer.Ports = append(agentContainer.Ports, cr.Spec.Ports...)
+
 	containers := []corev1.Container{agentContainer}
 	if cr.Spec.Features.Secrets.Enabled {
 		containers = append(containers, secretProxyContainer())
 	}
 
-	return corev1.PodSpec{
+	spec := corev1.PodSpec{
 		RuntimeClassName:   ptr.To(rc),
 		ServiceAccountName: saName,
 		SecurityContext: &corev1.PodSecurityContext{
@@ -108,6 +115,10 @@ func BuildAgentPodSpec(cr *v1.SmolAgent) corev1.PodSpec {
 		Containers: containers,
 		Volumes:    agentVolumes(cr),
 	}
+	// Interactive terminal/attach plane (M4.8): wrap the agent in tmux + add the
+	// ttyd driver/viewer (+ recorder) sidecars when features.terminal.enabled.
+	WireTerminal(&spec, cr)
+	return spec
 }
 
 func agentVolumeMounts() []corev1.VolumeMount {

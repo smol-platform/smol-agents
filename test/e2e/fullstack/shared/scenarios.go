@@ -2,14 +2,17 @@ package shared
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -42,11 +45,22 @@ func All() []Scenario {
 		wgClient,
 		agentRun,
 		cancel,
+		approvalGate,
+		approvalReject,
+		approvalTimeout,
+		egressFloor,
+		policyGate,
+		policyReconcileGate,
+		toolKindGuard,
+		stdioMCPGate,
 		webhook,
 		kataIsolation,
 		smolAgentPhase,
 		secretlessEgress,
 		memoryAccess,
+		agentSession,
+		agentSessionRunning,
+		a2aComposition,
 	}
 }
 
@@ -597,6 +611,520 @@ func (s slowLLM) Chat(ctx context.Context, _ agentruntime.ChatRequest) (rt.LLMDe
 	}
 }
 
+var approvalGate = Scenario{
+	ID:       "R-E2E-SCN-APPROVAL",
+	Name:     "prerun-approval-gate",
+	Requires: CapKubernetes,
+	Run:      runApprovalGate,
+}
+
+// runApprovalGate exercises the M5 pre-run human-approval gate end-to-end via the
+// real operator: an AgentRun with requireApprovalBeforeRun=true is held in
+// RequiresAction (a token minted, NO pod) until a matching spec.decision approves
+// it, after which it proceeds. Reuses the researcher Agent kind-verify.sh applied.
+func runApprovalGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const run = "approval-test"
+	// Idempotent re-run: drop any prior approval-test (a terminal run from a
+	// reused cluster won't re-enter RequiresAction on re-apply).
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", "tenant-a", "--ignore-not-found")
+	manifest := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: approval-test
+  namespace: tenant-a
+spec:
+  agentRef: researcher
+  requireApprovalBeforeRun: true
+  input:
+    q: "approve me"
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply approval-test run: %v", err)
+	}
+
+	// 1. Gate holds the run in RequiresAction with a minted token + no pod.
+	var token string
+	err := env.WaitFor(ctx, "run-requires-action", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		if strings.TrimSpace(string(st)) != "RequiresAction" {
+			return false
+		}
+		tk, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.pendingAction.token}")
+		token = strings.TrimSpace(string(tk))
+		return token != ""
+	})
+	if err != nil {
+		t.Fatalf("run never reached RequiresAction with a token: %v", err)
+	}
+	if out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "pod", run, "--ignore-not-found", "-o", "name"); strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("a pod exists while the run is still awaiting approval: %q", out)
+	}
+	t.Logf("M5 gate: run held in RequiresAction (token=%s), no pod", token)
+
+	// 2. Approve with the matching token → the run leaves RequiresAction.
+	patch := `{"spec":{"decision":{"token":"` + token + `","approve":true}}}`
+	if _, err := env.Exec(ctx, ExecTarget{}, "patch", "-n", "tenant-a", "agentrun", run, "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("apply approval decision: %v", err)
+	}
+	if err := env.WaitFor(ctx, "run-proceeds", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		s := strings.TrimSpace(string(st))
+		return s != "" && s != "RequiresAction"
+	}); err != nil {
+		t.Fatalf("run did not proceed after approval: %v", err)
+	}
+	t.Log("M5 gate: approved run left RequiresAction and proceeded")
+}
+
+var approvalReject = Scenario{
+	ID:       "R-E2E-SCN-APPROVAL-REJECT",
+	Name:     "prerun-approval-reject",
+	Requires: CapKubernetes,
+	Run:      runApprovalReject,
+}
+
+// runApprovalReject exercises the M5 pre-run gate's DENY half through the real
+// operator (the approve half is runApprovalGate): an AgentRun held in
+// RequiresAction that receives a matching spec.decision with approve:false must
+// be driven to a terminal Cancelled state (TerminationReason carrying
+// "decision:denied") with NO pod ever created. Reuses the researcher Agent;
+// distinct run name so it can't collide with the approve scenario.
+func runApprovalReject(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const run = "approval-reject-test"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", "tenant-a", "--ignore-not-found")
+	manifest := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata:
+  name: approval-reject-test
+  namespace: tenant-a
+spec:
+  agentRef: researcher
+  requireApprovalBeforeRun: true
+  input:
+    q: "reject me"
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply approval-reject run: %v", err)
+	}
+
+	// 1. Gate holds the run in RequiresAction with a minted token.
+	var token string
+	if err := env.WaitFor(ctx, "reject-requires-action", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		if strings.TrimSpace(string(st)) != "RequiresAction" {
+			return false
+		}
+		tk, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.pendingAction.token}")
+		token = strings.TrimSpace(string(tk))
+		return token != ""
+	}); err != nil {
+		t.Fatalf("run never reached RequiresAction with a token: %v", err)
+	}
+
+	// 2. Deny with the matching token → terminal Cancelled, no pod.
+	patch := `{"spec":{"decision":{"token":"` + token + `","approve":false,"reason":"e2e-reject"}}}`
+	if _, err := env.Exec(ctx, ExecTarget{}, "patch", "-n", "tenant-a", "agentrun", run, "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("apply reject decision: %v", err)
+	}
+	if err := env.WaitFor(ctx, "run-cancelled", 60*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.state}")
+		return strings.TrimSpace(string(st)) == "Cancelled"
+	}); err != nil {
+		t.Fatalf("denied run did not reach Cancelled: %v", err)
+	}
+	tr, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "agentrun", run, "-o", "jsonpath={.status.terminationReason}")
+	if !strings.Contains(string(tr), "decision:denied") {
+		t.Errorf("terminationReason=%q, want it to carry decision:denied", tr)
+	}
+	if out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "pod", run, "--ignore-not-found", "-o", "name"); strings.TrimSpace(string(out)) != "" {
+		t.Errorf("a pod exists for a denied run: %q", out)
+	}
+	t.Log("M5 gate: denied run reached terminal Cancelled (decision:denied) with no pod")
+}
+
+var approvalTimeout = Scenario{
+	ID:       "R-E2E-SCN-APPROVAL-TIMEOUT",
+	Name:     "prerun-approval-timeout",
+	Requires: CapKubernetes,
+	Run:      runApprovalTimeout,
+}
+
+// runApprovalTimeout exercises the M5 gate's TIMEOUT path (the third terminal
+// outcome alongside approve→proceed and reject→Cancelled): an un-decided run
+// whose Agent sets a short spec.approval.approvalTimeoutSeconds must expire to a
+// terminal Expired state (TerminationReason "approval:timeout") with NO pod. This
+// is gated by the AGENT-level approval policy (approvalGate/Reject use the
+// run-level override), so it also covers that branch. Dedicated namespace.
+func runApprovalTimeout(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, run = "e2e-approval-to", "approval-timeout-test"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-approval-to}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: prov, namespace: e2e-approval-to}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: to-agent, namespace: e2e-approval-to}
+spec:
+  model: {providerRef: prov, name: m}
+  instructions: "hi"
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+  approval: {requireApprovalBeforeRun: true, approvalTimeoutSeconds: 2}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata: {name: approval-timeout-test, namespace: e2e-approval-to}
+spec:
+  agentRef: to-agent
+  input:
+    q: "let me expire"
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply approval-timeout manifest: %v", err)
+	}
+
+	// The 2s timeout fires on the controller's requeue; allow generous margin.
+	if err := env.WaitFor(ctx, "run-expired", 75*time.Second, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+		return strings.TrimSpace(string(st)) == "Expired"
+	}); err != nil {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+		t.Fatalf("un-decided run did not expire (observed state %q): %v", strings.TrimSpace(string(st)), err)
+	}
+	tr, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.terminationReason}")
+	if !strings.Contains(string(tr), "approval:timeout") {
+		t.Errorf("terminationReason=%q, want it to carry approval:timeout", tr)
+	}
+	if out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pod", run, "--ignore-not-found", "-o", "name"); strings.TrimSpace(string(out)) != "" {
+		t.Errorf("a pod exists for an expired run: %q", out)
+	}
+	t.Log("M5 gate: un-decided run expired to terminal Expired (approval:timeout) with no pod")
+}
+
+var egressFloor = Scenario{
+	ID:       "R-E2E-SCN-EGRESS-FLOOR",
+	Name:     "serving-pod-egress-floor",
+	Requires: CapKubernetes,
+	Run:      runEgressFloor,
+}
+
+// runEgressFloor exercises the M1.17 default-ON serving egress floor: the
+// operator's EgressFloorReconciler must have created an egress NetworkPolicy
+// selecting the served pods of the SmolAgent kind-verify.sh already applied
+// (tenant-a/hello → hello-serving-egress).
+func runEgressFloor(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const np = "hello-serving-egress"
+	if err := env.WaitFor(ctx, "serving-egress-floor", 60*time.Second, func(ctx context.Context) bool {
+		out, err := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.metadata.name}")
+		return err == nil && strings.TrimSpace(string(out)) == np
+	}); err != nil {
+		t.Fatalf("default-ON serving egress NetworkPolicy %q not created: %v", np, err)
+	}
+	pt, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.spec.policyTypes}")
+	if !strings.Contains(string(pt), "Egress") {
+		t.Errorf("policyTypes=%s, want it to include Egress", pt)
+	}
+	sel, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.spec.podSelector.matchLabels}")
+	if !strings.Contains(string(sel), "hello") {
+		t.Errorf("podSelector=%s, want it to select the served (hello) pods", sel)
+	}
+	t.Log("M1.17: default-ON serving egress floor present + selects the served pods")
+}
+
+var policyGate = Scenario{
+	ID:       "R-E2E-SCN-POLICY-WEBHOOK",
+	Name:     "agentpolicy-webhook-denies-provider",
+	Requires: CapKubernetes | CapWebhook,
+	Run:      runPolicyGate,
+}
+
+// runPolicyGate exercises the M1.6 AgentPolicy ADMISSION webhook (failurePolicy=Fail)
+// through the real operator: with a namespace AgentPolicy whose allow-list excludes a
+// provider, applying an Agent referencing it must be REJECTED AT ADMISSION (kubectl
+// apply fails) — the primary fail-closed enforcement, distinct from the M1.5 reconcile
+// backstop (runPolicyReconcileGate). Regression guard for a real wiring gap fixed here:
+// the webhook handlers were registered in main.go but the ValidatingWebhookConfiguration
+// omitted agents/agentruns, so the webhook silently never fired. Dedicated namespace.
+func runPolicyGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, agent = "e2e-policy", "denied-agent"
+	// Reset for idempotency: drop any prior denied-agent (a pre-fix run may have left
+	// one admitted+Failed before the webhook was wired).
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	// 1. Prerequisites (namespace + provider + the excluding policy) must persist
+	//    BEFORE the Agent is admitted, so the webhook's policy list sees them.
+	prereq := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-policy}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: anthropic-prov, namespace: e2e-policy}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentPolicy
+metadata: {name: only-openai, namespace: e2e-policy}
+spec:
+  allowedProviders: ["openai-prov"]
+`)
+	if err := env.Apply(ctx, prereq); err != nil {
+		t.Fatalf("apply policy prerequisites: %v", err)
+	}
+	// 2. The violating Agent must be REJECTED at admission by the M1.6 webhook.
+	deniedAgent := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: denied-agent, namespace: e2e-policy}
+spec:
+  model: {providerRef: anthropic-prov, name: m}
+  instructions: "hi"
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	err := env.Apply(ctx, deniedAgent)
+	if err == nil {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+		t.Fatal("M1.6 webhook FAILED to reject a policy-violating Agent at admission (apply succeeded)")
+	}
+	if !strings.Contains(err.Error(), "AgentPolicy allow-list") {
+		t.Errorf("admission rejection message missing %q: %v", "AgentPolicy allow-list", err)
+	}
+	t.Log("M1.6: AgentPolicy admission webhook rejected the disallowed-provider Agent at apply (fail-closed)")
+}
+
+var policyReconcileGate = Scenario{
+	ID:       "R-E2E-SCN-POLICY-RECONCILE",
+	Name:     "agentpolicy-reconcile-backstop",
+	Requires: CapKubernetes,
+	Run:      runPolicyReconcileGate,
+}
+
+// runPolicyReconcileGate exercises the M1.5 reconcile backstop (the layer behind the
+// M1.6 admission webhook): an Agent admitted under a CONFORMING policy is later flipped
+// to Failed/PolicyViolation when the policy is TIGHTENED to exclude its provider. The
+// webhook doesn't re-admit an existing Agent, so the AgentPolicy→Agent watch + reconcile
+// gate (agent_controller SetupWithManager) is what catches a post-hoc policy change.
+func runPolicyReconcileGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	const ns, agent, policy = "e2e-policy-reconcile", "tighten-agent", "prov-policy"
+	// Reset: drop the Agent + (re-apply below) reset the policy to MATCHING so the
+	// conforming Agent admits cleanly on a reused cluster (a prior run leaves it tightened).
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	prereq := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-policy-reconcile}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: anthropic-prov, namespace: e2e-policy-reconcile}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentPolicy
+metadata: {name: prov-policy, namespace: e2e-policy-reconcile}
+spec:
+  allowedProviders: ["anthropic-prov"]
+`)
+	if err := env.Apply(ctx, prereq); err != nil {
+		t.Fatalf("apply matching-policy prerequisites: %v", err)
+	}
+	// Conforming Agent admits under the matching policy and reconciles Ready.
+	conforming := []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: tighten-agent, namespace: e2e-policy-reconcile}
+spec:
+  model: {providerRef: anthropic-prov, name: m}
+  instructions: "hi"
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, conforming); err != nil {
+		t.Fatalf("conforming agent rejected unexpectedly (webhook over-broad?): %v", err)
+	}
+	if err := env.WaitFor(ctx, "agent-ready", 60*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", agent, "-o", "jsonpath={.status.phase}")
+		return strings.TrimSpace(string(ph)) == "Ready"
+	}); err != nil {
+		t.Fatalf("conforming agent never reached Ready: %v", err)
+	}
+	// Tighten the policy to exclude the provider → the AgentPolicy watch re-enqueues
+	// the Agent → the reconcile gate flips it to Failed/PolicyViolation (no re-admission).
+	patch := `{"spec":{"allowedProviders":["openai-prov"]}}`
+	if _, err := env.Exec(ctx, ExecTarget{}, "patch", "-n", ns, "agentpolicy", policy, "--type=merge", "-p", patch); err != nil {
+		t.Fatalf("tighten policy: %v", err)
+	}
+	assertAgentFailedClosed(t, env, ctx, ns, agent, "PolicyViolation")
+	t.Log("M1.5: tightening the AgentPolicy flipped the already-admitted Agent to Failed/PolicyViolation via the reconcile backstop")
+}
+
+var toolKindGuard = Scenario{
+	ID:       "R-E2E-SCN-TOOL-KIND",
+	Name:     "unwired-tool-kind-failclosed",
+	Requires: CapKubernetes,
+	Run:      runToolKindGuard,
+}
+
+// runToolKindGuard exercises the M2.16 fail-closed tool-kind guard through the
+// real operator: a loop-mode Agent referencing a Tool whose kind has no
+// production loop invoker (kind=agent) must be flipped to
+// Failed/ToolKindUnsupported rather than silently scheduled. Dedicated namespace
+// for isolation.
+func runToolKindGuard(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, agent = "e2e-toolkind", "loopy"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-toolkind}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: prov, namespace: e2e-toolkind}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: {name: fn, namespace: e2e-toolkind}
+spec:
+  kind: function
+  function: {name: noop}
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: loopy, namespace: e2e-toolkind}
+spec:
+  model: {providerRef: prov, name: m}
+  instructions: "hi"
+  tools:
+    - name: fn
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply tool-kind manifest: %v", err)
+	}
+	// kind=function has no production invoker (test-only) and stays reserved even
+	// after A2A (kind=agent) was wired, so it remains the canonical fail-closed
+	// case: a loop Agent referencing it must flip Failed/ToolKindUnsupported.
+	assertAgentFailedClosed(t, env, ctx, ns, agent, "ToolKindUnsupported")
+	t.Log("M2.16: loop Agent with an unwired kind=function Tool was failed closed (ToolKindUnsupported)")
+}
+
+var stdioMCPGate = Scenario{
+	ID:       "R-E2E-SCN-STDIO-MCP",
+	Name:     "stdio-mcp-not-allowlisted-failclosed",
+	Requires: CapKubernetes,
+	Run:      runStdioMCPGate,
+}
+
+// runStdioMCPGate exercises the M2.15 stdio-MCP allow-list gate through the real
+// operator: a loop-mode Agent referencing a kind=mcp Tool whose URL is a stdio
+// (mcp://) endpoint NOT on the operator allow-list must be flipped to
+// Failed/StdioMCPNotAllowed (arbitrary tenant stdio is denied; http(s) MCP is
+// unaffected). The L1 operator ships an empty allow-list, so the deny path needs
+// no extra flag. Dedicated namespace for isolation.
+func runStdioMCPGate(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	const ns, agent = "e2e-mcp", "mcpy"
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	manifest := []byte(`apiVersion: v1
+kind: Namespace
+metadata: {name: e2e-mcp}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: {name: prov, namespace: e2e-mcp}
+spec:
+  kind: anthropic
+  endpoint: https://api.anthropic.com
+  secretRef: {secretName: anthropic-key}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: {name: stdio-mcp, namespace: e2e-mcp}
+spec:
+  kind: mcp
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  mcp: {url: "mcp://local-server"}
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: {name: mcpy, namespace: e2e-mcp}
+spec:
+  model: {providerRef: prov, name: m}
+  instructions: "hi"
+  tools:
+    - name: stdio-mcp
+  budget: {maxSteps: 1, maxTokens: 100, maxWallClockSeconds: 10, maxToolCalls: 0}
+`)
+	if err := env.Apply(ctx, manifest); err != nil {
+		t.Fatalf("apply stdio-mcp manifest: %v", err)
+	}
+	assertAgentFailedClosed(t, env, ctx, ns, agent, "StdioMCPNotAllowed")
+	t.Log("M2.15: loop Agent with an un-allow-listed stdio (mcp://) MCP Tool was failed closed (StdioMCPNotAllowed)")
+}
+
+// assertAgentFailedClosed waits for an Agent to reach Failed/<reason> via the
+// real reconciler, failing the test (with the observed phase/reason for a
+// precise pointer) if it does not converge in time.
+func assertAgentFailedClosed(t *testing.T, env Env, ctx context.Context, ns, name, reason string) {
+	t.Helper()
+	if err := env.WaitFor(ctx, "agent-failclosed-"+reason, 60*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.reason}")
+		return strings.TrimSpace(string(ph)) == "Failed" && strings.TrimSpace(string(rs)) == reason
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", name, "-o", "jsonpath={.status.reason}")
+		t.Fatalf("agent %s/%s never reached Failed/%s (observed %q/%q): %v", ns, name, reason, strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err)
+	}
+}
+
 var webhook = Scenario{
 	ID:       "R-E2E-SCN-WEBHOOK",
 	Name:     "webhook-rejects-bad-specs",
@@ -654,6 +1182,21 @@ spec:
 `,
 			matches: []string{"denied", "wireguardMesh must be nil"},
 			cleanup: []string{"delete", "agentnetwork", "webhook-bad-anet", "-n", "tenant-a"},
+		},
+		{
+			// M2.22: an AgentSession referencing a non-existent Agent must be
+			// rejected at admission (regression guard for the same webhook-config
+			// gap fixed for the agentpolicy gate — agentsessions was omitted from
+			// the ValidatingWebhookConfiguration, silencing this webhook).
+			name: "agentsession-dangling-agentref",
+			yaml: `apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: {name: webhook-bad-session, namespace: tenant-a}
+spec:
+  agentRef: no-such-agent-xyz
+`,
+			matches: []string{"denied", "no such Agent"},
+			cleanup: []string{"delete", "agentsession", "webhook-bad-session", "-n", "tenant-a"},
 		},
 	}
 
@@ -881,6 +1424,431 @@ func todo(message string) func(t *testing.T, env Env) {
 		t.Helper()
 		t.Skipf("scenario not yet implemented: %s", message)
 	}
+}
+
+// agentSession (R-E2E-SCN-AGENTSESSION) exercises the M4 long-running session
+// control plane. It applies a minimal loop Agent (provider + single-key secret,
+// kata-fc default sandbox, no tools) and an AgentSession, then asserts the
+// AgentSessionReconciler drives it through agent-lookup -> sandbox-resolve ->
+// secret-gather -> run-spec ConfigMap + egress policy and FAIL-CLOSES at the
+// node-placement gate: a single-node cluster with no AgentNodePool matching the
+// kata class yields Pending/NoKVMCapacity (R-PROV-2). Reaching that reason
+// proves the whole pre-placement pipeline ran (any earlier failure returns a
+// different reason or an error), so it is real e2e of the M4 controller without
+// requiring node-pool autoscaling, the agentfs-sidecar image, or a live
+// serve-session worker (the happy-path turn datapath is a separate concern).
+var agentSession = Scenario{
+	ID:       "R-E2E-SCN-AGENTSESSION",
+	Name:     "agentsession-reconcile-failclosed-placement",
+	Requires: CapKubernetes,
+	Run:      runAgentSession,
+}
+
+func runAgentSession(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	const ns = "tenant-a"
+	for _, d := range [][]string{
+		{"agentsession", "e2e-sess"},
+		{"agent", "e2e-sess-agent"},
+		{"modelprovider", "e2e-sess-prov"},
+		{"secret", "e2e-sess-key"},
+	} {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
+	}
+
+	// The session defaults to the kata-fc runtimeClass (the operator's
+	// fail-closed default; the L1 webhook overlay carries no runc override). On
+	// a kataless kind cluster the operator never registers the kata-fc
+	// RuntimeClass — the SmolAgent sandbox feature only provisions it alongside a
+	// matching AgentNodePool, and without a pool it returns NoKVMCapacity / falls
+	// back to gVisor. So without this fixture the session stops at the earlier
+	// SandboxNotReady gate and never reaches the placement gate this scenario
+	// asserts. Register a bare kata-fc RuntimeClass so sandbox resolution passes;
+	// placement then fails closed with NoKVMCapacity (no AgentNodePool).
+	// Cluster-scoped + removed on exit (fresh context, runs even on t.Fatalf) so
+	// the following scenarios see the cluster's natural kataless state.
+	if err := env.Apply(ctx, []byte(`apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata: { name: kata-fc }
+handler: kata-fc
+`)); err != nil {
+		t.Fatalf("register kata-fc RuntimeClass fixture: %v", err)
+	}
+	defer func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer dcancel()
+		_, _ = env.Exec(dctx, ExecTarget{}, "delete", "runtimeclass", "kata-fc", "--ignore-not-found")
+	}()
+
+	// Single-key secret: resolveSecret with an empty key returns the value only
+	// when the secret has exactly one data key (gatherRunSecrets/readSecretKey).
+	setup := []byte(`apiVersion: v1
+kind: Secret
+metadata: { name: e2e-sess-key, namespace: tenant-a }
+stringData: { apiKey: "dummy-unused-pre-placement" }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: { name: e2e-sess-prov, namespace: tenant-a }
+spec:
+  kind: openai
+  endpoint: http://fake-llm.tenant-a.svc.cluster.local:8080
+  secretRef: { secretName: e2e-sess-key }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-sess-agent, namespace: tenant-a }
+spec:
+  model: { providerRef: e2e-sess-prov, name: glm-4.6 }
+  instructions: "M4 session reconcile e2e"
+  budget: { maxSteps: 4, maxTokens: 2000, maxWallClockSeconds: 60, maxToolCalls: 2 }
+`)
+	if err := env.Apply(ctx, setup); err != nil {
+		t.Fatalf("apply session agent + provider + secret: %v", err)
+	}
+	if err := env.Apply(ctx, []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: { name: e2e-sess, namespace: tenant-a }
+spec:
+  agentRef: e2e-sess-agent
+`)); err != nil {
+		t.Fatalf("apply agentsession: %v", err)
+	}
+
+	if err := env.WaitFor(ctx, "agentsession-nokvmcapacity", 90*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.reason}")
+		return strings.TrimSpace(string(ph)) == "Pending" && strings.TrimSpace(string(rs)) == "NoKVMCapacity"
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sess", "-o", "jsonpath={.status.reason}")
+		t.Fatalf("AgentSession never reached Pending/NoKVMCapacity (observed %q/%q): %v",
+			strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err)
+	}
+	t.Log("M4: AgentSession reconciled agent->sandbox->secret->configmap/egress then fail-closed at placement (NoKVMCapacity)")
+}
+
+// agentSessionRunning (R-E2E-SCN-AGENTSESSION-RUN) is the M4 happy path: a live
+// long-running session worker reaching Running. It provisions a kata-fc
+// AgentNodePool and labels the (single) node so the placement gate resolves,
+// applies a loop Agent with an ephemeral AgentFS workspace (serve-session
+// requires a workspace) + provider/secret, and an AgentSession — then asserts
+// the AgentSessionReconciler brings the worker Deployment to Available and
+// reports status.phase=Running.
+//
+// This exercises the FULL M4 datapath on real kata metal: the operator renders
+// the session run-pod (SMOL_AGENTS_IMAGE_REGISTRY/_TAG → ECR images), schedules
+// it on the kata-fc node, the AgentFS restore init + serve sidecars come up
+// (ephemeral: no S3 backup configured → fresh workspace, no-op backups), the
+// secret broker serves the provider key, and `agent serve-session` loads the
+// spec, opens the workspace, and blocks on its on-disk inbox — so the pod is
+// Ready and the Deployment Available. The ephemeral path depends on the
+// agentfs-sidecar gracefully skipping S3 when no bucket is configured.
+var agentSessionRunning = Scenario{
+	ID:       "R-E2E-SCN-AGENTSESSION-RUN",
+	Name:     "agentsession-worker-reaches-running",
+	Requires: CapKubernetes | CapKata,
+	Run:      runAgentSessionRunning,
+}
+
+func runAgentSessionRunning(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	const ns = "tenant-a"
+	const pool = "e2e-sessr-pool"
+	for _, d := range [][]string{
+		{"agentsession", "e2e-sessr"}, {"agent", "e2e-sessr-agent"},
+		{"modelprovider", "e2e-sessr-prov"}, {"secret", "e2e-sessr-key"},
+	} {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
+	}
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentnodepool", pool, "--ignore-not-found")
+
+	// 1. kata-fc AgentNodePool (ResolvePlacementForClass matches by isolation) +
+	//    label the single node with the pool label the placement affinity needs.
+	//    The Karpenter NodePool the operator tries to render is harmless here —
+	//    placement only Lists AgentNodePool CRs.
+	if err := env.Apply(ctx, []byte(`apiVersion: agents.smol-agents.ai/v1
+kind: AgentNodePool
+metadata: { name: e2e-sessr-pool }
+spec:
+  isolation: kata-fc
+  arch: arm64
+  bootstrap: { mode: UserData, distro: al2023 }
+`)); err != nil {
+		t.Fatalf("apply AgentNodePool: %v", err)
+	}
+	nodeOut, err := env.Exec(ctx, ExecTarget{}, "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}")
+	node := strings.TrimSpace(string(nodeOut))
+	if err != nil || node == "" {
+		t.Fatalf("get node name: %v (out=%q)", err, nodeOut)
+	}
+	if _, err := env.Exec(ctx, ExecTarget{}, "label", "node", node, "agents.smol-agents.ai/pool="+pool, "--overwrite"); err != nil {
+		t.Fatalf("label node %s: %v", node, err)
+	}
+
+	// 2. Minimal loop Agent: ephemeral AgentFS workspace + provider/secret.
+	if err := env.Apply(ctx, []byte(`apiVersion: v1
+kind: Secret
+metadata: { name: e2e-sessr-key, namespace: tenant-a }
+stringData: { apiKey: "dummy-session-running" }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: { name: e2e-sessr-prov, namespace: tenant-a }
+spec:
+  kind: openai
+  endpoint: http://fake-llm.tenant-a.svc.cluster.local:8080
+  secretRef: { secretName: e2e-sessr-key }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-sessr-agent, namespace: tenant-a }
+spec:
+  model: { providerRef: e2e-sessr-prov, name: glm-4.6 }
+  instructions: "M4 session worker e2e"
+  budget: { maxSteps: 4, maxTokens: 2000, maxWallClockSeconds: 120, maxToolCalls: 2 }
+  storage:
+    kind: agentfs
+    agentfs: { sizeGiB: 1, mountPath: /workspace }
+`)); err != nil {
+		t.Fatalf("apply session agent: %v", err)
+	}
+	if err := env.Apply(ctx, []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata: { name: e2e-sessr, namespace: tenant-a }
+spec:
+  agentRef: e2e-sessr-agent
+`)); err != nil {
+		t.Fatalf("apply agentsession: %v", err)
+	}
+
+	// 3. The reconciler schedules the worker on the kata node (operator-resolved
+	//    ECR images), the AgentFS + broker sidecars and serve-session come up, the
+	//    Deployment goes Available -> controller sets phase=Running.
+	if err := env.WaitFor(ctx, "agentsession-running", 3*time.Minute, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sessr", "-o", "jsonpath={.status.phase}")
+		return strings.TrimSpace(string(ph)) == "Running"
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sessr", "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentsession", "e2e-sessr", "-o", "jsonpath={.status.reason}")
+		pods, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods", "-o", "wide")
+		t.Fatalf("AgentSession never reached Running (phase=%q reason=%q): %v\npods:\n%s",
+			strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err, pods)
+	}
+	// Confirm the worker really landed on kata-fc with operator-resolved ECR images
+	// (not a fallback) so "Running" reflects the full datapath, not a shortcut.
+	rc, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods",
+		"-l", "agents.smol-agents.ai/run=e2e-sessr-session", "-o", "jsonpath={.items[0].spec.runtimeClassName}")
+	if got := strings.TrimSpace(string(rc)); got != "kata-fc" {
+		t.Errorf("session worker runtimeClassName=%q, want kata-fc", got)
+	}
+	t.Log("M4: AgentSession worker Deployment Available -> phase=Running (serve-session live on kata-fc)")
+}
+
+// a2aComposition (R-E2E-SCN-A2A) is the M3 positive-path: one agent invokes
+// another. A parent loop Agent has a kind=agent Tool targeting a child Agent.
+// Both run as operator-scheduled kata pods against a deterministic OpenAI-wire
+// mock scripted per-agent (keyed on sha256 of each Agent's instructions, which
+// the executor sends verbatim as the system message): the PARENT is scripted to
+// emit the kind=agent tool call then finalize; the CHILD to finalize directly.
+// At runtime the parent's in-pod AgentRunInvoker creates a CHILD AgentRun, polls
+// it to terminal, and folds its output. Asserts: (1) a child AgentRun is created
+// carrying the parent-run label, and (2) the parent run reaches Completed — i.e.
+// the full A2A datapath (loop pod -> agent-call -> child AgentRun -> fold) works.
+var a2aComposition = Scenario{
+	ID:       "R-E2E-SCN-A2A",
+	Name:     "agent-to-agent-composition",
+	Requires: CapKubernetes | CapKata,
+	Run:      runA2AComposition,
+}
+
+func runA2AComposition(t *testing.T, env Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	const ns, pool = "tenant-a", "e2e-a2a-pool"
+	const parentRun = "e2e-a2a-run"
+	const parentInstr = "e2e-a2a PARENT: call the delegate tool, then finish."
+	const childInstr = "e2e-a2a CHILD: return the answer."
+	sha := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+
+	for _, d := range [][]string{
+		{"agentrun", parentRun}, {"agent", "e2e-a2a-parent"}, {"agent", "e2e-a2a-child"},
+		{"tool", "delegate"}, {"modelprovider", "a2a-prov"}, {"secret", "a2a-key"},
+		{"configmap", "a2a-plans"}, {"deployment", "a2a-llm"}, {"service", "a2a-llm"},
+	} {
+		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
+	}
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", "-n", ns, "-l", "agents.smol-agents.ai/parent-run="+parentRun, "--ignore-not-found")
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentnodepool", pool, "--ignore-not-found")
+
+	// kata placement (single-node L2): a kata-fc AgentNodePool + the pool label
+	// on the node, so both parent and child run pods schedule.
+	if err := env.Apply(ctx, []byte(`apiVersion: agents.smol-agents.ai/v1
+kind: AgentNodePool
+metadata: { name: e2e-a2a-pool }
+spec: { isolation: kata-fc, arch: arm64, bootstrap: { mode: UserData, distro: al2023 } }
+`)); err != nil {
+		t.Fatalf("apply AgentNodePool: %v", err)
+	}
+	nodeOut, err := env.Exec(ctx, ExecTarget{}, "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}")
+	node := strings.TrimSpace(string(nodeOut))
+	if err != nil || node == "" {
+		t.Fatalf("get node: %v (%q)", err, nodeOut)
+	}
+	if _, err := env.Exec(ctx, ExecTarget{}, "label", "node", node, "agents.smol-agents.ai/pool="+pool, "--overwrite"); err != nil {
+		t.Fatalf("label node: %v", err)
+	}
+
+	// Deterministic OpenAI-wire mock: parent → [toolCall(delegate), final]; child → [final].
+	plans := fmt.Sprintf(`{"plans":{
+  %q:{"sequence":[{"toolCall":{"tool":"delegate","arguments":{}}},{"finalAnswer":{"output":{"composed":"by-parent"}}}]},
+  %q:{"plan":{"finalAnswer":{"output":{"child":"result"}}}}
+}}`, sha(parentInstr), sha(childInstr))
+	cm := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata: { name: a2a-plans, namespace: tenant-a }
+data:
+  plans.json: |
+%s
+`, indent(plans, "    "))
+	if err := env.Apply(ctx, []byte(cm)); err != nil {
+		t.Fatalf("apply plans ConfigMap: %v", err)
+	}
+
+	// Scripted fake-llm (OpenAI-wire endpoint) + Service, from the L2 ECR.
+	llm := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata: { name: a2a-llm, namespace: tenant-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: a2a-llm } }
+  template:
+    metadata: { labels: { app: a2a-llm } }
+    spec:
+      containers:
+        - name: fake-llm
+          image: %s
+          env: [{ name: PLANS_FILE, value: /plans/plans.json }]
+          ports: [{ containerPort: 8080 }]
+          volumeMounts: [{ name: plans, mountPath: /plans }]
+      volumes: [{ name: plans, configMap: { name: a2a-plans } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: a2a-llm, namespace: tenant-a }
+spec:
+  selector: { app: a2a-llm }
+  ports: [{ port: 8080, targetPort: 8080 }]
+`, ecrImage("fake-llm"))
+	if err := env.Apply(ctx, []byte(llm)); err != nil {
+		t.Fatalf("apply scripted fake-llm: %v", err)
+	}
+	if err := env.WaitFor(ctx, "a2a-llm-available", 90*time.Second, func(ctx context.Context) bool {
+		out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "deploy", "a2a-llm", "-o", "jsonpath={.status.availableReplicas}")
+		return strings.TrimSpace(string(out)) == "1"
+	}); err != nil {
+		t.Fatalf("scripted fake-llm not Available: %v", err)
+	}
+
+	// Provider + secret + child Agent + delegate Tool + parent Agent.
+	setup := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata: { name: a2a-key, namespace: tenant-a }
+stringData: { apiKey: "dummy" }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelProvider
+metadata: { name: a2a-prov, namespace: tenant-a }
+spec: { kind: openai, endpoint: "http://a2a-llm.tenant-a.svc.cluster.local:8080", secretRef: { secretName: a2a-key } }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-a2a-child, namespace: tenant-a }
+spec:
+  model: { providerRef: a2a-prov, name: m }
+  instructions: %q
+  budget: { maxSteps: 2, maxTokens: 2000, maxWallClockSeconds: 120, maxToolCalls: 1 }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Tool
+metadata: { name: delegate, namespace: tenant-a }
+spec:
+  kind: agent
+  agent: { ref: { name: e2e-a2a-child } }
+  inputSchema: { type: object }
+  outputSchema: { type: object }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: e2e-a2a-parent, namespace: tenant-a }
+spec:
+  model: { providerRef: a2a-prov, name: m }
+  instructions: %q
+  tools: [{ name: delegate }]
+  budget: { maxSteps: 4, maxTokens: 4000, maxWallClockSeconds: 180, maxToolCalls: 2 }
+`, childInstr, parentInstr)
+	if err := env.Apply(ctx, []byte(setup)); err != nil {
+		t.Fatalf("apply A2A agents/tool/provider: %v", err)
+	}
+
+	// Run the parent. Its in-pod invoker creates a child AgentRun and folds it.
+	if err := env.Apply(ctx, []byte(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata: { name: e2e-a2a-run, namespace: tenant-a }
+spec: { agentRef: e2e-a2a-parent, input: {} }
+`)); err != nil {
+		t.Fatalf("apply parent AgentRun: %v", err)
+	}
+
+	// 1. A child AgentRun is created carrying the parent-run label.
+	if err := env.WaitFor(ctx, "a2a-child-created", 4*time.Minute, func(ctx context.Context) bool {
+		out, _ := env.Exec(ctx, ExecTarget{}, "get", "agentruns", "-n", ns,
+			"-l", "agents.smol-agents.ai/parent-run="+parentRun, "-o", "name")
+		return strings.TrimSpace(string(out)) != ""
+	}); err != nil {
+		pods, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods,agentruns", "-o", "wide")
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", parentRun, "-o", "jsonpath={.status.state}:{.status.terminationReason}")
+		t.Fatalf("no child AgentRun created by the parent's A2A invoker: %v\nparent=%s\n%s", err, st, pods)
+	}
+
+	// 2. The parent run reaches a terminal Completed (folded the child's output).
+	if err := env.WaitFor(ctx, "a2a-parent-completed", 3*time.Minute, func(ctx context.Context) bool {
+		out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", parentRun, "-o", "jsonpath={.status.state}")
+		return strings.TrimSpace(string(out)) == "Completed"
+	}); err != nil {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", parentRun, "-o", "jsonpath={.status.state}:{.status.terminationReason}")
+		t.Fatalf("parent A2A run did not Complete (%s): %v", st, err)
+	}
+	t.Log("M3: parent loop pod emitted agent-call -> child AgentRun created (parent-run label) -> parent Completed folding child output")
+}
+
+// indent prefixes every line of s with pad (for embedding a JSON blob under a
+// YAML block scalar).
+func indent(s, pad string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = pad + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ecrImage returns the full image ref for a platform component: the L2 ECR copy
+// when L2_ECR_REGISTRY/L2_IMAGE_TAG are set (the L2 ring, where scenarios deploy
+// their own workloads), else the kind-loaded dev tag (L0/L1).
+func ecrImage(component string) string {
+	reg, tag := os.Getenv("L2_ECR_REGISTRY"), os.Getenv("L2_IMAGE_TAG")
+	if reg == "" || tag == "" {
+		return "smol-agents/" + component + ":dev"
+	}
+	return reg + "/smol-agents/" + component + ":" + tag
 }
 
 // silence "imported and not used" if a future refactor drops one of

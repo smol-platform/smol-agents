@@ -2,7 +2,11 @@ package agentmodel
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -17,13 +21,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
+	"github.com/smol-platform/smol-agents/operator/internal/controllers/features"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
+	"github.com/smol-platform/smol-agents/pkg/turnmodel"
 )
 
 const sessionSuffix = "-session"
@@ -45,6 +53,10 @@ type AgentSessionReconciler struct {
 	// path) by injecting AGENTSESSION_NATS_URL/_KEY into the worker; empty
 	// leaves the worker on its on-disk inbox.
 	NATSURL string
+	// NATSAccountSeed, when set, is the operator's NATS account signing seed used
+	// to mint per-namespace worker credentials (M2.20). Empty leaves workers
+	// connecting unauthenticated (today's behavior — no per-tenant ACL).
+	NATSAccountSeed []byte
 	// MaxConcurrentReconciles bounds parallel session reconciles (default 1).
 	MaxConcurrentReconciles int
 }
@@ -59,8 +71,38 @@ func (r *AgentSessionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&networkingv1.NetworkPolicy{}).
+		// Re-reconcile bound sessions when their AgentNetwork changes (M1.16): a
+		// resident worker's egress cage is updated in place, so a tightened (or
+		// loosened) network applies to the live session.
+		Watches(&amv1.AgentNetwork{}, handler.EnqueueRequestsFromMapFunc(r.sessionsForNetwork)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: mc}).
 		Complete(r)
+}
+
+// sessionsForNetwork maps an AgentNetwork change to reconcile requests for the
+// AgentSessions bound to it (their Agent matches the network's selector). M1.16.
+func (r *AgentSessionReconciler) sessionsForNetwork(ctx context.Context, obj client.Object) []reconcile.Request {
+	an, ok := obj.(*amv1.AgentNetwork)
+	if !ok {
+		return nil
+	}
+	agents := agentsBoundToNetwork(ctx, r.Client, an)
+	if len(agents) == 0 {
+		return nil
+	}
+	var sessions amv1.AgentSessionList
+	if err := r.List(ctx, &sessions, client.InNamespace(an.Namespace)); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range sessions.Items {
+		s := &sessions.Items[i]
+		if !agents[s.Spec.AgentRef] {
+			continue
+		}
+		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: s.Namespace, Name: s.Name}})
+	}
+	return reqs
 }
 
 func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -74,7 +116,8 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	agent := &amv1.Agent{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: session.Namespace, Name: session.Spec.AgentRef}, agent); err != nil {
 		if apierrors.IsNotFound(err) {
-			return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
+			return r.writeStatus(ctx, session, pure.PhasePending, "AgentMissing",
+				fmt.Sprintf("agentRef %q not found", session.Spec.AgentRef), 15*time.Second)
 		}
 		return ctrl.Result{}, err
 	}
@@ -82,10 +125,15 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Fail-closed sandbox resolution (same policy as runs).
 	sbClass, sbPending, sbFailed := resolveSandbox(ctx, r.Client, agent.Spec.Sandbox.RuntimeClass, r.DefaultRunRuntimeClass, r.AllowHostRuntime)
 	if sbFailed != "" {
-		return r.writeStatus(ctx, session, pure.PhaseFailed, 0)
+		return r.writeStatus(ctx, session, pure.PhaseFailed, "SandboxFailed", sbFailed, 0)
 	}
 	if sbPending != "" {
-		return r.writeStatus(ctx, session, pure.PhasePending, 15*time.Second)
+		return r.writeStatus(ctx, session, pure.PhasePending, "SandboxNotReady", sbPending, 15*time.Second)
+	}
+	// D3 (M3.15): refuse danger permission/sandbox flags unless the resolved
+	// class is a kata microVM — the same fail-closed gate as the run datapath.
+	if v := dangerFlagViolation(agent, sbClass); v != "" {
+		return r.writeStatus(ctx, session, pure.PhaseFailed, "DangerFlagsRefused", v, 0)
 	}
 
 	// A synthetic AgentRun (name+namespace carrier) drives the shared run-pod /
@@ -97,7 +145,7 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	provider, brokerValues, err := gatherRunSecrets(ctx, r.Client, agent, session.Namespace, nil)
 	if err != nil {
-		return r.writeStatus(ctx, session, pure.PhasePending, 10*time.Second)
+		return r.writeStatus(ctx, session, pure.PhasePending, "SecretMissing", err.Error(), 10*time.Second)
 	}
 
 	// Run-spec ConfigMap (agent.json + provider.json) the worker reads.
@@ -120,10 +168,31 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	// Egress cage selecting the worker pods.
-	np := builders.BuildAgentSessionEgressPolicy(synthetic.Name, session.Namespace,
-		map[string]string{"agents.smol-agents.ai/run": synthetic.Name})
-	if err := r.ensureOwned(ctx, session, np); err != nil {
+	// Egress cage selecting the worker pods, with any bound AgentNetwork
+	// allow-list layered on (M1.16) — empty plan = the default-deny floor.
+	netPlan, err := resolveBoundNetworks(ctx, r.Client, agent)
+	if err != nil {
+		// A NetworkPlan compose conflict is a spec-level error — hold the session
+		// Pending (fail-closed, visible) until the bound AgentNetworks are fixed
+		// (which re-reconciles it via the Watch).
+		if errors.Is(err, ErrNetworkConflict) {
+			return r.writeStatus(ctx, session, pure.PhasePending, "NetworkConflict", err.Error(), 30*time.Second)
+		}
+		return ctrl.Result{}, fmt.Errorf("resolve bound networks: %w", err)
+	}
+	// Surface the egress posture for observability (M1.19).
+	session.Status.Networks = netPlan.Networks
+	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
+	np := builders.BuildAgentSessionEgressPolicyWithPlan(synthetic.Name, session.Namespace,
+		map[string]string{"agents.smol-agents.ai/run": synthetic.Name}, netPlan)
+	// M1.18: allow the kube-apiserver endpoints (blocked by the default floor on
+	// public-IP clusters) so a session worker can reach the apiserver.
+	if rule := apiserverEgressRule(ctx, r.Client); rule != nil {
+		np.Spec.Egress = append(np.Spec.Egress, *rule)
+	}
+	// Update-in-place (not create-only) so a changed AgentNetwork re-cages the
+	// live worker (M1.16).
+	if err := r.ensureEgressPolicy(ctx, session, np); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session egress: %w", err)
 	}
 
@@ -131,6 +200,19 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// a long-running session worker: serve-session command, microVM class, broker.
 	pod := builders.BuildAgentRunPod(synthetic, agent)
 	builders.ApplyRunSandbox(pod, sbClass)
+	// Bind the resident session worker to its kata node pool (M1.11). A KVM class
+	// with no matching AgentNodePool holds the session Pending (fail-closed)
+	// rather than scheduling a pod that can never run. No deadline — the idle
+	// timeout, not a wall-clock budget, bounds a session worker.
+	placement, _, plErr := features.ResolvePlacementForClass(ctx, r.Client, sbClass)
+	if plErr != nil {
+		return ctrl.Result{}, fmt.Errorf("resolve placement: %w", plErr)
+	}
+	if placement == nil && builders.RequiresKVM(sbClass) {
+		return r.writeStatus(ctx, session, pure.PhasePending, "NoKVMCapacity",
+			fmt.Sprintf("no AgentNodePool matches kata class %q", sbClass), 30*time.Second)
+	}
+	builders.ApplyRunPodPlacement(pod, placement)
 	if len(brokerValues) > 0 {
 		builders.AttachSecretBroker(pod, synthetic.Name)
 	}
@@ -138,7 +220,20 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if session.Spec.IdleTimeoutSeconds > 0 {
 		cmd = append(cmd, fmt.Sprintf("--idle-timeout=%ds", session.Spec.IdleTimeoutSeconds))
 	}
+	// Turn-scaling knobs (M2.18). Accessors default-preserve serial behavior, so
+	// only render when the operator actually opted into concurrency / a bound.
+	if n := session.Spec.ConcurrentTurns(); n > 1 {
+		cmd = append(cmd, fmt.Sprintf("--max-concurrent-turns=%d", n))
+	}
+	if h := session.Spec.HistoryLimit(); h > 0 {
+		cmd = append(cmd, fmt.Sprintf("--history-limit=%d", h))
+	}
 	pod.Spec.Containers[0].Command = cmd
+	// Right-size the resident worker (M1.11). A session has no wall-clock deadline,
+	// so worker sizing is expressed here rather than via a run budget.
+	builders.ApplySessionResources(&pod.Spec.Containers[0], session.Spec.Resources)
+	// Tier-2 datapath seam (no-op in Phase 1; Tier-1 is the egress NetworkPolicy).
+	builders.AttachAgentNetwork(pod, netPlan)
 	// NATS turn transport (gateway path); without it the worker uses its on-disk
 	// inbox. AGENTSESSION_KEY mirrors sessionqueue.SessionKey(ns, name).
 	if r.NATSURL != "" {
@@ -146,6 +241,17 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			corev1.EnvVar{Name: "AGENTSESSION_NATS_URL", Value: r.NATSURL},
 			corev1.EnvVar{Name: "AGENTSESSION_KEY", Value: sessionqueue.SessionKey(session.Namespace, session.Name)},
 		)
+		// Per-namespace NATS credential (M2.20): with an account seed configured,
+		// authenticate the worker with its namespace-scoped creds so a compromised
+		// worker can only touch its own tenant's turn subjects. Off (unauthed) when
+		// no seed is set — today's behavior.
+		if len(r.NATSAccountSeed) > 0 {
+			credsSecret, cerr := r.ensureWorkerCreds(ctx, session.Namespace)
+			if cerr != nil {
+				return r.writeStatus(ctx, session, pure.PhasePending, "NATSCredsPending", cerr.Error(), 15*time.Second)
+			}
+			attachNATSCreds(pod, credsSecret)
+		}
 	}
 	pod.Spec.RestartPolicy = corev1.RestartPolicyAlways // required for a Deployment template
 
@@ -155,17 +261,75 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	phase := pure.PhasePending
+	reason, message := "WorkerStarting", "session worker Deployment not yet Available"
+	requeue := 15 * time.Second // Pending: poll for the worker to become Available
 	if r.deployAvailable(ctx, deploy.Namespace, deploy.Name) {
-		phase = pure.PhaseRunning
+		phase, reason, message = pure.PhaseRunning, "Reconciled", ""
+		// M2.19: mirror the worker's live usage/turn counters into status
+		// (best-effort), and keep refreshing them on a ~30s cadence.
+		r.mirrorWorkerStatus(ctx, session, deploy.Name)
+		requeue = 30 * time.Second
 	}
 	logger.Info("reconciled session", "phase", phase)
-	// Requeue while not yet available so phase advances even without a Deployment
-	// status event reaching us.
-	requeue := time.Duration(0)
-	if phase == pure.PhasePending {
-		requeue = 15 * time.Second
+	return r.writeStatus(ctx, session, phase, reason, message, requeue)
+}
+
+// mirrorWorkerStatus scrapes a Running worker pod's /status endpoint and folds the
+// SessionSummary into status (usage/turns/failedTurns/lastTurnTime). Best-effort:
+// no reachable pod / a scrape error leaves the prior status untouched (M2.19).
+func (r *AgentSessionReconciler) mirrorWorkerStatus(ctx context.Context, session *amv1.AgentSession, deployName string) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(session.Namespace),
+		client.MatchingLabels{"agents.smol-agents.ai/run": deployName}); err != nil {
+		return
 	}
-	return r.writeStatus(ctx, session, phase, requeue)
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Status.Phase != corev1.PodRunning || p.Status.PodIP == "" {
+			continue
+		}
+		if sum, err := fetchSessionSummary(ctx, p.Status.PodIP); err == nil {
+			applySummaryToStatus(&session.Status, sum)
+			return
+		}
+	}
+}
+
+// applySummaryToStatus folds a worker SessionSummary into AgentSessionStatus
+// field-wise (Usage is verbatim CumulativeUsage — NOT Usage.Add). Pure + tested.
+func applySummaryToStatus(st *pure.AgentSessionStatus, sum turnmodel.SessionSummary) {
+	st.Usage = sum.Usage
+	st.Turns = int64(sum.Turns)
+	st.FailedTurns = int64(sum.FailedTurns)
+	if sum.LastTurnTime != nil {
+		t := metav1.NewTime(*sum.LastTurnTime)
+		st.LastTurnTime = &t
+	}
+}
+
+// fetchSessionSummary GETs the worker's /status endpoint (a short-timeout,
+// in-cluster read of the session's own non-secret counters).
+func fetchSessionSummary(ctx context.Context, podIP string) (turnmodel.SessionSummary, error) {
+	url := "http://" + podIP + turnmodel.SessionStatusPort + "/status"
+	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(rctx, http.MethodGet, url, nil)
+	if err != nil {
+		return turnmodel.SessionSummary{}, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return turnmodel.SessionSummary{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return turnmodel.SessionSummary{}, fmt.Errorf("session status: http %d", resp.StatusCode)
+	}
+	var sum turnmodel.SessionSummary
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&sum); err != nil {
+		return turnmodel.SessionSummary{}, err
+	}
+	return sum, nil
 }
 
 // ensureOwned sets the session as controller-owner and creates obj if absent
@@ -180,6 +344,26 @@ func (r *AgentSessionReconciler) ensureOwned(ctx context.Context, session *amv1.
 		return r.Create(ctx, obj)
 	}
 	return err
+}
+
+// ensureEgressPolicy creates or UPDATES the session worker's egress NetworkPolicy
+// (unlike ensureOwned, which is create-only for the stable run-spec/broker
+// objects). Update-in-place lets a changed AgentNetwork re-cage a live session
+// worker without recreating it (M1.16).
+func (r *AgentSessionReconciler) ensureEgressPolicy(ctx context.Context, session *amv1.AgentSession, np *networkingv1.NetworkPolicy) error {
+	if err := ctrl.SetControllerReference(session, np, r.Scheme); err != nil {
+		return err
+	}
+	existing := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(np), existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, np)
+	}
+	if err != nil {
+		return err
+	}
+	existing.Spec = np.Spec
+	return r.Update(ctx, existing)
 }
 
 // ensureDeployment creates or updates the session worker Deployment.
@@ -207,8 +391,10 @@ func (r *AgentSessionReconciler) deployAvailable(ctx context.Context, ns, name s
 	return cur.Status.AvailableReplicas > 0
 }
 
-func (r *AgentSessionReconciler) writeStatus(ctx context.Context, session *amv1.AgentSession, phase pure.Phase, requeue time.Duration) (ctrl.Result, error) {
+func (r *AgentSessionReconciler) writeStatus(ctx context.Context, session *amv1.AgentSession, phase pure.Phase, reason, message string, requeue time.Duration) (ctrl.Result, error) {
 	session.Status.Phase = phase
+	session.Status.Reason = reason
+	session.Status.Message = message
 	session.Status.ObservedGeneration = session.Generation
 	if err := r.Status().Update(ctx, session); err != nil {
 		// A conflict means the object advanced; requeue and re-read rather than

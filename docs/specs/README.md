@@ -180,6 +180,8 @@ Four nodes are **backbones** — most other specs transitively depend on them, s
 
 Five themed, independently-shippable milestones in dependency order. Each is releasable on its own and respects every `dependsOn`. Effort is the aggregate of included specs (S=1, M=2, L=3, XL=5 story-points as a rough planning weight).
 
+> **Per-task breakdown:** [TASKS.md](TASKS.md) decomposes these five milestones into **~107 actionable tasks** (build steps with real file/type/func names, acceptance bars, dependencies, flagged risks) plus the consolidated post-GA deferrals and open questions. This section is the overview; TASKS.md is the execution checklist.
+
 > **✅ Re-prioritized 2026-06-03 per [decisions.md](../design/decisions.md).** **M1 is now
 > mandatory/P0**, not a "multi-tenant prerequisite" (D1): policy enforcement + **built**
 > redaction, AgentNetwork datapath + the serving egress floor **default-ON** (D3, not

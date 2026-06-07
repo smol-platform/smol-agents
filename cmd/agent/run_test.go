@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
@@ -87,6 +90,7 @@ func TestClampForTerminationMessage(t *testing.T) {
 		Output: json.RawMessage(`{"answer":42}`),
 		Steps:  steps,
 		Usage:  v1.Usage{Steps: 50},
+		Trace:  &v1.TraceSummary{StepCount: 50, ToolCallCount: 100},
 	}
 	got := clampForTerminationMessage(fat)
 	b := marshalRunResult(got)
@@ -98,5 +102,58 @@ func TestClampForTerminationMessage(t *testing.T) {
 	}
 	if got.Phase != "Completed" || string(got.Output) != `{"answer":42}` {
 		t.Errorf("clamp must preserve phase/output: %+v", got)
+	}
+	// M2.3: when steps are dropped, the trace must survive + mark the loss honestly.
+	if len(got.Steps) != 0 {
+		t.Errorf("fat steps should be dropped, got %d", len(got.Steps))
+	}
+	if got.Trace == nil || !got.Trace.Truncated || got.Trace.DroppedBytes == 0 || got.Trace.StepCount != 50 {
+		t.Errorf("dropped trace must stay honest: %+v", got.Trace)
+	}
+}
+
+// M2.9: when the trace overflows the cap and a sink is configured, the FULL
+// RunResult is parked at a per-tenant key and Trace.OverflowRef points at it.
+func TestStampOverflowTrace(t *testing.T) {
+	sink := agentfs.NewFakeS3()
+	wire := agentruntime.RunResult{
+		Phase:  "Completed",
+		Output: json.RawMessage(`{"answer":42}`),
+		Trace:  &v1.TraceSummary{StepCount: 50, ToolCallCount: 100},
+	}
+	got := stampOverflowTrace(wire, sink, "tenant-a", "run-7")
+
+	wantKey := "runs/tenant-a/run-7/trace.json"
+	if got.Trace.OverflowRef != wantKey {
+		t.Errorf("OverflowRef = %q, want %q (per-tenant key)", got.Trace.OverflowRef, wantKey)
+	}
+	if vs, _ := sink.ListVersions(wantKey); len(vs) != 1 {
+		t.Fatalf("full result must be Put once at %s, got %d versions", wantKey, len(vs))
+	}
+	rc, err := sink.Get(wantKey, "")
+	if err != nil {
+		t.Fatalf("get parked object: %v", err)
+	}
+	defer rc.Close()
+	body, _ := io.ReadAll(rc)
+	var rr agentruntime.RunResult
+	if err := json.Unmarshal(body, &rr); err != nil || rr.Phase != "Completed" {
+		t.Errorf("parked object must be the full RunResult JSON: err=%v body=%s", err, body)
+	}
+}
+
+func TestStampOverflowTrace_NilTraceAllocated(t *testing.T) {
+	got := stampOverflowTrace(agentruntime.RunResult{Phase: "Failed"}, agentfs.NewFakeS3(), "", "")
+	if got.Trace == nil || got.Trace.OverflowRef != "runs/default/run/trace.json" {
+		t.Errorf("nil trace must be allocated + ref set with defaults: %+v", got.Trace)
+	}
+}
+
+// No object store configured → no sink → the full trace stays in pod logs only
+// (no Put attempted, M2.9 "no-op without creds").
+func TestOverflowSinkFromEnv_NoBucketNoOp(t *testing.T) {
+	t.Setenv("AGENTFS_S3_BUCKET", "")
+	if sink := overflowSinkFromEnv(context.Background()); sink != nil {
+		t.Error("no AGENTFS_S3_BUCKET must yield a nil sink")
 	}
 }

@@ -36,6 +36,53 @@ func TestBuildAgentRunPod_RunSpecWiring(t *testing.T) {
 	}
 }
 
+// M2.10: tools.json is written only when tools are present (nil-tools path is
+// byte-identical to the original), and a too-large catalog is rejected.
+func TestBuildRunSpecConfigMapWithTools(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+	run.Spec = pure.AgentRunSpec{AgentRef: "a1", Input: json.RawMessage(`{}`)}
+	agent := &amv1.Agent{}
+	agent.Name = "a1"
+	agent.Namespace = "tenant-a"
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Instructions = "x"
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessHermes, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
+
+	// nil tools → no tools.json key.
+	cmNil, err := BuildRunSpecConfigMapWithTools(run, agent, nil, nil)
+	if err != nil {
+		t.Fatalf("nil tools: %v", err)
+	}
+	if _, ok := cmNil.Data[runSpecToolsFile]; ok {
+		t.Errorf("nil tools must not write tools.json")
+	}
+
+	// real tools → tools.json round-trips.
+	tools := []pure.Tool{{Name: "search", Spec: pure.ToolSpec{Kind: pure.ToolHTTP}}}
+	cm, err := BuildRunSpecConfigMapWithTools(run, agent, nil, tools)
+	if err != nil {
+		t.Fatalf("with tools: %v", err)
+	}
+	var got []pure.Tool
+	if err := json.Unmarshal([]byte(cm.Data[runSpecToolsFile]), &got); err != nil {
+		t.Fatalf("tools.json: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "search" {
+		t.Errorf("tools.json round-trip wrong: %+v", got)
+	}
+
+	// oversized catalog → ToolSpecTooLarge error.
+	big := make([]pure.Tool, 0, 4000)
+	for i := 0; i < 4000; i++ {
+		big = append(big, pure.Tool{Name: "t", Spec: pure.ToolSpec{Kind: pure.ToolHTTP, HTTP: &pure.HTTPSpec{URL: "https://example.com/" + string(make([]byte, 256))}}})
+	}
+	if _, err := BuildRunSpecConfigMapWithTools(run, agent, nil, big); err == nil {
+		t.Errorf("an oversized tool catalog must be rejected")
+	}
+}
+
 func TestBuildRunSpecConfigMap(t *testing.T) {
 	run := &amv1.AgentRun{}
 	run.Name = "r1"

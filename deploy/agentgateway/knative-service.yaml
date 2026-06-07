@@ -23,6 +23,8 @@ spec:
         autoscaling.knative.dev/max-scale: "20"
         autoscaling.knative.dev/target: "50"
     spec:
+      # Reads AgentSession specs for per-session input caps + retention (M2.20).
+      serviceAccountName: agentgateway
       containerConcurrency: 50
       containers:
         - name: agentgateway

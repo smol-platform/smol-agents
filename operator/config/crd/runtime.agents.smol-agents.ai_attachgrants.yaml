@@ -1,0 +1,91 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: attachgrants.runtime.agents.smol-agents.ai
+spec:
+  group: runtime.agents.smol-agents.ai
+  names:
+    kind: AttachGrant
+    listKind: AttachGrantList
+    plural: attachgrants
+    shortNames:
+    - ag
+    singular: attachgrant
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.agentRef
+      name: Agent
+      type: string
+    - jsonPath: .spec.subject
+      name: Subject
+      type: string
+    - jsonPath: .spec.role
+      name: Role
+      type: string
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AttachGrant is the durable authorization record for a human attaching to an
+          agent's interactive terminal (M4.6, D5). cmd/agentterminal resolves a live,
+          unexpired grant before minting an audience-bound attach token.
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              agentRef:
+                description: |-
+                  AgentRef is the Agent (or SmolAgent) in THIS namespace the grant authorizes
+                  attach to. Cross-namespace references are rejected (no cross-tenant grant).
+                type: string
+              subject:
+                description: Subject is the human identity (OIDC subject / email) the
+                  grant is for.
+                type: string
+              role:
+                description: Role is viewer (read-only) or driver (read/write).
+                enum:
+                - viewer
+                - driver
+                type: string
+              expiresAt:
+                description: |-
+                  ExpiresAt is the hard expiry of the grant; the gateway never mints a token
+                  outliving it.
+                format: date-time
+                type: string
+            required:
+            - agentRef
+            - role
+            - subject
+            type: object
+          status:
+            properties:
+              lastAttachTime:
+                description: LastAttachTime is the most recent attach the gateway authorized
+                  via this grant.
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

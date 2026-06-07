@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 03 — A durable, long-running session  (milestone M4)
+#
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#     kubectl apply -f docs/examples/03-durable-session.yaml
+#     kubectl -n tenant-a get agentsession chat -w   # → phase Running
+#
+# An AgentSession stands up a long-lived 1-replica worker pod (`agent
+# serve-session`) that processes turns from an inbox and checkpoints session
+# state to its AgentFS workspace, so a multi-turn conversation survives a pod
+# restart (scale-to-zero on idle, recover on the next turn).
+#
+# The referenced Agent MUST declare storage.agentfs — serve-session needs a
+# workspace. An ephemeral workspace (no backup) is fine for a stateless chat;
+# add storage.agentfs.backup.s3 for cross-restart durability.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: assistant
+  namespace: tenant-a
+spec:
+  model:
+    providerRef: openai
+    name: gpt-4o
+  instructions: "You are a helpful assistant. Keep context across turns."
+  budget:
+    maxSteps: 6
+    maxTokens: 20000
+    maxWallClockSeconds: 120
+    maxToolCalls: 4
+  # Required for a session worker: gives serve-session a workspace to checkpoint
+  # turns + usage into. sizeGiB sizes the volume; mountPath is where it lands.
+  storage:
+    kind: agentfs
+    agentfs:
+      sizeGiB: 1
+      mountPath: /workspace
+      # backend: kopia          # content-addressed snapshots (default tar)
+      # backup:                 # uncomment for durable cross-restart sessions
+      #   s3: { bucket: my-agentfs, region: us-east-2, credentialsRef: { secretName: agentfs-s3 } }
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentSession
+metadata:
+  name: chat
+  namespace: tenant-a
+spec:
+  agentRef: assistant
+  idleTimeoutSeconds: 900           # park + scale to zero after 15 min idle (0 = resident)
+  maxConcurrentTurns: 1             # 1 = strict FIFO; >1 opts into per-turn concurrency
+  turnHistoryLimit: 50              # in-memory turns retained (0 = unbounded)
+# Turns are delivered to the worker's inbox by the agent gateway (NATS) or, in
+# the gateway-less default, an on-disk inbox. status.phase reports Pending →
+# Running; status.reason carries fail-closed causes (AgentMissing,
+# SandboxNotReady, SecretMissing, NoKVMCapacity, …).

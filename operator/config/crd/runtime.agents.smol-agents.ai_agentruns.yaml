@@ -23,6 +23,10 @@ spec:
         - name: State
           type: string
           jsonPath: .status.state
+        - name: Pending
+          type: string
+          description: The pending human action a run is waiting on (e.g. pre-run), if any (M5).
+          jsonPath: .status.pendingAction.kind
         - name: Steps
           type: integer
           jsonPath: .status.usage.steps
@@ -50,6 +54,7 @@ spec:
               properties:
                 agentRef: { type: string, minLength: 1, description: 'Name of the Agent in this namespace to execute.' }
                 sessionRef: { type: string, description: 'Optionally associates the run with an AgentSession (for grouping/checkpointing).' }
+                resumeSessionID: { type: string, description: 'Resume a prior harness conversation (M3.19): a session id from an earlier run''s status.harnessSessionID (claude --resume / codex exec resume). Empty = fresh session.' }
                 input:
                   type: object
                   description: |-
@@ -70,6 +75,18 @@ spec:
                     maxWallClockSeconds: { type: integer, minimum: 1, description: 'Override for maximum run wall-clock duration in seconds.' }
                     maxToolCalls: { type: integer, minimum: 0, description: 'Override for maximum total tool invocations.' }
                 cancel: { type: boolean, description: 'Set true to request cancellation; the controller deletes the run pod (immediate, no graceful drain).' }
+                placementFallback: { type: string, enum: [Pending, Schedule], description: 'When a kata run finds no matching AgentNodePool: Pending (default, fail-closed) holds until capacity; Schedule runs without node affinity (dev escape hatch). (M1.10)' }
+                requireApprovalBeforeRun: { type: boolean, description: 'Per-run override of the Agent ApprovalPolicy: hold this run in RequiresAction until a human approves (M5).' }
+                priority: { type: integer, format: int32, description: 'Per-namespace admission-queue priority when at the concurrency cap (M1.13): higher admitted first, ties by creation time. Clamped to the operator MaxPriority. 0 = normal.' }
+                decision:
+                  type: object
+                  description: 'Human pre-run approval verdict, patched onto a run waiting in RequiresAction (M5). Token must match status.pendingAction.token.'
+                  properties:
+                    token: { type: string, description: 'Must match status.pendingAction.token; a stale token is ignored.' }
+                    approve: { type: boolean, description: 'true to proceed; false denies (run becomes Cancelled).' }
+                    reason: { type: string, description: 'Optional human note.' }
+                    decidedBy: { type: string, description: 'Optional identity of the approver.' }
+                  required: [token]
                 memoryRetrieverRef:
                   type: string
                   description: |-
@@ -109,6 +126,44 @@ spec:
                 startedAt: { type: string, format: date-time, description: 'When the run pod started executing.' }
                 endedAt: { type: string, format: date-time, description: 'When the run reached a terminal state.' }
                 terminationReason: { type: string, description: 'Machine-readable reason for a terminal state (e.g. budget exceeded, error).' }
+                reason: { type: string, description: 'Short machine-readable cause for the current State (e.g. ConcurrencyLimited, SandboxNotReady).' }
+                harnessSessionID: { type: string, description: 'Harness session/thread id from this run (claude session_id, codex thread); pass to a later run''s spec.resumeSessionID to resume (M3.19).' }
+                networks: { type: array, items: { type: string }, description: 'AgentNetworks bound to this run (M1.19); empty = default-deny floor only.' }
+                egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }
+                pendingAction:
+                  type: object
+                  description: 'Set while state==RequiresAction: the approval the run is waiting on (M5).'
+                  properties:
+                    kind: { type: string, description: 'Why the run is paused (currently "pre-run").' }
+                    token: { type: string, description: 'Token a human must echo in spec.decision.token to act.' }
+                    requestedAt: { type: string, format: date-time, description: 'When the pause began (drives the approval TTL).' }
+                    reason: { type: string, description: 'Human-readable pause reason.' }
+                trace:
+                  type: object
+                  description: 'Compact step/tool-call metadata that survives when full steps are clamped from the termination message (M2.2).'
+                  properties:
+                    stepCount: { type: integer, description: 'Number of execution steps.' }
+                    toolCallCount: { type: integer, description: 'Total tool calls across steps.' }
+                    truncated: { type: boolean, description: 'True when step detail was dropped from the termination message.' }
+                    droppedBytes: { type: integer, format: int64, description: 'Bytes of step detail dropped.' }
+                    overflowRef: { type: string, description: 'Object-store ref to the full trace when offloaded (M2.9).' }
+                artifacts:
+                  type: object
+                  description: 'Folded artifact-egress result (M2.26), observability-only — the state the agentfs-sidecar reported plus per-file refs (a prefix of the full set if the manifest exceeded the termination-message cap; files are still in S3).'
+                  properties:
+                    state: { type: string, description: 'Complete | Partial | Failed (Failed = egress requested but the sidecar reported nothing).' }
+                    refs:
+                      type: array
+                      description: Collected files.
+                      items:
+                        type: object
+                        properties:
+                          name: { type: string }
+                          path: { type: string }
+                          s3Key: { type: string }
+                          sizeBytes: { type: integer, format: int64 }
+                          sha256: { type: string }
+                          skipped: { type: string, description: 'Reason a declared output was not uploaded (empty = uploaded).' }
                 output:
                   description: |-
                     The run's answer as arbitrary JSON — a structured object for
@@ -124,6 +179,7 @@ spec:
                     tokens: { type: integer, description: 'Total LLM tokens consumed.' }
                     toolCalls: { type: integer, description: 'Total tool invocations.' }
                     wallClockUsed: { type: integer, format: int64, description: 'Wall-clock seconds consumed.' }
+                    costUSDMilli: { type: integer, format: int64, description: 'Backend-reported cost in integer milli-USD (observability-only; never gated).' }
                 steps:
                   type: array
                   description: |-

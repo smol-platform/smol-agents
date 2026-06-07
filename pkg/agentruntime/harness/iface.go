@@ -37,8 +37,18 @@ type Request struct {
 	// enforces hard timeouts independently via ctx.
 	Budget v1.Budget
 
-	// Seed is forwarded where the harness exposes one.
+	// Seed is forwarded where the harness exposes one, as a best-effort
+	// determinism hint — bit-exact reproduction is NOT guaranteed (providers may
+	// ignore it under load; temperature/model drift and gateway-side loops defeat
+	// it). For exact reproduction use record/replay. See
+	// docs/specs/determinism-and-replay.md.
 	Seed int64
+
+	// SessionID is a prior harness session/thread id to RESUME (M3.19/M3.23): the
+	// session worker threads it from AgentSessionStatus.HarnessSessionID across
+	// turns of a persistent session. Empty = a fresh session. Consumed by
+	// resumable harnesses (claude --resume, codex exec resume); ignored otherwise.
+	SessionID string
 }
 
 // Response is what a Harness returns. The executor folds it into
@@ -46,23 +56,34 @@ type Request struct {
 //
 // RESPONSE RICHNESS CONTRACT (authoritative — see docs/design/harness-authoring.md):
 //   - Output is ALWAYS set.
-//   - TokensIn/TokensOut are best-effort and 0 for ALL CLI kinds
-//     (claude-code/codex/aider/goose/generic-cli) — only HTTP kinds with an
-//     OpenAI-style usage block (Hermes) populate them.
-//   - ToolCalls is populated by NO harness today (forward-compat field).
+//   - TokensIn/TokensOut/CostUSDMilli/ToolCalls are BEST-EFFORT: a harness
+//     populates them when it can parse its backend's usage/event stream
+//     (Hermes; claude-code/codex with --output-format json; pi-mono) and leaves
+//     them zero/empty otherwise. They are observability only — cost is never a
+//     budget axis, and no gate/oracle reads ToolCalls (structurally 0 for kinds
+//     that emit no tool stream).
 //   - DurationMs is measured by the executor's clock.
-//
-// Callers needing token or tool-call accounting must use Hermes or loop mode.
 type Response struct {
 	// Output is the harness's final answer (raw bytes). Always set.
 	Output []byte
 
-	// TokensIn / TokensOut: best-effort; 0 for all CLI kinds (see contract above).
+	// TokensIn / TokensOut: best-effort, set when the harness parses a usage
+	// block (see contract above).
 	TokensIn  int64
 	TokensOut int64
 
-	// ToolCalls: forward-compat; populated by no harness today (see contract above).
+	// CostUSDMilli is the backend-reported cost in integer milli-USD,
+	// observability only — never a budget axis. Best-effort.
+	CostUSDMilli int64
+
+	// ToolCalls: best-effort tool-call trace parsed from the backend (see
+	// contract above).
 	ToolCalls []v1.ToolCallRecord
+
+	// SessionID is the harness's own session/thread id when it reports one
+	// (claude-code session_id, codex thread) — captured so a later run can resume
+	// the conversation (M3.16/M3.19). Empty when the harness has none.
+	SessionID string
 
 	// DurationMs measured by the executor's clock.
 	DurationMs int64
@@ -95,8 +116,10 @@ func Default() *Registry {
 	r.Register(&GooseHarness{})
 	r.Register(&GenericCLIHarness{})
 	r.Register(&PiHarness{})
+	r.Register(&PiMonoHarness{})
 	r.Register(&GenericHTTPHarness{})
 	r.Register(&HermesHarness{})
+	r.Register(&OpenClawHarness{})
 	return r
 }
 
@@ -108,9 +131,10 @@ func (r *Registry) Register(h Harness) {
 	r.impls[h.Kind()] = h
 }
 
-// For returns the Harness for kind.
+// For returns the Harness for kind, resolving deprecated aliases first (e.g.
+// "pi" → "inflection-pi") so an alias still finds its implementation.
 func (r *Registry) For(kind v1.HarnessKind) (Harness, error) {
-	h, ok := r.impls[kind]
+	h, ok := r.impls[v1.CanonicalHarnessKind(kind)]
 	if !ok {
 		return nil, fmt.Errorf("harness: no implementation for kind %q", kind)
 	}

@@ -63,3 +63,9 @@ Thumbs.db
 
 # agentbench results
 bench/results/
+
+# stray go-build binaries at repo root (sources live under cmd/ and operator/cmd/;
+# the e2e harness + manual builds drop these here)
+/agentbench
+/agent
+/secret-proxy

@@ -59,6 +59,23 @@ func TestValidate_ProxyHappy(t *testing.T) {
 	}
 }
 
+// M1.19: an egress allow rule overlapping the metadata range is rejected.
+func TestValidate_ProxyRejectsMetadataAllow(t *testing.T) {
+	for _, cidr := range []string{"169.254.169.254/32", "169.254.0.0/16", "0.0.0.0/0"} {
+		s := validProxy()
+		s.IdentityProxy.Egress.Allow = []EgressRule{{CIDR: cidr, Protocol: "tcp"}}
+		if err := ValidateAgentNetwork(s); err == nil {
+			t.Errorf("allow CIDR %q overlapping metadata must be rejected", cidr)
+		}
+	}
+	// a normal public CIDR is still accepted.
+	s := validProxy()
+	s.IdentityProxy.Egress.Allow = []EgressRule{{CIDR: "140.82.112.0/20", Protocol: "tcp"}}
+	if err := ValidateAgentNetwork(s); err != nil {
+		t.Errorf("public allow CIDR must pass: %v", err)
+	}
+}
+
 func TestValidate_WGClientHappy(t *testing.T) {
 	if err := ValidateAgentNetwork(validWG()); err != nil {
 		t.Errorf("happy wg: %v", err)

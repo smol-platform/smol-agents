@@ -67,9 +67,19 @@ construction.
 
 ### Determinism + replay
 
-Every run captures a step log. Given a seed, the runtime replays a run to
-bit-identical output — the basis for debugging, audit, and regression testing of
-non-deterministic systems.
+Every run captures a step log — the basis for debugging, audit, and regression
+testing of non-deterministic systems.
+
+The runtime's own control flow is deterministic (the injected clock, RNG seeded
+from `spec.seed`). A run's `seed` is also forwarded to any backend that honors it
+(the OpenAI-compatible `seed` field). **But `seed` is a best-effort hint, not a
+guarantee of bit-exact output:** hosted providers may ignore it under load, and
+`temperature`, model-version drift, and gateway-side tool loops all reintroduce
+nondeterminism — the model output is only ever as reproducible as the backend
+allows. For *exact* offline reproduction (debugging, CI regression), use
+record/replay against recorded fixtures rather than relying on the seed. See
+[determinism-and-replay](../specs/determinism-and-replay.md) for the full
+contract (record/replay and the `agent eval` runner are post-GA).
 
 ### Per-agent identity + secretless credentials
 

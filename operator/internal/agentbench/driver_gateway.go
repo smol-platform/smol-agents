@@ -48,7 +48,7 @@ type turnResponse struct {
 	Result json.RawMessage `json:"result,omitempty"`
 }
 
-// sessionTurn mirrors pkg/agentruntime.SessionTurn (the result body). We decode
+// sessionTurn mirrors pkg/turnmodel.SessionTurn (the result body). We decode
 // only the fields the oracles + metrics need.
 type sessionTurn struct {
 	Output            json.RawMessage `json:"output,omitempty"`

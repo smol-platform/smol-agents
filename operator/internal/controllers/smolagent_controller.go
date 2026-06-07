@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	nodev1 "k8s.io/api/node/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -66,6 +67,7 @@ func (r *SmolAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ServiceAccount{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&appsv1.StatefulSet{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&nodev1.RuntimeClass{}).
 		Complete(r)
 }
@@ -249,5 +251,6 @@ func AllFeatureReconcilers() []features.FeatureReconciler {
 		features.TransportPublicReconciler{},
 		features.KnativeReconciler{},
 		features.ObservabilityReconciler{},
+		features.EgressFloorReconciler{},
 	}
 }

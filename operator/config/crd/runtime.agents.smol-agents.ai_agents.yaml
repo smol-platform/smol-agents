@@ -145,14 +145,53 @@ spec:
                         maxOutputBytes:
                           type: integer
                           description: Cap on captured harness stdout/stderr bytes before truncation.
-                        passthroughEnv:
-                          type: array
-                          description: Host/container env var names forwarded verbatim into the harness process.
-                          items: { type: string }
                         extraFlags:
                           type: array
                           description: 'Flags appended to the CLI invocation (after the kind''s fixed flags, before the prompt) for permission/sandbox flags a CLI harness needs headless, e.g. claude-code ''--dangerously-skip-permissions'' (the kata + egress sandbox is the real boundary) or codex ''--ask-for-approval never''.'
                           items: { type: string }
+                        outputFormat:
+                          type: string
+                          enum: [text, json, stream-json]
+                          description: 'CLI machine-readable output so the harness can parse tokens/cost/tool-calls (claude-code/codex parse "json"; M2.5/M3.14).'
+                        approvalMode:
+                          type: string
+                          enum: [safe, acceptEdits, never]
+                          description: 'Permission posture (claude --permission-mode / codex --ask-for-approval); "never" is the opt-in danger flag, microVM-gated at admission (D3/M3.17).'
+                        allowedTools:
+                          type: array
+                          description: 'CLI permission allow-list (e.g. claude --allowedTools).'
+                          items: { type: string }
+                        disallowedTools:
+                          type: array
+                          description: 'CLI permission deny-list (e.g. claude --disallowedTools).'
+                          items: { type: string }
+                        apiKeyHelperSecret: { type: string, description: 'Opt into short-lived claude-code creds (M3.20): claude runs an apiKeyHelper that leases this broker secret via `agent lease`, re-fetching on TTL/401. Empty = static ANTHROPIC_API_KEY.' }
+                        codexBaseURL: { type: string, description: 'Route codex through a platform Responses gateway (M3.21): renders ~/.codex/config.toml with [model_providers.platform] wire_api=responses pointing here. Empty = codex defaults.' }
+                        codexModel: { type: string, description: 'Optional codex model id written into config.toml (M3.21).' }
+                        mcpServers:
+                          type: array
+                          description: 'MCP servers claude-code connects to (M3.18); rendered to a --mcp-config file, mcp__<name>__* auto-allowed. stdio needs an operator-allow-listed image; http/sse URLs to internal hosts are rejected at admission.'
+                          items:
+                            type: object
+                            required: [name, transport]
+                            properties:
+                              name: { type: string }
+                              transport: { type: string, enum: [stdio, http, sse] }
+                              command: { type: array, items: { type: string }, description: 'stdio argv (the binary + args).' }
+                              url: { type: string, description: 'http/sse endpoint.' }
+                              env:
+                                type: array
+                                items:
+                                  type: object
+                                  required: [name]
+                                  properties:
+                                    name: { type: string }
+                                    value: { type: string }
+                                    secretRef:
+                                      type: object
+                                      properties:
+                                        secretName: { type: string }
+                                        key: { type: string }
                     http:
                       type: object
                       description: HTTP-harness transport settings (applies to generic-http/hermes).
@@ -160,6 +199,12 @@ spec:
                         url:
                           type: string
                           description: Endpoint the harness turn is POSTed to.
+                        api:
+                          type: string
+                          enum: [chat, responses, runs]
+                          description: 'Hermes endpoint family: chat (default) | responses | runs. Only valid for kind=hermes (M3.9).'
+                        stream: { type: boolean, description: 'Prefer a streaming transport where the API supports it (M3.9); a hint for the async /v1/runs poller.' }
+                        pollIntervalMs: { type: integer, minimum: 0, description: 'Async /v1/runs poll cadence in ms (0 = 1000); M3.11.' }
                         method:
                           type: string
                           description: HTTP method; defaults to POST.
@@ -193,6 +238,17 @@ spec:
                               type: array
                               description: Host allow-list for image URLs when allowURLs is true.
                               items: { type: string }
+                    piMono:
+                      type: object
+                      description: 'pi-mono harness config (kind=pi-mono): the pi CLI driven over HTTP via the in-pod pi-bridge (M4.15).'
+                      properties:
+                        model: { type: string, description: 'pi model (passed to pi --model).' }
+                        provider: { type: string, description: 'Model provider the bridge configures for pi.' }
+                        mode: { type: string, description: 'pi run mode; defaults to json (required for token/tool parsing).' }
+                        url: { type: string, description: 'Bridge endpoint override (default http://127.0.0.1:8848/run).' }
+                        bridgePort: { type: integer, minimum: 1, description: 'In-pod bridge port (default 8848).' }
+                        extraArgs: { type: array, items: { type: string }, description: 'Extra args appended to the pi invocation.' }
+                        activeDeadlineSeconds: { type: integer, minimum: 0, description: 'Pod-level wall-clock cap for a pi run (M4.18); a runaway prompt is killed -> DeadlineExceeded.' }
                 storage:
                   type: object
                   description: |-
@@ -279,6 +335,42 @@ spec:
                     properties:
                       name: { type: string, description: 'Name of the Tool resource to allow.' }
                       namespace: { type: string, description: 'Namespace of the Tool; defaults to the Agent''s namespace.' }
+                artifacts:
+                  type: object
+                  description: 'Workspace files to publish to S3 on pod shutdown (M2.23). Requires storage.agentfs + an S3 target. Best-effort, collected by the agentfs sidecar; never affects run Phase (the harness container holds no S3 creds).'
+                  required: [outputs]
+                  properties:
+                    outputs:
+                      type: array
+                      items:
+                        type: object
+                        required: [name, glob]
+                        properties:
+                          name: { type: string, description: 'Stable identifier (S3 key prefix + manifest key); unique within the spec.' }
+                          glob: { type: string, description: 'Workspace-relative doublestar pattern (e.g. out/**/*.json); a leading / or any .. traversal is rejected.' }
+                          maxBytes: { type: integer, format: int64, minimum: 0, description: 'Per-file cap; an over-budget file is skipped (recorded), never fatal. 0 = no cap.' }
+                          contentType: { type: string, description: 'Override the sniffed content type for uploaded objects.' }
+                    s3:
+                      type: object
+                      description: 'Upload target; defaults to the AgentFS backup target.'
+                      required: [bucket]
+                      properties:
+                        bucket: { type: string, description: 'Destination bucket.' }
+                        prefix: { type: string, description: 'Key prefix within the bucket.' }
+                        region: { type: string, description: 'Bucket region.' }
+                        endpointURL: { type: string, description: 'Custom S3 endpoint (e.g. MinIO); empty uses AWS S3.' }
+                        sseAlgorithm:
+                          type: string
+                          description: 'Server-side encryption: AES256, aws:kms, or "" (none).'
+                          enum: [AES256, "aws:kms", ""]
+                        kmsKeyARN: { type: string, description: 'KMS key ARN when sseAlgorithm=aws:kms.' }
+                        versioning: { type: boolean, description: 'Whether the destination bucket has object versioning enabled.' }
+                        credentialsRef:
+                          type: object
+                          description: Secret holding S3 credentials, leased by the broker at runtime.
+                          properties:
+                            secretName: { type: string, description: 'Name of the Secret.' }
+                            key: { type: string, description: 'Key within the Secret''s data.' }
                 memory:
                   type: object
                   description: |-
@@ -311,6 +403,19 @@ spec:
                 gracefulCancelTimeoutSeconds:
                   type: integer
                   description: DEPRECATED/UNUSED in v0.2.0 — read by no controller; cancel deletes the pod immediately.
+                maxConcurrentRuns: { type: integer, minimum: 0, description: 'Cap concurrently-Running runs for this Agent (0 = unlimited); soft per-tenant admission gate (M1.12/D10).' }
+                approval:
+                  type: object
+                  description: 'Gate this Agent''s runs behind a human pre-run approval (M5).'
+                  properties:
+                    requireApprovalBeforeRun: { type: boolean, description: 'Hold every run in RequiresAction until approved via the run''s spec.decision.' }
+                    approvalTimeoutSeconds: { type: integer, minimum: 0, description: 'Expire an un-decided run after this long (0 = operator --default-approval-timeout).' }
+                session:
+                  type: object
+                  description: 'Mark the Agent as requiring a resident session and/or an interactive attach plane (M4/D4).'
+                  properties:
+                    required: { type: boolean, description: 'A resident session pod that outlives a single turn.' }
+                    interactive: { type: boolean, description: 'A human attach plane (implies required; rejected on a Knative deployment).' }
             status:
               type: object
               description: AgentStatus is the observed reconcile state of the Agent (NOT the AgentRun lifecycle).

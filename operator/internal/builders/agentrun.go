@@ -1,6 +1,10 @@
 package builders
 
 import (
+	"os"
+	"strconv"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	resource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +43,33 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	main.Args = nil
 	main.VolumeMounts = append(main.VolumeMounts, runSpecMount())
 
+	// A2A (M3 A1): give a loop run the identity its in-pod AgentRunInvoker needs
+	// to create CHILD AgentRuns — its own namespace (downward API), its run name
+	// (the delegation-tree label), and its depth in that tree (from the
+	// invoker's child label; absent = top-level = 0). Loop mode only; the harness
+	// path has no in-process invoker. The invoker is still gated by the pod's
+	// RBAC (the <agent>-a2a Role) + a healthy in-cluster client, so this env is
+	// inert for a non-A2A run.
+	if mode != pure.ModeHarness {
+		main.Env = append(main.Env,
+			corev1.EnvVar{Name: "POD_NAMESPACE", ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+			}},
+			corev1.EnvVar{Name: "RUN_NAME", Value: run.Name},
+			// The AgentRun's OWN uid (a literal — the pod's downward-API
+			// metadata.uid is the POD's uid, not the run's) lets the in-pod A2A
+			// invoker set a valid OwnerReference on child AgentRuns, so deleting
+			// this parent run GCs the subtree. A wrong uid makes GC delete the
+			// child immediately (owner appears non-existent).
+			corev1.EnvVar{Name: "AGENT_RUN_UID", Value: string(run.UID)},
+		)
+		if d := run.Labels[a2aDepthLabel]; d != "" {
+			main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_DEPTH", Value: d})
+		}
+		// A2A recursion ceiling (M3.5), read by WireAgentInvoker → invoker.MaxDepth.
+		main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_MAX_DEPTH", Value: a2aMaxDepth()})
+	}
+
 	labels := map[string]string{
 		"app.kubernetes.io/name":      "smol-agents",
 		"app.kubernetes.io/component": "agent-run",
@@ -75,6 +106,11 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 	// so the agent's files actually persist across Runs (R-AFS).
 	if input, ok := storageMountFor(&agent.Spec); ok {
 		AttachStorageFS(pod, input)
+		// Artifact egress (M2.26): when the Agent declares spec.artifacts, tell the
+		// serve sidecar what to collect + where to key it. The sidecar (not the
+		// harness) holds the S3 creds; it reports the manifest via its termination
+		// message, which the controller folds into status.
+		ApplyArtifactCollection(pod, &agent.Spec, run.Namespace, run.Name)
 	}
 	// The secret broker (AttachSecretBroker) is wired by the controller, which
 	// resolves the secrets to serve (harness env secretRef + loop ModelProvider).
@@ -92,6 +128,27 @@ func harnessContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Con
 			if e.Value != "" {
 				env = append(env, corev1.EnvVar{Name: e.Name, Value: e.Value})
 			}
+		}
+		// Durable claude session store (M3.19): a persistent claude-code agent with
+		// AgentFS keeps its session transcripts under HOME on the workspace, so
+		// --resume can reload a prior conversation across runs.
+		if agent.Spec.Harness.Kind == pure.HarnessClaudeCode &&
+			agent.Spec.Harness.SessionPolicy == pure.SessionPersistent &&
+			agent.Spec.Storage != nil && agent.Spec.Storage.AgentFS != nil {
+			env = append(env, corev1.EnvVar{Name: "HOME", Value: agent.Spec.EffectiveWorkingDir() + "/.claude-home"})
+		}
+		// Codex config home (M3.21): when routing codex through a platform gateway,
+		// CODEX_HOME is a writable dir the harness copies config.toml into (and codex
+		// writes thread state there). On AgentFS for a persistent agent so codex
+		// threads survive across runs; else an ephemeral /tmp/.codex.
+		if agent.Spec.Harness.Kind == pure.HarnessCodex &&
+			agent.Spec.Harness.CLI != nil && agent.Spec.Harness.CLI.CodexBaseURL != "" {
+			home := "/tmp/.codex"
+			if agent.Spec.Harness.SessionPolicy == pure.SessionPersistent &&
+				agent.Spec.Storage != nil && agent.Spec.Storage.AgentFS != nil {
+				home = agent.Spec.EffectiveWorkingDir() + "/.codex"
+			}
+			env = append(env, corev1.EnvVar{Name: "CODEX_HOME", Value: home})
 		}
 	}
 	return corev1.Container{
@@ -143,4 +200,16 @@ func loopContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Contai
 		},
 		VolumeMounts: mounts,
 	}
+}
+
+// a2aMaxDepth is the A2A recursion ceiling injected into loop-mode run pods
+// (A2A_MAX_DEPTH, read by WireAgentInvoker → invoker.MaxDepth). The operator's
+// --a2a-max-depth flag sets SMOL_AGENTS_A2A_MAX_DEPTH at startup; default 4.
+func a2aMaxDepth() string {
+	if v := strings.TrimSpace(os.Getenv("SMOL_AGENTS_A2A_MAX_DEPTH")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return strconv.Itoa(n)
+		}
+	}
+	return "4"
 }

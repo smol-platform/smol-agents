@@ -27,6 +27,13 @@ patches:
           - --leader-elect=false
           - --metrics-bind-address=:8443
           - --health-probe-bind-address=:8081
+          # kind can't run kata microVMs, so this dev/CI overlay uses the
+          # operator's documented runc escape hatch (resolveSandbox: "runc +
+          # allowHostRuntime → deliberately permitted (dev/CI cluster)"). Lets
+          # the operator-path AgentRun schedule a pod on kind for e2e; prod
+          # overlays keep the kata-fc default + allowHostRuntime=false.
+          - --default-run-runtime-class=runc
+          - --allow-host-runtime=true
 labels:
   - includeSelectors: false
     pairs:

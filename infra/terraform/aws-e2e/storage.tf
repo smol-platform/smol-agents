@@ -53,6 +53,13 @@ resource "aws_ecr_repository" "secret_proxy" {
   image_tag_mutability = "MUTABLE"
 }
 
+# agentfs-sidecar is the operator-spawned AgentFS restore init container +
+# serving sidecar (durable session/run workspace; S3 backup/WAL when configured).
+resource "aws_ecr_repository" "agentfs_sidecar" {
+  name                 = "smol-agents/agentfs-sidecar"
+  image_tag_mutability = "MUTABLE"
+}
+
 resource "aws_ecr_repository" "fake_llm" {
   name                 = "smol-agents/fake-llm"
   image_tag_mutability = "MUTABLE"
@@ -91,6 +98,31 @@ resource "aws_ecr_repository" "bottlerocket_bootstrap" {
   image_tag_mutability = "MUTABLE"
 }
 
+# fake-github backs the secretless-egress scenario (provider-credential
+# broker minting against a fake GitHub backend).
+resource "aws_ecr_repository" "fake_github" {
+  name                 = "smol-agents/fake-github"
+  image_tag_mutability = "MUTABLE"
+}
+
+# fake-tts backs tool/voice scenarios needing a stub TTS backend.
+resource "aws_ecr_repository" "fake_tts" {
+  name                 = "smol-agents/fake-tts"
+  image_tag_mutability = "MUTABLE"
+}
+
+# memory-mcp + memory-worker back the cross-turn memory (memoryAccess)
+# scenario: the MCP server and its async worker.
+resource "aws_ecr_repository" "memory_mcp" {
+  name                 = "smol-agents/memory-mcp"
+  image_tag_mutability = "MUTABLE"
+}
+
+resource "aws_ecr_repository" "memory_worker" {
+  name                 = "smol-agents/memory-worker"
+  image_tag_mutability = "MUTABLE"
+}
+
 resource "aws_ecr_lifecycle_policy" "trim" {
   for_each = toset([
     aws_ecr_repository.operator.name,
@@ -103,6 +135,11 @@ resource "aws_ecr_lifecycle_policy" "trim" {
     aws_ecr_repository.spiffe_probe.name,
     aws_ecr_repository.ebpf_probe.name,
     aws_ecr_repository.bottlerocket_bootstrap.name,
+    aws_ecr_repository.fake_github.name,
+    aws_ecr_repository.fake_tts.name,
+    aws_ecr_repository.memory_mcp.name,
+    aws_ecr_repository.memory_worker.name,
+    aws_ecr_repository.agentfs_sidecar.name,
   ])
   repository = each.value
   policy = jsonencode({

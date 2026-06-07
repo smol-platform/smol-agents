@@ -16,12 +16,13 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/observability"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
+	"github.com/smol-platform/smol-agents/pkg/turnmodel"
 )
 
 // runServeSession is the `agent serve-session` subcommand: the long-running
 // runtime behind an AgentSession. It loads the mounted Agent spec, restores
 // durable session state from the AgentFS workspace (the init container already
-// restored the files), and drives agentruntime.SessionWorker — processing turns
+// restored the files), and drives turnmodel.SessionWorker — processing turns
 // from the inbox, checkpointing after each, parking when idle — until SIGTERM
 // (final checkpoint) or the idle timeout (exit so Knative can scale to zero).
 func runServeSession(args []string) int {
@@ -32,8 +33,12 @@ func runServeSession(args []string) int {
 	socket := fs.String("secret-socket", "/run/secret-broker/secret-broker.sock", "secret broker UDS")
 	poll := fs.Duration("poll", 2*time.Second, "turn poll interval")
 	idle := fs.Duration("idle-timeout", 0, "exit (scale-to-zero) after this idle; 0 = never")
+	maxConcurrent := fs.Int("max-concurrent-turns", 0, "turn-processing width; 0/1 = serial (FIFO), >1 = opt-in concurrency")
+	turnTimeout := fs.Duration("turn-timeout", 0, "per-turn wall-clock cap; 0 = none (budget still applies)")
+	historyLimit := fs.Int("history-limit", 0, "max in-memory turns retained; 0 = unbounded")
 	natsURL := fs.String("nats-url", os.Getenv("AGENTSESSION_NATS_URL"), "NATS JetStream URL for turn delivery; empty uses the on-disk inbox")
 	sessionKey := fs.String("session-key", os.Getenv("AGENTSESSION_KEY"), "session queue key (namespace.name); required with --nats-url")
+	natsCreds := fs.String("nats-creds", os.Getenv("AGENTSESSION_NATS_CREDS"), "path to a NATS user .creds file — the operator-minted, namespace-scoped worker credential (M2.20); empty = no auth (connects + manages the stream as before)")
 	_ = fs.Parse(args)
 
 	logger := observability.MustLogger(slog.LevelInfo)
@@ -61,29 +66,43 @@ func runServeSession(args []string) int {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
-	w := &agentruntime.SessionWorker{
-		Agent:        agent,
-		AgentRef:     *agentRef,
-		Workspace:    ws,
-		Leaser:       leaser,
-		LLM:          buildLoopLLM(ctx, *dir, leaser),
-		PollInterval: *poll,
-		IdleTimeout:  *idle,
-		Logger:       logger,
+	w := &turnmodel.SessionWorker{
+		Agent:              agent,
+		AgentRef:           *agentRef,
+		Workspace:          ws,
+		Leaser:             leaser,
+		LLM:                buildLoopLLM(ctx, *dir, leaser),
+		PollInterval:       *poll,
+		IdleTimeout:        *idle,
+		MaxConcurrentTurns: *maxConcurrent,
+		TurnTimeout:        *turnTimeout,
+		HistoryLimit:       *historyLimit,
+		Logger:             logger,
 	}
 
 	// NATS turn transport (gateway path); default is the on-disk inbox.
 	if *natsURL != "" && *sessionKey != "" {
-		q, qerr := sessionqueue.NewNATSQueue(*natsURL)
+		// With a namespace-scoped worker credential (M2.20), authenticate with it
+		// and connect stream-management-off — a scoped cred can't create the shared
+		// stream (the gateway/operator owns it), and must not try.
+		var opts []sessionqueue.NATSOption
+		if *natsCreds != "" {
+			opts = append(opts, sessionqueue.WithUserCredentials(*natsCreds), sessionqueue.WithoutStreamManagement())
+		}
+		q, qerr := sessionqueue.NewNATSQueue(*natsURL, opts...)
 		if qerr != nil {
 			logger.Error("serve-session: connect NATS", "err", qerr)
 			return 1
 		}
 		defer q.Close()
-		w.Source = &agentruntime.QueueSource{Queue: q, SessionKey: *sessionKey, Max: 16}
-		w.Sink = &agentruntime.QueueSink{Queue: q, SessionKey: *sessionKey}
+		w.Source = &turnmodel.QueueSource{Queue: q, SessionKey: *sessionKey, Max: 16}
+		w.Sink = &turnmodel.QueueSink{Queue: q, SessionKey: *sessionKey}
 		logger.Info("turn transport: NATS", "sessionKey", *sessionKey)
 	}
+
+	// Read-only status endpoint the operator scrapes to mirror usage/turn counters
+	// into AgentSession.status (M2.19); serves the checkpointed summary file.
+	go serveSessionStatus(ctx, turnmodel.SessionStatusPort, turnmodel.DefaultSessionSummaryPath(ws), logger.Error)
 
 	logger.Info("serving AgentSession", "workspace", ws, "poll", poll.String(), "idleTimeout", idle.String())
 	if err := w.Run(ctx); err != nil && ctx.Err() == nil {

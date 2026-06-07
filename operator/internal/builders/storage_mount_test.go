@@ -67,6 +67,38 @@ func secretEnvRef(c *corev1.Container, name string) (secret, key string, ok bool
 	return "", "", false
 }
 
+// M2.26: spec.artifacts wires AGENTFS_ARTIFACTS + prefix onto the serve sidecar
+// (the only container with S3 creds) and NEVER onto the harness container.
+func TestBuildAgentRunPod_ArtifactCollection(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+
+	a := storageAgent()
+	a.Spec.Artifacts = &pure.ArtifactSpec{Outputs: []pure.ArtifactRule{{Name: "out", Glob: "out/*.json"}}}
+	pod := BuildAgentRunPod(run, a)
+
+	sidecar := findCtr(pod, storageFSSidecarName)
+	if sidecar == nil {
+		t.Fatal("serve sidecar missing")
+	}
+	if envVal(sidecar, "AGENTFS_ARTIFACTS") == "" {
+		t.Error("sidecar missing AGENTFS_ARTIFACTS")
+	}
+	if got := envVal(sidecar, "AGENTFS_ARTIFACT_PREFIX"); got != "artifacts/tenant-a/r1" {
+		t.Errorf("prefix = %q, want artifacts/tenant-a/r1", got)
+	}
+	if envVal(&pod.Spec.Containers[0], "AGENTFS_ARTIFACTS") != "" {
+		t.Error("harness container must NOT receive artifact env (no S3 creds path)")
+	}
+
+	// No spec.artifacts → no artifact env on the sidecar.
+	plain := BuildAgentRunPod(run, storageAgent())
+	if envVal(findCtr(plain, storageFSSidecarName), "AGENTFS_ARTIFACTS") != "" {
+		t.Error("no spec.artifacts must leave the sidecar artifact-env-free")
+	}
+}
+
 func TestBuildAgentRunPod_StorageAgentFS(t *testing.T) {
 	run := &amv1.AgentRun{}
 	run.Name = "r1"
@@ -213,5 +245,39 @@ func TestStorageAndBroker_BrokerMountsExecContainer(t *testing.T) {
 	exec := pod.Spec.Containers[0]
 	if _, ok := hasMount(exec, secretBrokerVolumeName); !ok {
 		t.Errorf("broker UDS not mounted into the exec container (Containers[0]=%q)", exec.Name)
+	}
+}
+
+// M2.26: artifact egress is wired onto the AgentFS serve sidecar ONLY — the exec
+// (harness) container never gets the collection env (it holds no S3 creds).
+func TestApplyArtifactCollection(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+	agent := storageAgent()
+	agent.Spec.Artifacts = &pure.ArtifactSpec{Outputs: []pure.ArtifactRule{{Name: "report", Glob: "out/**/*.json"}}}
+
+	pod := BuildAgentRunPod(run, agent)
+	ApplyArtifactCollection(pod, &agent.Spec, run.Namespace, run.Name)
+
+	sidecar := findCtr(pod, StorageFSSidecarName)
+	if sidecar == nil {
+		t.Fatal("serve sidecar not found")
+	}
+	if envVal(sidecar, "AGENTFS_ARTIFACTS") == "" {
+		t.Error("sidecar must get AGENTFS_ARTIFACTS")
+	}
+	if got := envVal(sidecar, "AGENTFS_ARTIFACT_PREFIX"); got != "artifacts/tenant-a/r1" {
+		t.Errorf("AGENTFS_ARTIFACT_PREFIX = %q, want artifacts/tenant-a/r1", got)
+	}
+	if envVal(&pod.Spec.Containers[0], "AGENTFS_ARTIFACTS") != "" {
+		t.Error("exec/harness container must NOT get artifact env (no S3 creds)")
+	}
+
+	// No-op without spec.artifacts.
+	pod2 := BuildAgentRunPod(run, storageAgent())
+	ApplyArtifactCollection(pod2, &storageAgent().Spec, run.Namespace, run.Name)
+	if envVal(findCtr(pod2, StorageFSSidecarName), "AGENTFS_ARTIFACTS") != "" {
+		t.Error("no spec.artifacts must be a no-op")
 	}
 }
