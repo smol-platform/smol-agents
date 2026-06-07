@@ -147,6 +147,10 @@ func ValidateTool(t Tool) error {
 		// The team shared-task-list tool (P1) needs no extra spec — the op
 		// (list|claim|complete|create) + args are supplied at call time. The
 		// TaskInvoker is wired only inside a team context (WireTaskInvoker).
+	case ToolTeammate:
+		// The peer mailbox tool (P2) needs no extra spec — the op (send|receive)
+		// + args are supplied at call time. The TeammateInvoker is wired only
+		// inside a team context (WireTeammateInvoker).
 	}
 	return errors.Join(errs...)
 }

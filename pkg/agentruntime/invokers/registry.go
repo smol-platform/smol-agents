@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/teammailbox"
 	"github.com/smol-platform/smol-agents/pkg/teamtask"
 )
 
@@ -84,5 +85,32 @@ func WireTaskInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.ToolK
 		owner = os.Getenv("RUN_NAME")
 	}
 	base[v1.ToolTask] = &TaskInvoker{Store: store, Owner: owner}
+	return base
+}
+
+// WireTeammateInvoker best-effort-adds the kind=teammate (peer mailbox) invoker
+// when the pod carries a team context: TEAM_NATS_URL + TEAM_NAMESPACE +
+// TEAM_NAME + TEAM_MEMBER (injected by the operator when it spawns a team member;
+// P3). It subscribes the member's own inbox with the per-member credential
+// (TEAM_NATS_CREDS), so "read only your own inbox" is enforced by NATS. On any
+// failure — env unset or the connection erroring — kind=teammate stays ABSENT so
+// the executor fail-closes the call. Mutates and returns base for chaining.
+func WireTeammateInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.ToolKind]agentruntime.ToolInvoker {
+	url := os.Getenv("TEAM_NATS_URL")
+	ns := os.Getenv("TEAM_NAMESPACE")
+	team := os.Getenv("TEAM_NAME")
+	self := os.Getenv("TEAM_MEMBER")
+	if url == "" || ns == "" || team == "" || self == "" {
+		return base
+	}
+	var opts []teammailbox.NATSMailboxOption
+	if creds := os.Getenv("TEAM_NATS_CREDS"); creds != "" {
+		opts = append(opts, teammailbox.WithCredentials(creds))
+	}
+	mb, err := teammailbox.NewNATSMailbox(url, ns, team, self, opts...)
+	if err != nil {
+		return base // fail-closed: no mailbox → no teammate invoker
+	}
+	base[v1.ToolTeammate] = &TeammateInvoker{Mailbox: mb, Self: self}
 	return base
 }

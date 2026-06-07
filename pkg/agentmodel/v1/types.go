@@ -139,12 +139,17 @@ const (
 	// KV task list. Its invoker is wired only inside a team context
 	// (WireTaskInvoker) — outside a team the call fail-closes, like A2A.
 	ToolTask ToolKind = "task"
+	// ToolTeammate is the peer mailbox (multi-agent orchestration P2): the
+	// TeammateInvoker lets a member message another member by name + drain its own
+	// inbox. Wired only inside a team context (WireTeammateInvoker); a per-member
+	// NATS credential makes "read only your own inbox" the enforced boundary.
+	ToolTeammate ToolKind = "teammate"
 )
 
 // Valid returns true if k is a known ToolKind.
 func (k ToolKind) Valid() bool {
 	switch k {
-	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask:
+	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask, ToolTeammate:
 		return true
 	}
 	return false
@@ -157,7 +162,7 @@ func (k ToolKind) Valid() bool {
 // is rejected for loop-mode agents — fail-closed (D3) rather than silently
 // no-op'ing the call.
 func SupportedLoopToolKinds() map[ToolKind]bool {
-	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true}
+	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true, ToolTeammate: true}
 }
 
 // MCPSpec describes an MCP transport target. R-AM-TOOL-3.
