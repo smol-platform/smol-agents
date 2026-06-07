@@ -80,6 +80,48 @@ type AgentTeamSpec struct {
 	// team. The team Budget + pod deadline are the hard backstops beneath it.
 	// +optional
 	Convergence *ConvergenceSpec `json:"convergence,omitempty"`
+
+	// SharedWorkspace mounts one shared AgentFS volume across members (the
+	// blackboard / shared-state pattern), distinct from each member's private
+	// workspace. nil = members keep only their private workspaces.
+	// +optional
+	SharedWorkspace *SharedWorkspaceSpec `json:"sharedWorkspace,omitempty"`
+}
+
+// WorkspaceConflictMode selects how concurrent writes to the shared workspace
+// are reconciled (P4).
+type WorkspaceConflictMode string
+
+const (
+	// ConflictSharedRW is the simple default: one read/write volume; members
+	// coordinate writes themselves (or partition by path).
+	ConflictSharedRW WorkspaceConflictMode = "shared-rw"
+	// ConflictBranchMerge is the strong mode: each member works a branch and the
+	// coordinator 3-way-merges branches at task completion — turning the
+	// "two teammates, one file" overwrite risk into an enforced merge.
+	ConflictBranchMerge WorkspaceConflictMode = "branch-merge"
+)
+
+// SharedWorkspaceSpec is one shared AgentFS volume for a team (P4).
+type SharedWorkspaceSpec struct {
+	// SizeGiB is the shared volume size.
+	// +kubebuilder:validation:Minimum=1
+	SizeGiB int32 `json:"sizeGiB"`
+	// MountPath where every member sees the shared root (default /var/agentfs-team).
+	// +optional
+	MountPath string `json:"mountPath,omitempty"`
+	// ConflictMode is shared-rw (default) or branch-merge.
+	// +kubebuilder:validation:Enum=shared-rw;branch-merge
+	// +optional
+	ConflictMode WorkspaceConflictMode `json:"conflictMode,omitempty"`
+}
+
+// EffectiveConflictMode defaults to shared-rw.
+func (s SharedWorkspaceSpec) EffectiveConflictMode() WorkspaceConflictMode {
+	if s.ConflictMode == "" {
+		return ConflictSharedRW
+	}
+	return s.ConflictMode
 }
 
 // ConvergenceSpec bounds an iterative coordination loop (P3). Termination is the
@@ -255,6 +297,16 @@ func ValidateAgentTeam(t AgentTeam) error {
 		}
 	case requiresConvergence(t.Spec.EffectivePattern()):
 		errs = append(errs, fmt.Errorf("spec.convergence is required for pattern %q (it has no intrinsic stop condition)", t.Spec.EffectivePattern()))
+	}
+	if w := t.Spec.SharedWorkspace; w != nil {
+		if w.SizeGiB < 1 {
+			errs = append(errs, errors.New("spec.sharedWorkspace.sizeGiB must be ≥ 1"))
+		}
+		switch w.ConflictMode {
+		case "", ConflictSharedRW, ConflictBranchMerge:
+		default:
+			errs = append(errs, fmt.Errorf("spec.sharedWorkspace.conflictMode %q must be shared-rw or branch-merge", w.ConflictMode))
+		}
 	}
 	return errors.Join(errs...)
 }

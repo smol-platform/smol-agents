@@ -88,6 +88,27 @@ func TestValidateAgentTeam_Convergence(t *testing.T) {
 	}
 }
 
+func TestValidateAgentTeam_SharedWorkspace(t *testing.T) {
+	ok := validTeam()
+	ok.Spec.SharedWorkspace = &SharedWorkspaceSpec{SizeGiB: 2, ConflictMode: ConflictBranchMerge}
+	if err := ValidateAgentTeam(ok); err != nil {
+		t.Fatalf("valid shared workspace rejected: %v", err)
+	}
+	if got := (SharedWorkspaceSpec{}).EffectiveConflictMode(); got != ConflictSharedRW {
+		t.Fatalf("default conflict mode = shared-rw, got %q", got)
+	}
+	for name, w := range map[string]*SharedWorkspaceSpec{
+		"zero size":    {SizeGiB: 0},
+		"bad conflict": {SizeGiB: 1, ConflictMode: "yolo"},
+	} {
+		tm := validTeam()
+		tm.Spec.SharedWorkspace = w
+		if err := ValidateAgentTeam(tm); err == nil {
+			t.Fatalf("%s: expected rejection", name)
+		}
+	}
+}
+
 func TestRollUpTeamUsage_FieldWise(t *testing.T) {
 	members := []Usage{
 		{Steps: 3, Tokens: 100, ToolCalls: 2, WallClockUsed: 5 * time.Second, CostUSDMilli: 7},

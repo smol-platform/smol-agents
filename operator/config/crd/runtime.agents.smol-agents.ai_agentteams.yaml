@@ -97,6 +97,19 @@ spec:
                   maxIterations: { type: integer, minimum: 1, description: 'Max generator->verifier rounds.' }
                   criteria: { type: string, description: 'The verifier acceptance standard (required, non-empty).' }
                   timeBudgetSeconds: { type: integer, minimum: 0, description: 'Wall-clock bound for the loop (0 -> team budget governs).' }
+              sharedWorkspace:
+                type: object
+                description: |-
+                  One shared AgentFS volume mounted across members (the blackboard /
+                  shared-state pattern), distinct from each member's private workspace.
+                required: [sizeGiB]
+                properties:
+                  sizeGiB: { type: integer, minimum: 1, description: 'Shared volume size.' }
+                  mountPath: { type: string, description: 'Where members see the shared root (default /var/agentfs-team).' }
+                  conflictMode:
+                    type: string
+                    enum: [shared-rw, branch-merge]
+                    description: 'shared-rw (default) or branch-merge (coordinator 3-way-merges member branches).'
             required:
             - lead
             - members
