@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Agent Orchestration — Agent Teams on smol-agents</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#2a3340;
+    --fg:#e6edf3; --mut:#9aa7b4; --accent:#58a6ff; --accent2:#7ee787;
+    --warn:#f0b429; --pink:#ff7b9c; --purple:#bc8cff; --code:#0a0e14;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,pre{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px 96px}
+  header.hero{background:linear-gradient(160deg,#11203a,#0d1117 60%);
+    border-bottom:1px solid var(--line);padding:56px 0 40px;margin-bottom:8px}
+  .hero .wrap{padding-bottom:0}
+  .eyebrow{color:var(--accent2);font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:12.5px}
+  h1{font-size:40px;line-height:1.1;margin:.25em 0 .15em;letter-spacing:-.02em}
+  .sub{color:var(--mut);font-size:18px;max-width:760px}
+  .badges{margin-top:20px;display:flex;flex-wrap:wrap;gap:8px}
+  .badge{background:var(--panel);border:1px solid var(--line);border-radius:999px;
+    padding:5px 13px;font-size:12.5px;color:var(--mut)}
+  .badge b{color:var(--fg)}
+  .badge.ok{border-color:#1f6f3f;color:#7ee787}
+  .badge.gate{border-color:#7a5b12;color:var(--warn)}
+  h2{font-size:25px;margin:52px 0 6px;letter-spacing:-.01em;padding-top:8px}
+  h2 .n{color:var(--accent);font-size:15px;font-weight:600;margin-right:10px;
+    border:1px solid var(--line);border-radius:6px;padding:2px 8px;vertical-align:middle}
+  h3{font-size:18px;margin:26px 0 4px}
+  p{color:#cdd7e1}
+  .lead{font-size:17.5px;color:#cdd7e1}
+  .grid{display:grid;gap:16px}
+  @media(min-width:760px){.grid.two{grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:1fr 1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .card h3{margin-top:0;display:flex;align-items:center;gap:10px}
+  .tag{font-size:11px;font-weight:700;border-radius:5px;padding:2px 7px;letter-spacing:.03em}
+  .tag.p{background:#1b2a44;color:#9ec5ff}
+  .card .files{color:var(--mut);font-size:12.5px;margin-top:10px;border-top:1px dashed var(--line);padding-top:10px}
+  .card .files code{color:var(--accent2)}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;overflow:auto;font-size:13.5px;line-height:1.55;margin:14px 0}
+  pre .k{color:var(--pink)} pre .s{color:var(--accent2)} pre .c{color:#6b7785;font-style:italic}
+  pre .y{color:var(--accent)} pre .n{color:var(--purple)}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--fg);font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+  td code{color:var(--accent2);font-size:13px}
+  .callout{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;
+    padding:14px 18px;margin:18px 0}
+  .callout.warn{border-color:var(--warn)}
+  .callout.win{border-color:var(--accent2)}
+  .callout h3{margin:0 0 6px;font-size:16px}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+    padding:1px 7px;font-family:"SF Mono",monospace;font-size:12.5px;color:var(--accent2)}
+  .flow{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch;margin:16px 0}
+  .box{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 14px;flex:1;min-width:150px}
+  .box .t{font-weight:600;font-size:14px} .box .d{color:var(--mut);font-size:12.5px;margin-top:3px}
+  .arrow{align-self:center;color:var(--mut);font-size:20px}
+  ul.clean{list-style:none;padding-left:0} ul.clean li{padding-left:22px;position:relative;margin:7px 0;color:#cdd7e1}
+  ul.clean li:before{content:"▹";color:var(--accent);position:absolute;left:0}
+  footer{margin-top:64px;border-top:1px solid var(--line);padding-top:24px;color:var(--mut);font-size:13.5px}
+  .toc{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:18px;font-size:14px}
+  .kbd{font-family:"SF Mono",monospace;background:var(--panel2);border:1px solid var(--line);
+    border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12.5px}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">smol-agents · multi-agent orchestration</div>
+    <h1>Agent Teams</h1>
+    <p class="sub">Teams of <b>sandboxed, budget-capped, policy-scoped, audited</b> agents that
+      claim shared work, message peers, build on shared state, and converge — the successor to the
+      shipped A2A orchestrator→subagent edge.</p>
+    <div class="badges">
+      <span class="badge ok">✓ P0–P5 code-complete</span>
+      <span class="badge ok">✓ both modules green under <b>-race</b></span>
+      <span class="badge">merged <b>PR #3</b> · <b>3cd7119</b></span>
+      <span class="badge gate">⚙ live coordinator = deployment-gated</span>
+    </div>
+    <div class="toc">
+      <a href="#what">What &amp; why</a>
+      <a href="#patterns">Patterns → primitives</a>
+      <a href="#phases">The phases</a>
+      <a href="#use">How to use it</a>
+      <a href="#tools">Team tools</a>
+      <a href="#gov">Governance</a>
+      <a href="#gated">Deployment-gated</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h2 id="what">What this is, and why</h2>
+<p class="lead">The platform already runs one agent per execution (<span class="pill">AgentRun</span>),
+one durable worker per conversation (<span class="pill">AgentSession</span>), and a single cross-agent
+edge — <b>A2A</b>: a <span class="pill">kind=agent</span> tool whose invoker spawns a child run, folds its
+output + usage, and GC's it. That is exactly <i>one</i> of the five industry coordination patterns.
+Agent Teams generalize it to <b>peers</b> that coordinate.</p>
+
+<div class="callout win">
+  <h3>The differentiator</h3>
+  <p style="margin:0">Claude Code "agent teams" are single-user, single-trust, local (tmux panes, files
+  on disk). A team here is the opposite axis: every member is an isolated, governed workload that can even
+  span trust levels. The thing the docs call the biggest team risk — <i>"two teammates editing the same
+  file leads to overwrites"</i> — we <b>solve</b> with branchable, 3-way-mergeable AgentFS instead of telling
+  users to partition files by hand.</p>
+</div>
+
+<h2 id="patterns">The five patterns → our primitives</h2>
+<table>
+  <tr><th>Pattern</th><th>Substrate</th><th>Status</th></tr>
+  <tr><td><b>Orchestrator → subagent</b></td><td>A2A <code>AgentRunInvoker</code> (MaxDepth, usage roll-up, ownerRef GC)</td><td>Shipped (M3)</td></tr>
+  <tr><td><b>Generator → verifier</b></td><td><code>team.RunGeneratorVerifier</code> + <code>ConvergenceSpec</code></td><td>P3</td></tr>
+  <tr><td><b>Agent teams</b> (shared queue)</td><td><code>pkg/teamtask</code> (NATS KV) + <code>kind=task</code></td><td>P1</td></tr>
+  <tr><td><b>Message bus</b> (pub/sub)</td><td><code>pkg/teammailbox</code> Bus + <code>kind=teambus</code></td><td>P5</td></tr>
+  <tr><td><b>Shared state</b> (blackboard)</td><td>shared AgentFS + <code>team.ThreeWayMerge</code></td><td>P4</td></tr>
+</table>
+
+<h2 id="phases">The phases <span style="font-size:14px;color:var(--mut);font-weight:400">— each independently shippable + governed</span></h2>
+<div class="grid two">
+  <div class="card">
+    <h3><span class="tag p">P0</span> AgentTeam CRD + governance envelope</h3>
+    <p>The durable team record. Validates the team, rolls member usage up <b>field-wise</b> (never
+    <code>Usage.Add</code>; cost never gates), and is the OwnerReference GC root for the member subtree
+    (delete the team → its members GC). <code>maxMembers</code> width cap = the A2A <code>MaxDepth</code> analog.</p>
+    <div class="files"><code>agentteam.go</code> · <code>agentteam_controller.go</code> · CRD + webhook</div>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">P1</span> Shared task list</h3>
+    <p>Members claim work from a per-team NATS JetStream KV bucket. A claim is <b>atomic (revision CAS)</b>
+    so no two members win the same task; a task is claimable only once its dependencies complete
+    (fail-closed on a dangling dep).</p>
+    <div class="files"><code>pkg/teamtask</code> · invoker <code>kind=task</code></div>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">P2</span> Peer mailbox + per-member ACL</h3>
+    <p>Any member messages any other <b>by name</b>. A per-member NATS credential lets it <i>publish</i> any
+    teammate's inbox but <i>subscribe</i> only its own leaf — provable isolation (a member can't read peers'
+    mail, reach another team, or another tenant).</p>
+    <div class="files"><code>pkg/teammailbox</code> · invoker <code>kind=teammate</code></div>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">P3</span> Coordination controllers</h3>
+    <p>Generator→verifier convergence loop that <b>always terminates</b> (returns the best attempt on
+    non-convergence — the #1 multi-agent failure mode). <code>BudgetGuard</code> enforces the team-wide
+    ceiling field-wise; <code>WidthLimiter</code> caps concurrent members.</p>
+    <div class="files"><code>pkg/turnmodel/team</code> · <code>ConvergenceSpec</code></div>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">P4</span> Shared workspace + 3-way merge</h3>
+    <p>One shared AgentFS volume across members. <code>ThreeWayMerge</code> reconciles two member branches
+    against their base per file: clean merges apply, a divergent edit is a recorded <b>conflict</b> — turning
+    the "two teammates, one file" risk into an enforced merge.</p>
+    <div class="files"><code>SharedWorkspaceSpec</code> · <code>team.ThreeWayMerge</code></div>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">P5</span> Bus + plan-approval + hooks</h3>
+    <p>Topic pub/sub (<code>kind=teambus</code>) for emergent workflows. Plan-approval <b>reuses M5</b>:
+    <code>CoordinatorDecision</code> lets the coordinator (not just a human) approve a member's gated run.
+    Team hooks → allow / veto / requeue.</p>
+    <div class="files"><code>teammailbox</code> Bus · <code>team.CoordinatorDecision</code> · <code>team.EvaluateHooks</code></div>
+  </div>
+</div>
+
+<h2 id="use">How to use it</h2>
+<h3>1 · Declare an <span class="pill">AgentTeam</span></h3>
+<p>A team names a loop-mode <b>lead</b> (coordinator) and its <b>members</b> (each a same-namespace Agent),
+picks a coordination <b>pattern</b>, and carries a team-wide <b>budget</b> ceiling.</p>
+<pre><span class="k">apiVersion:</span> <span class="s">runtime.agents.smol-agents.ai/v1</span>
+<span class="k">kind:</span> <span class="s">AgentTeam</span>
+<span class="k">metadata:</span>
+  <span class="k">name:</span> <span class="s">research-squad</span>
+  <span class="k">namespace:</span> <span class="s">tenant-a</span>
+<span class="k">spec:</span>
+  <span class="k">lead:</span> <span class="s">coordinator</span>            <span class="c"># loop-mode coordinator Agent (same namespace)</span>
+  <span class="k">pattern:</span> <span class="s">generator-verifier</span>  <span class="c"># orchestrator | generator-verifier | team | bus | shared-state</span>
+  <span class="k">members:</span>
+    - { <span class="k">name:</span> <span class="s">generator</span>, <span class="k">agentRef:</span> <span class="s">writer-agent</span> }
+    - { <span class="k">name:</span> <span class="s">verifier</span>,  <span class="k">agentRef:</span> <span class="s">critic-agent</span>, <span class="k">role:</span> <span class="s">critic</span> }
+  <span class="k">maxMembers:</span> <span class="n">4</span>                  <span class="c"># width cap (the A2A MaxDepth analog)</span>
+  <span class="k">budget:</span>                       <span class="c"># TEAM-WIDE hard ceiling; member usage rolls up field-wise</span>
+    <span class="k">maxSteps:</span> <span class="n">200</span>
+    <span class="k">maxTokens:</span> <span class="n">1000000</span>
+    <span class="k">maxWallClockSeconds:</span> <span class="n">1800</span>
+    <span class="k">maxToolCalls:</span> <span class="n">100</span>
+  <span class="k">convergence:</span>                  <span class="c"># MANDATORY for generator-verifier / bus / shared-state</span>
+    <span class="k">maxIterations:</span> <span class="n">5</span>
+    <span class="k">criteria:</span> <span class="s">"every claim cites a primary source"</span>
+    <span class="k">timeBudgetSeconds:</span> <span class="n">600</span>
+  <span class="k">sharedWorkspace:</span>              <span class="c"># optional blackboard</span>
+    <span class="k">sizeGiB:</span> <span class="n">5</span>
+    <span class="k">conflictMode:</span> <span class="s">branch-merge</span>   <span class="c"># shared-rw (default) | branch-merge (3-way merge)</span></pre>
+
+<h3>2 · Give members team tools</h3>
+<p>Members get coordination capability by referencing <span class="pill">Tool</span>s of the new kinds. Each
+tool's invoker is wired <b>only inside a team context</b> — fail-closed everywhere else, exactly like A2A.</p>
+<pre><span class="k">apiVersion:</span> <span class="s">runtime.agents.smol-agents.ai/v1</span>
+<span class="k">kind:</span> <span class="s">Tool</span>
+<span class="k">metadata:</span> { <span class="k">name:</span> <span class="s">tasks</span>, <span class="k">namespace:</span> <span class="s">tenant-a</span> }
+<span class="k">spec:</span>
+  <span class="k">kind:</span> <span class="s">task</span>          <span class="c"># also: teammate (mailbox), teambus (pub/sub)</span>
+  <span class="k">description:</span> <span class="s">"Claim and complete work on the team's shared list"</span>
+  <span class="k">inputSchema:</span> { <span class="k">type:</span> <span class="s">object</span> }
+  <span class="k">outputSchema:</span> { <span class="k">type:</span> <span class="s">object</span> }</pre>
+
+<h3>3 · The operator wires the team context (deployment-gated)</h3>
+<p>When the live coordinator spawns a member, the operator injects the team context as env, which the
+in-pod <code>Wire*Invoker</code> functions read to bind the NATS KV / mailbox / bus with the member's scoped
+credential:</p>
+<pre><span class="n">TEAM_NATS_URL</span>=nats://nats.tenant-a.svc:4222
+<span class="n">TEAM_NAMESPACE</span>=tenant-a
+<span class="n">TEAM_NAME</span>=research-squad
+<span class="n">TEAM_MEMBER</span>=generator          <span class="c"># this member's name → claim owner, mailbox inbox, From</span>
+<span class="n">TEAM_NATS_CREDS</span>=/var/run/team/nats.creds   <span class="c"># per-member, scoped by the operator</span></pre>
+
+<h2 id="tools">Team tools in the loop</h2>
+<p>An agent calls these like any tool — the model emits a tool call with a JSON arg; the invoker dispatches
+on <code>op</code> and returns structured output.</p>
+
+<div class="grid three">
+  <div class="card">
+    <h3><span class="tag p">task</span></h3>
+    <pre style="margin:0"><span class="k">op</span>: list | claim |
+    complete | create
+
+<span class="c">// claim a unit of work</span>
+{ <span class="k">"op"</span>:<span class="s">"claim"</span>,
+  <span class="k">"id"</span>:<span class="s">"task-3"</span> }
+→ { <span class="k">"ok"</span>:true,
+    <span class="k">"task"</span>:{…} }</pre>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">teammate</span></h3>
+    <pre style="margin:0"><span class="k">op</span>: send | receive
+
+<span class="c">// message a peer by name</span>
+{ <span class="k">"op"</span>:<span class="s">"send"</span>,
+  <span class="k">"to"</span>:<span class="s">"verifier"</span>,
+  <span class="k">"message"</span>:<span class="s">"draft ready"</span> }
+→ { <span class="k">"ok"</span>:true }</pre>
+  </div>
+  <div class="card">
+    <h3><span class="tag p">teambus</span></h3>
+    <pre style="margin:0"><span class="k">op</span>: publish |
+    subscribe | receive
+
+<span class="c">// emit an event</span>
+{ <span class="k">"op"</span>:<span class="s">"publish"</span>,
+  <span class="k">"topic"</span>:<span class="s">"findings"</span>,
+  <span class="k">"body"</span>:<span class="s">"found X"</span> }</pre>
+  </div>
+</div>
+
+<h3>The generator-verifier loop (P3)</h3>
+<div class="flow">
+  <div class="box"><div class="t">① generate</div><div class="d">coordinator delegates to the <code>generator</code> member (A2A)</div></div>
+  <div class="arrow">→</div>
+  <div class="box"><div class="t">② verify</div><div class="d">delegate the output to the <code>verifier</code> with explicit <code>criteria</code></div></div>
+  <div class="arrow">→</div>
+  <div class="box"><div class="t">③ accept?</div><div class="d">accepted → done; else feed back &amp; repeat</div></div>
+  <div class="arrow">↺</div>
+  <div class="box"><div class="t">④ stop</div><div class="d">maxIterations / time / team-budget → return <b>best</b> attempt</div></div>
+</div>
+
+<h2 id="gov">Governance — enforced, not advisory</h2>
+<p>This is what a local agent-team tool cannot do. Everything below is enforced by the operator / broker / NATS:</p>
+<ul class="clean">
+  <li><b>Team budget</b> — a hard ceiling; member usage rolls up <b>field-wise</b> (steps/tokens/toolCalls/wallclock, never <code>Usage.Add</code>). A team cannot out-spend it. Cost stays milli-USD, observability-only.</li>
+  <li><b>Per-member isolation</b> — every member is still a normal run/session: kata microVM in prod, default-deny egress floor, secretless broker, hardened PSA. A team adds <b>no</b> weaker posture.</li>
+  <li><b>Mailbox/task ACLs</b> — a per-member NATS JWT: publish in-team, subscribe only your own inbox. Cross-member / cross-team / cross-tenant access is <i>structurally impossible</i>.</li>
+  <li><b>Subtree GC</b> — the team OwnerReference owns members (literal team UID, not the downward-API pod uid — the A2A child-GC bug); deleting the team reclaims the whole tree.</li>
+  <li><b>Fan-out ceilings</b> — <code>maxMembers</code> width + per-member <code>maxConcurrent</code> generalize the A2A recursion guard.</li>
+  <li><b>Mixed-trust teams</b> — members are independently sandboxed + ACL'd, so a team may include a lower-trust member (e.g. an untrusted "devil's advocate") whose egress/tools are tighter than the lead's.</li>
+</ul>
+
+<div class="callout warn" id="gated">
+  <h3>⚙ Deployment-gated (honest status)</h3>
+  <p style="margin:0">P0–P5 are <b>code-complete + unit-tested</b> (both modules green under <code>-race</code>;
+  the CRD is server-dry-run-validated) — the same bar as the M1–M5 milestone set. <b>Not yet live-verified:</b>
+  the operator-side <i>live coordinator</i> — spawning member runs/sessions with the team-context env +
+  OwnerReference, minting per-member NATS creds + a team account, and kopia-tree extraction to feed
+  <code>ThreeWayMerge</code> (AgentFS is opaque-blob snapshot/restore today). The mechanisms are written and
+  covered; the live cluster e2e is the follow-up.</p>
+</div>
+
+<footer>
+  <p><b>Source map</b> &nbsp;·&nbsp;
+    types <code>pkg/agentmodel/v1/agentteam.go</code> &nbsp;·&nbsp;
+    controller <code>operator/internal/controllers/agentmodel/agentteam_controller.go</code> &nbsp;·&nbsp;
+    task list <code>pkg/teamtask</code> &nbsp;·&nbsp;
+    mailbox + bus <code>pkg/teammailbox</code> &nbsp;·&nbsp;
+    coordination <code>pkg/turnmodel/team</code> &nbsp;·&nbsp;
+    invokers <code>pkg/agentruntime/invokers/invoker_{task,teammate,teambus}.go</code></p>
+  <p>Design spec: <code>docs/design/multi-agent-orchestration.md</code> &nbsp;·&nbsp;
+     tracked in beads <code>knative-agents-l5d</code> (OQ + P0–P5, all closed) &nbsp;·&nbsp;
+     merged in PR #3 (<code>3cd7119</code>).</p>
+  <p style="color:#6b7785">smol-agents — Kubernetes-native agent platform. Generated for the multi-agent orchestration milestone.</p>
+</footer>
+
+</div>
+</body>
+</html>
