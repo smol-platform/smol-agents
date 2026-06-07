@@ -1468,20 +1468,30 @@ func runAgentSession(t *testing.T, env Env) {
 	// SandboxNotReady gate and never reaches the placement gate this scenario
 	// asserts. Register a bare kata-fc RuntimeClass so sandbox resolution passes;
 	// placement then fails closed with NoKVMCapacity (no AgentNodePool).
-	// Cluster-scoped + removed on exit (fresh context, runs even on t.Fatalf) so
-	// the following scenarios see the cluster's natural kataless state.
-	if err := env.Apply(ctx, []byte(`apiVersion: node.k8s.io/v1
+	//
+	// CRITICAL: only register (and later remove) the fixture when kata-fc is
+	// ABSENT. On a real kata cluster (L2) kata-fc already exists as a SHARED
+	// cluster-scoped resource we did NOT create — deleting it on exit would break
+	// every later scenario that needs kata isolation (A2A, AGENTSESSION-RUN).
+	// Never delete a RuntimeClass we didn't create.
+	rcOut, _ := env.Exec(ctx, ExecTarget{}, "get", "runtimeclass", "kata-fc", "--ignore-not-found", "-o", "name")
+	if strings.TrimSpace(string(rcOut)) == "" {
+		if err := env.Apply(ctx, []byte(`apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata: { name: kata-fc }
 handler: kata-fc
 `)); err != nil {
-		t.Fatalf("register kata-fc RuntimeClass fixture: %v", err)
+			t.Fatalf("register kata-fc RuntimeClass fixture: %v", err)
+		}
+		// Cluster-scoped + removed on exit (fresh context, runs even on t.Fatalf)
+		// so a kataless cluster returns to its natural state. Guarded above so we
+		// only ever remove the fixture WE registered.
+		defer func() {
+			dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer dcancel()
+			_, _ = env.Exec(dctx, ExecTarget{}, "delete", "runtimeclass", "kata-fc", "--ignore-not-found")
+		}()
 	}
-	defer func() {
-		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer dcancel()
-		_, _ = env.Exec(dctx, ExecTarget{}, "delete", "runtimeclass", "kata-fc", "--ignore-not-found")
-	}()
 
 	// Single-key secret: resolveSecret with an empty key returns the value only
 	// when the secret has exactly one data key (gatherRunSecrets/readSecretKey).
