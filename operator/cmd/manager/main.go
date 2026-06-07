@@ -227,6 +227,10 @@ func main() {
 			setupLog.Error(err, "unable to register AgentTeam webhook")
 			os.Exit(1)
 		}
+		if err := webhooks.SetupToolWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register Tool webhook")
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

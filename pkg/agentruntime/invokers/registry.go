@@ -58,6 +58,40 @@ func WireAgentInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.Tool
 	return base
 }
 
+// WireFanoutInvoker best-effort-adds the kind=fanout (Send map-reduce) invoker
+// under the same in-cluster gate as WireAgentInvoker. It additionally reads
+// FANOUT_MAX_WIDTH (the operator's hard per-call child cap); if that env is
+// absent the invoker is wired with MaxWidth=0, which fail-closes every call —
+// so fan-out is never unbounded. Shares the A2A depth env (a fanned child is a
+// delegation just like an A2A child). Mutates and returns base for chaining.
+func WireFanoutInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.ToolKind]agentruntime.ToolInvoker {
+	ns := os.Getenv("POD_NAMESPACE")
+	if ns == "" {
+		return base
+	}
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return base
+	}
+	kc, err := crclient.New(cfg, crclient.Options{})
+	if err != nil {
+		return base
+	}
+	depth, _ := strconv.Atoi(os.Getenv("A2A_DEPTH"))
+	maxDepth, _ := strconv.Atoi(os.Getenv("A2A_MAX_DEPTH"))
+	maxWidth, _ := strconv.Atoi(os.Getenv("FANOUT_MAX_WIDTH")) // 0 → fail-closed (no fan-out)
+	base[v1.ToolFanout] = &FanoutInvoker{
+		Client:       kc,
+		Namespace:    ns,
+		ParentRun:    os.Getenv("RUN_NAME"),
+		ParentRunUID: os.Getenv("AGENT_RUN_UID"),
+		Depth:        depth,
+		MaxDepth:     maxDepth,
+		MaxWidth:     maxWidth,
+	}
+	return base
+}
+
 // WireTaskInvoker best-effort-adds the kind=task (team shared task list) invoker
 // when the pod carries a team context: TEAM_NATS_URL + TEAM_NAMESPACE +
 // TEAM_NAME (injected by the operator when it spawns a team member; P3). It binds

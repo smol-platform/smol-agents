@@ -234,3 +234,29 @@ webhooks:
         apiVersions: [v1]
         resources: [agentteams]
         operations: [CREATE, UPDATE]
+---
+# Tool self-validation (wires pure.ValidateTool): rejects a self-inconsistent Tool
+# at apply, including a kind=fanout tool with a bad ref/reduce/maxParallel. Self-
+# contained (no cluster lookups).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: smol-agents-operator-validating-tool
+  annotations:
+    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
+webhooks:
+  - name: validate.tool.runtime.agents.smol-agents.ai
+    sideEffects: None
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    timeoutSeconds: 5
+    clientConfig:
+      service:
+        name: smol-agents-operator-webhook
+        namespace: smol-agents-system
+        path: /validate-runtime-agents-smol-agents-ai-v1-tool
+    rules:
+      - apiGroups: [runtime.agents.smol-agents.ai]
+        apiVersions: [v1]
+        resources: [tools]
+        operations: [CREATE, UPDATE]

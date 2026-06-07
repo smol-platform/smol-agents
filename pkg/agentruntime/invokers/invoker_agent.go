@@ -103,72 +103,79 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 			return rt.Observation{}, fmt.Errorf("a2a: tool args are not valid JSON: %w", err)
 		}
 	}
-	spec := map[string]any{"agentRef": target, "input": input}
-	if mt := tool.Spec.Agent.MaxTokens; mt > 0 {
-		spec["budgetOverride"] = map[string]any{"maxTokens": mt}
+	child := buildChildRun(i.Namespace, i.ParentRun, i.ParentRunUID, target, i.Depth, input, tool.Spec.Agent.MaxTokens)
+	obs, err := spawnAndPoll(ctx, i.Client, i.Namespace, child, i.Poll)
+	if err != nil {
+		return rt.Observation{}, fmt.Errorf("a2a: %w", err)
 	}
+	return obs, nil
+}
 
+// buildChildRun constructs (but does not create) a child AgentRun: agentRef +
+// input, the parent/depth labels, an optional maxTokens budgetOverride, and the
+// GC OwnerReference to the parent (the LITERAL parent run UID — never the pod's
+// downward-API metadata.uid, which is the pod uid). Shared by the A2A and fanout
+// invokers.
+func buildChildRun(ns, parentRun, parentRunUID, target string, depth int, input any, maxTokens int64) *unstructured.Unstructured {
+	spec := map[string]any{"agentRef": target, "input": input}
+	if maxTokens > 0 {
+		spec["budgetOverride"] = map[string]any{"maxTokens": maxTokens}
+	}
 	child := &unstructured.Unstructured{Object: map[string]any{"spec": spec}}
 	child.SetGroupVersionKind(agentRunGVK)
-	child.SetNamespace(i.Namespace)
-	child.SetGenerateName(childPrefix(i.ParentRun, target))
+	child.SetNamespace(ns)
+	child.SetGenerateName(childPrefix(parentRun, target))
 	child.SetLabels(map[string]string{
-		ParentRunLabel: i.ParentRun,
-		DepthLabel:     strconv.Itoa(i.Depth + 1),
+		ParentRunLabel: parentRun,
+		DepthLabel:     strconv.Itoa(depth + 1),
 	})
-	// OwnerReference the child to this parent run (same namespace) so deleting the
-	// parent garbage-collects the subtree. GC-only: not a controller ref (the
-	// child has its own reconciler).
-	if i.ParentRunUID != "" && i.ParentRun != "" {
+	if parentRunUID != "" && parentRun != "" {
 		child.SetOwnerReferences([]metav1.OwnerReference{{
 			APIVersion: agentRunGVK.GroupVersion().String(),
 			Kind:       agentRunGVK.Kind,
-			Name:       i.ParentRun,
-			UID:        types.UID(i.ParentRunUID),
+			Name:       parentRun,
+			UID:        types.UID(parentRunUID),
 		}})
 	}
+	return child
+}
 
-	if err := i.Client.Create(ctx, child); err != nil {
-		return rt.Observation{}, fmt.Errorf("a2a: create child AgentRun for %q: %w", target, err)
+// spawnAndPoll creates child and blocks until it reaches a terminal state,
+// returning its folded Observation (output + field-wise usage roll-up). On
+// ctx cancellation it best-effort deletes the child (an OwnerReference only GCs
+// when the parent OBJECT is deleted) and on persistent NotFound it fails fast
+// rather than polling a vanished child to the deadline. Shared by the A2A and
+// fanout invokers.
+func spawnAndPoll(ctx context.Context, c client.Client, ns string, child *unstructured.Unstructured, poll time.Duration) (rt.Observation, error) {
+	if err := c.Create(ctx, child); err != nil {
+		return rt.Observation{}, fmt.Errorf("create child AgentRun: %w", err)
 	}
 	name := child.GetName()
-
-	poll := i.Poll
 	if poll <= 0 {
 		poll = 2 * time.Second
 	}
 	start := timeNow()
 	tick := time.NewTimer(0)
 	defer tick.Stop()
-	// A child that 404s right after Create is almost always brief apiserver lag;
-	// tolerate a few consecutive misses. PERSISTENT NotFound means the child was
-	// deleted out-of-band (parent GC, manual delete) before reaching a terminal
-	// state — fail fast instead of polling until the run deadline (the bug this
-	// guard closes). Any successful Get resets the counter.
 	const maxChildGone = 3
 	gone := 0
 	for {
 		select {
 		case <-ctx.Done():
-			// The parent ctx is cancelled (run cancelled / pod SIGTERM). An
-			// OwnerReference only GCs the child when the parent OBJECT is deleted;
-			// on cancellation the object lives on, so best-effort delete the child
-			// here (fresh ctx) to avoid a leaked running child.
 			delCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_ = i.Client.Delete(delCtx, child)
+			_ = c.Delete(delCtx, child)
 			cancel()
-			return rt.Observation{}, fmt.Errorf("a2a: waiting on child %s: %w", name, ctx.Err())
+			return rt.Observation{}, fmt.Errorf("waiting on child %s: %w", name, ctx.Err())
 		case <-tick.C:
 		}
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(agentRunGVK)
-		if err := i.Client.Get(ctx, types.NamespacedName{Namespace: i.Namespace, Name: name}, got); err != nil {
+		if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, got); err != nil {
 			if apierrors.IsNotFound(err) {
 				if gone++; gone >= maxChildGone {
-					return rt.Observation{}, fmt.Errorf("a2a: child %s vanished before reaching a terminal state (deleted out-of-band?)", name)
+					return rt.Observation{}, fmt.Errorf("child %s vanished before reaching a terminal state (deleted out-of-band?)", name)
 				}
 			}
-			// Transient error (or within the post-create grace window): keep polling.
 			tick.Reset(poll)
 			continue
 		}
@@ -181,14 +188,12 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 			if err != nil {
 				raw = []byte("null")
 			}
-			// Roll the child's usage up into the parent (field-wise): the parent
-			// "spent" the child's tokens + tool-calls by delegating to it.
 			tokens, _, _ := unstructured.NestedInt64(got.Object, "status", "usage", "tokens")
 			calls, _, _ := unstructured.NestedInt64(got.Object, "status", "usage", "toolCalls")
 			return rt.Observation{Output: raw, DurationMs: msSince(start), Tokens: tokens, ToolCalls: int32(calls)}, nil
 		case v1.PhaseFailed, v1.PhaseCancelled, v1.PhaseExpired:
 			reason, _, _ := unstructured.NestedString(got.Object, "status", "reason")
-			return rt.Observation{}, fmt.Errorf("a2a: child %s ended %s (%s)", name, state, reason)
+			return rt.Observation{}, fmt.Errorf("child %s ended %s (%s)", name, state, reason)
 		}
 		tick.Reset(poll)
 	}
