@@ -151,6 +151,10 @@ func ValidateTool(t Tool) error {
 		// The peer mailbox tool (P2) needs no extra spec — the op (send|receive)
 		// + args are supplied at call time. The TeammateInvoker is wired only
 		// inside a team context (WireTeammateInvoker).
+	case ToolTeamBus:
+		// The team bus tool (P5) needs no extra spec — the op
+		// (publish|subscribe|receive) + args are supplied at call time. The
+		// TeamBusInvoker is wired only inside a team context (WireTeamBusInvoker).
 	}
 	return errors.Join(errs...)
 }

@@ -144,12 +144,17 @@ const (
 	// inbox. Wired only inside a team context (WireTeammateInvoker); a per-member
 	// NATS credential makes "read only your own inbox" the enforced boundary.
 	ToolTeammate ToolKind = "teammate"
+	// ToolTeamBus is the team message bus (multi-agent orchestration P5): the
+	// TeamBusInvoker lets a member publish/subscribe team topics for emergent
+	// pub/sub workflows. Wired only inside a team context (WireTeamBusInvoker);
+	// the per-member bus credential confines it to the team's bus subtree.
+	ToolTeamBus ToolKind = "teambus"
 )
 
 // Valid returns true if k is a known ToolKind.
 func (k ToolKind) Valid() bool {
 	switch k {
-	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask, ToolTeammate:
+	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask, ToolTeammate, ToolTeamBus:
 		return true
 	}
 	return false
@@ -162,7 +167,7 @@ func (k ToolKind) Valid() bool {
 // is rejected for loop-mode agents — fail-closed (D3) rather than silently
 // no-op'ing the call.
 func SupportedLoopToolKinds() map[ToolKind]bool {
-	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true, ToolTeammate: true}
+	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true, ToolTeammate: true, ToolTeamBus: true}
 }
 
 // MCPSpec describes an MCP transport target. R-AM-TOOL-3.

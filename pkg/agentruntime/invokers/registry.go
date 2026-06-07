@@ -114,3 +114,28 @@ func WireTeammateInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.T
 	base[v1.ToolTeammate] = &TeammateInvoker{Mailbox: mb, Self: self}
 	return base
 }
+
+// WireTeamBusInvoker best-effort-adds the kind=teambus (team message bus) invoker
+// when the pod carries a team context: TEAM_NATS_URL + TEAM_NAMESPACE +
+// TEAM_NAME + TEAM_MEMBER. It connects with the per-member bus credential
+// (TEAM_NATS_CREDS), confined to the team's bus subtree. On any failure the kind
+// stays ABSENT so the executor fail-closes. Mutates and returns base.
+func WireTeamBusInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.ToolKind]agentruntime.ToolInvoker {
+	url := os.Getenv("TEAM_NATS_URL")
+	ns := os.Getenv("TEAM_NAMESPACE")
+	team := os.Getenv("TEAM_NAME")
+	self := os.Getenv("TEAM_MEMBER")
+	if url == "" || ns == "" || team == "" || self == "" {
+		return base
+	}
+	var opts []teammailbox.NATSMailboxOption
+	if creds := os.Getenv("TEAM_NATS_CREDS"); creds != "" {
+		opts = append(opts, teammailbox.WithCredentials(creds))
+	}
+	bus, err := teammailbox.NewNATSBus(url, ns, team, opts...)
+	if err != nil {
+		return base // fail-closed: no bus → no teambus invoker
+	}
+	base[v1.ToolTeamBus] = &TeamBusInvoker{Bus: bus, Self: self}
+	return base
+}
