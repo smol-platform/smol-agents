@@ -1459,6 +1459,30 @@ func runAgentSession(t *testing.T, env Env) {
 		_, _ = env.Exec(ctx, ExecTarget{}, "delete", d[0], d[1], "-n", ns, "--ignore-not-found")
 	}
 
+	// The session defaults to the kata-fc runtimeClass (the operator's
+	// fail-closed default; the L1 webhook overlay carries no runc override). On
+	// a kataless kind cluster the operator never registers the kata-fc
+	// RuntimeClass — the SmolAgent sandbox feature only provisions it alongside a
+	// matching AgentNodePool, and without a pool it returns NoKVMCapacity / falls
+	// back to gVisor. So without this fixture the session stops at the earlier
+	// SandboxNotReady gate and never reaches the placement gate this scenario
+	// asserts. Register a bare kata-fc RuntimeClass so sandbox resolution passes;
+	// placement then fails closed with NoKVMCapacity (no AgentNodePool).
+	// Cluster-scoped + removed on exit (fresh context, runs even on t.Fatalf) so
+	// the following scenarios see the cluster's natural kataless state.
+	if err := env.Apply(ctx, []byte(`apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata: { name: kata-fc }
+handler: kata-fc
+`)); err != nil {
+		t.Fatalf("register kata-fc RuntimeClass fixture: %v", err)
+	}
+	defer func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer dcancel()
+		_, _ = env.Exec(dctx, ExecTarget{}, "delete", "runtimeclass", "kata-fc", "--ignore-not-found")
+	}()
+
 	// Single-key secret: resolveSecret with an empty key returns the value only
 	// when the secret has exactly one data key (gatherRunSecrets/readSecretKey).
 	setup := []byte(`apiVersion: v1
