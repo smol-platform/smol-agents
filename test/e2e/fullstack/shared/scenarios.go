@@ -61,6 +61,8 @@ func All() []Scenario {
 		agentSession,
 		agentSessionRunning,
 		a2aComposition,
+		claudeHarnessLive,
+		codexHarnessLive,
 	}
 }
 
@@ -1838,6 +1840,205 @@ spec: { agentRef: e2e-a2a-parent, input: {} }
 		t.Fatalf("parent A2A run did not Complete (%s): %v", st, err)
 	}
 	t.Log("M3: parent loop pod emitted agent-call -> child AgentRun created (parent-run label) -> parent Completed folding child output")
+}
+
+// claudeHarnessLive (R-E2E-SCN-CLAUDE-LIVE) drives the REAL claude-code harness
+// against a live LLM (z.ai's Anthropic-compatible endpoint). It applies a
+// mode=harness Agent (kind=claude-code) on a kata-fc node — kata is mandatory for
+// approvalMode=never, which becomes --dangerously-skip-permissions — whose
+// ANTHROPIC_API_KEY is broker-leased from a pre-created single-key secret and
+// ANTHROPIC_BASE_URL points at z.ai. It then runs an AgentRun and asserts the run
+// Completes with a non-empty Output and honest (non-zero) token accounting,
+// proving the operator resolves the per-kind harness image, the executor leases +
+// injects the secret env, and the subprocess harness reaches a live model and
+// reports usage. The driver pre-creates namespace + secret (setupLiveLLMSecrets);
+// requires CapLiveLLM so it self-skips without injected keys.
+var claudeHarnessLive = Scenario{
+	ID:       "R-E2E-SCN-CLAUDE-LIVE",
+	Name:     "claude-code-harness-live",
+	Requires: CapKubernetes | CapKata | CapLiveLLM,
+	Run:      runClaudeHarnessLive,
+}
+
+func runClaudeHarnessLive(t *testing.T, env Env) {
+	t.Helper()
+	const ns, pool, agent, run = "e2e-live-claude", "e2e-live-claude-pool", "e2e-live-claude-agent", "e2e-live-claude-run"
+	// claude-code harness Agent: ANTHROPIC_API_KEY is broker-leased from the
+	// driver-created single-key secret zai-anthropic-key; ANTHROPIC_BASE_URL is a
+	// literal pointing at z.ai. approvalMode=never (-> --dangerously-skip-permissions,
+	// admission-allowed only on the kata-fc microVM we place it on). outputFormat=json
+	// so the harness can parse token accounting.
+	agentYAML := fmt.Sprintf(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: %s, namespace: %s }
+spec:
+  mode: harness
+  harness:
+    kind: claude-code
+    env:
+      - { name: ANTHROPIC_API_KEY, secretRef: { secretName: zai-anthropic-key } }
+      - { name: ANTHROPIC_BASE_URL, value: "https://api.z.ai/api/anthropic" }
+      - { name: ANTHROPIC_MODEL, value: "glm-4.6" }
+      - { name: ANTHROPIC_SMALL_FAST_MODEL, value: "glm-4.6" }
+    cli:
+      approvalMode: never
+      outputFormat: json
+      allowedTools: [Bash, Read, Write]
+  instructions: "You are a terse assistant. Follow the user's instruction exactly."
+  sandbox: { runtimeClass: kata-fc }
+  budget: { maxSteps: 1, maxTokens: 4096, maxWallClockSeconds: 300, maxToolCalls: 10 }
+`, agent, ns)
+	runHarnessLive(t, env, ns, pool, agent, run, agentYAML, "Reply with exactly PONG.")
+}
+
+// codexHarnessLive (R-E2E-SCN-CODEX-LIVE) drives the REAL codex harness against
+// the live OpenAI API. It applies a mode=harness Agent (kind=codex) on a kata-fc
+// node — kata is mandatory for approvalMode=never — whose CODEX_API_KEY is
+// broker-leased from a pre-created single-key secret; cli.codexBaseURL makes the
+// operator render ~/.codex/config.toml (base_url + wire_api=responses +
+// env_key=CODEX_API_KEY). It runs an AgentRun and asserts Completion with a
+// non-empty Output and non-zero tokens, proving the codex harness image resolves,
+// the secret env is leased + injected, the config.toml routes codex at the
+// configured provider, and a live model is reached. The driver pre-creates the
+// namespace + secret; requires CapLiveLLM so it self-skips without injected keys.
+var codexHarnessLive = Scenario{
+	ID:       "R-E2E-SCN-CODEX-LIVE",
+	Name:     "codex-harness-live",
+	Requires: CapKubernetes | CapKata | CapLiveLLM,
+	Run:      runCodexHarnessLive,
+}
+
+func runCodexHarnessLive(t *testing.T, env Env) {
+	t.Helper()
+	const ns, pool, agent, run = "e2e-live-codex", "e2e-live-codex-pool", "e2e-live-codex-agent", "e2e-live-codex-run"
+	// codex harness Agent: CODEX_API_KEY broker-leased from the driver-created
+	// single-key secret openai-codex-key; codexBaseURL+codexModel drive the
+	// operator-rendered config.toml. approvalMode=never (kata-only). outputFormat=json
+	// for token accounting.
+	agentYAML := fmt.Sprintf(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata: { name: %s, namespace: %s }
+spec:
+  mode: harness
+  harness:
+    kind: codex
+    env:
+      - { name: CODEX_API_KEY, secretRef: { secretName: openai-codex-key } }
+    cli:
+      approvalMode: never
+      outputFormat: json
+      codexBaseURL: "https://api.openai.com/v1"
+      codexModel: "gpt-4o-mini"
+  instructions: "You are a terse assistant. Follow the user's instruction exactly."
+  sandbox: { runtimeClass: kata-fc }
+  budget: { maxSteps: 1, maxTokens: 2048, maxWallClockSeconds: 300, maxToolCalls: 5 }
+`, agent, ns)
+	runHarnessLive(t, env, ns, pool, agent, run, agentYAML, "What is 2+2? Reply with only the number.")
+}
+
+// runHarnessLive is the shared body for the live-harness scenarios: it places a
+// kata-fc node (AgentNodePool + node label), applies the per-kind harness Agent,
+// waits for it to reach phase=Ready, runs an AgentRun with the given prompt, and
+// asserts the run Completes with non-empty Output and non-zero token accounting.
+// The namespace + provider secret are pre-created by the L2 driver
+// (setupLiveLLMSecrets) — this never (re-)creates the secret. No secret value is
+// ever logged.
+func runHarnessLive(t *testing.T, env Env, ns, pool, agent, run, agentYAML, prompt string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	// Idempotent re-run on a reused cluster: drop any prior run/agent/pool.
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentrun", run, "-n", ns, "--ignore-not-found")
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agent", agent, "-n", ns, "--ignore-not-found")
+	// ResolvePlacement picks the lowest-named matching AgentNodePool, so multiple
+	// kata pools make a kata agent resolve to the WRONG pool (≠ the node label this
+	// scenario sets) and the run pod goes unschedulable. Ensure ONLY this scenario's
+	// pool exists. Safe: the live-harness scenarios run last in the suite.
+	_, _ = env.Exec(ctx, ExecTarget{}, "delete", "agentnodepool", "--all", "--ignore-not-found")
+
+	// kata placement (single-node L2): a kata-fc AgentNodePool + the pool label on
+	// the node so the harness run pod schedules (mirrors runA2AComposition).
+	if err := env.Apply(ctx, []byte(fmt.Sprintf(`apiVersion: agents.smol-agents.ai/v1
+kind: AgentNodePool
+metadata: { name: %s }
+spec: { isolation: kata-fc, arch: arm64, bootstrap: { mode: UserData, distro: al2023 } }
+`, pool))); err != nil {
+		t.Fatalf("apply AgentNodePool: %v", err)
+	}
+	nodeOut, err := env.Exec(ctx, ExecTarget{}, "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}")
+	node := strings.TrimSpace(string(nodeOut))
+	if err != nil || node == "" {
+		t.Fatalf("get node: %v (%q)", err, nodeOut)
+	}
+	if _, err := env.Exec(ctx, ExecTarget{}, "label", "node", node, "agents.smol-agents.ai/pool="+pool, "--overwrite"); err != nil {
+		t.Fatalf("label node: %v", err)
+	}
+
+	// Apply the harness Agent (NS + secret are pre-created by the driver).
+	if err := env.Apply(ctx, []byte(agentYAML)); err != nil {
+		t.Fatalf("apply harness Agent: %v", err)
+	}
+
+	// The Agent reconciler validates the harness spec + ensures the per-agent SA;
+	// a run pod won't schedule until the Agent is Ready.
+	if err := env.WaitFor(ctx, "harness-agent-ready", 60*time.Second, func(ctx context.Context) bool {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", agent, "-o", "jsonpath={.status.phase}")
+		return strings.TrimSpace(string(ph)) == "Ready"
+	}); err != nil {
+		ph, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", agent, "-o", "jsonpath={.status.phase}")
+		rs, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agent", agent, "-o", "jsonpath={.status.reason}")
+		t.Fatalf("harness Agent never reached Ready (observed %q/%q): %v",
+			strings.TrimSpace(string(ph)), strings.TrimSpace(string(rs)), err)
+	}
+
+	// Run the harness once.
+	if err := env.Apply(ctx, []byte(fmt.Sprintf(`apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentRun
+metadata: { name: %s, namespace: %s }
+spec:
+  agentRef: %s
+  input: { prompt: %q }
+`, run, ns, agent, prompt))); err != nil {
+		t.Fatalf("apply AgentRun: %v", err)
+	}
+
+	// Wait for a terminal state. A live model + image pull on kata can take a few
+	// minutes; give it 6m.
+	terminal := func(s string) bool {
+		switch s {
+		case "Completed", "Failed", "Expired":
+			return true
+		}
+		return false
+	}
+	if err := env.WaitFor(ctx, "harness-run-terminal", 6*time.Minute, func(ctx context.Context) bool {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+		return terminal(strings.TrimSpace(string(st)))
+	}); err != nil {
+		st, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+		pods, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "pods", "-o", "wide")
+		t.Fatalf("AgentRun never reached a terminal state (observed %q): %v\npods:\n%s",
+			strings.TrimSpace(string(st)), err, pods)
+	}
+
+	state, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.state}")
+	if got := strings.TrimSpace(string(state)); got != "Completed" {
+		tr, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.terminationReason}")
+		t.Fatalf("AgentRun state=%q, want Completed (terminationReason=%q)", got, strings.TrimSpace(string(tr)))
+	}
+
+	out, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.output}")
+	if o := strings.TrimSpace(string(out)); o == "" || o == "null" {
+		t.Errorf("AgentRun .status.output is empty/null, want non-empty")
+	}
+
+	// Honest token accounting (json outputFormat): tokens must be present + non-zero.
+	tokens, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", ns, "agentrun", run, "-o", "jsonpath={.status.usage.tokens}")
+	if tk := strings.TrimSpace(string(tokens)); tk == "" || tk == "0" {
+		t.Errorf("AgentRun .status.usage.tokens=%q, want non-empty + non-zero (json outputFormat)", tk)
+	}
+	t.Logf("live harness %s Completed: output non-empty, usage.tokens=%s", agent, strings.TrimSpace(string(tokens)))
 }
 
 // indent prefixes every line of s with pad (for embedding a JSON blob under a

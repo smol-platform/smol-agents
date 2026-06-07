@@ -43,6 +43,11 @@ const (
 	// cmd/spiffe-probe and parse their logs. L1 + L2 (anything
 	// with kubectl + a working node).
 	CapInClusterProbe
+
+	// CapLiveLLM — the driver has injected real provider API keys so
+	// harness scenarios can hit live LLM endpoints (api.z.ai /
+	// api.openai.com). Opt-in via L2_LIVE_LLM=1. L2 only.
+	CapLiveLLM
 )
 
 var capNames = map[Caps]string{
@@ -54,6 +59,7 @@ var capNames = map[Caps]string{
 	CapSPIRE:          "spire",
 	CapNetworkEgress:  "network-egress",
 	CapInClusterProbe: "in-cluster-probe",
+	CapLiveLLM:        "live-llm",
 }
 
 // Has reports whether `c` covers every capability in `need`.

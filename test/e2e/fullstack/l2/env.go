@@ -5,6 +5,7 @@ package l2
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ type l2Env struct {
 	ssm        ssmAPI
 	instanceID string
 	publicIP   string
+	runID      string
 }
 
 func (c *Cluster) AsEnv() shared.Env {
@@ -42,6 +44,7 @@ func (c *Cluster) AsEnv() shared.Env {
 		ssm:        c.ssmc,
 		instanceID: c.InstanceID,
 		publicIP:   c.PublicIP,
+		runID:      c.RunID,
 	}
 }
 
@@ -54,6 +57,12 @@ func (e *l2Env) Capabilities() shared.Caps {
 	// requiring CapWireGuard self-skip in shared.RunAll.
 	if e.publicIP != "" {
 		caps |= shared.CapWireGuard
+	}
+	// Live-LLM harness scenarios are opt-in: the driver must have
+	// injected real provider keys (setupLiveLLMSecrets) before they
+	// can run. Without the flag they self-skip in shared.RunAll.
+	if os.Getenv("L2_LIVE_LLM") == "1" {
+		caps |= shared.CapLiveLLM
 	}
 	return caps
 }

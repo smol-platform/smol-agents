@@ -61,6 +61,8 @@ images=(
   "spiffe-probe deploy/docker/spiffe-probe.Dockerfile    ."
   "ebpf-probe   deploy/docker/ebpf-probe.Dockerfile      ."
   "bottlerocket-bootstrap scripts/aws-l2/bottlerocket-bootstrap/Dockerfile scripts/aws-l2/bottlerocket-bootstrap"
+  "harness-claude-code deploy/docker/harness-claude-code.Dockerfile ."
+  "harness-codex deploy/docker/harness-codex.Dockerfile ."
 )
 
 for entry in "${images[@]}"; do

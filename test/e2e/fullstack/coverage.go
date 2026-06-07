@@ -12,19 +12,21 @@ package fullstack
 // relative to test/e2e/fullstack/.
 var Coverage = map[string]string{
 	// Scenarios — registered via shared.All(); body land per task.
-	"R-E2E-SCN-IDENT-1":    "shared.identityRotation",
-	"R-E2E-SCN-PROXY-TCP":  "shared.proxyTCP",
-	"R-E2E-SCN-PROXY-HTTP": "shared.proxyHTTP",
-	"R-E2E-SCN-EBPF-DROP":  "shared.ebpfDrop",
-	"R-E2E-SCN-EBPF-REDIR": "shared.ebpfRedirect",
-	"R-E2E-SCN-WG-CLIENT":  "shared.wgClient",
-	"R-E2E-SCN-AGENTRUN":   "shared.agentRun",
-	"R-E2E-SCN-CANCEL":     "shared.cancel",
-	"R-E2E-SCN-WEBHOOK":    "shared.webhook",
-	"R-E2E-SCN-KATA":       "shared.kataIsolation",
-	"R-E2E-SCN-KA-PHASE":   "shared.smolAgentPhase",
-	"R-E2E-SCN-SECRETLESS": "shared.secretlessEgress",
-	"R-E2E-SCN-MEMORY":     "shared.memoryAccess",
+	"R-E2E-SCN-IDENT-1":     "shared.identityRotation",
+	"R-E2E-SCN-PROXY-TCP":   "shared.proxyTCP",
+	"R-E2E-SCN-PROXY-HTTP":  "shared.proxyHTTP",
+	"R-E2E-SCN-EBPF-DROP":   "shared.ebpfDrop",
+	"R-E2E-SCN-EBPF-REDIR":  "shared.ebpfRedirect",
+	"R-E2E-SCN-WG-CLIENT":   "shared.wgClient",
+	"R-E2E-SCN-AGENTRUN":    "shared.agentRun",
+	"R-E2E-SCN-CANCEL":      "shared.cancel",
+	"R-E2E-SCN-WEBHOOK":     "shared.webhook",
+	"R-E2E-SCN-KATA":        "shared.kataIsolation",
+	"R-E2E-SCN-KA-PHASE":    "shared.smolAgentPhase",
+	"R-E2E-SCN-SECRETLESS":  "shared.secretlessEgress",
+	"R-E2E-SCN-MEMORY":      "shared.memoryAccess",
+	"R-E2E-SCN-CLAUDE-LIVE": "shared.claudeHarnessLive",
+	"R-E2E-SCN-CODEX-LIVE":  "shared.codexHarnessLive",
 
 	// Driver / ring orchestration: validated by the existence + green
 	// pass of each ring's TestLn root test. Each entry below names

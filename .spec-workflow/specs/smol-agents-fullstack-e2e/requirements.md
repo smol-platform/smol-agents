@@ -114,6 +114,10 @@ every ring that has the required capability.
 
 **R-E2E-SCN-MEMORY** (L1+) — When an agent calls the `memory-mcp` gateway with its JWT-SVID, it **shall** write and retrieve a document through MCP (the gateway injecting the caller's tenant), and a retriever scoped to another tenant **shall** be denied. Exercised in-cluster by `spiffe-probe --scenarios=memory` against the deployed memory-worker + memory-mcp. Cross-references `smol-agents-memory`. Requires `CapInClusterProbe`.
 
+**R-E2E-SCN-CLAUDE-LIVE** (L2 only) — When a `mode=harness` Agent of `kind=claude-code` runs on a `kata-fc` node with `approvalMode=never` + `outputFormat=json`, its `ANTHROPIC_API_KEY` broker-leased from a single-key secret and `ANTHROPIC_BASE_URL` pointed at z.ai's Anthropic-compatible endpoint, an AgentRun **shall** reach `Completed` with a non-empty `Output` and a non-zero `usage.tokens` — proving the operator resolves the per-kind harness image, the executor leases + injects the secret env, and the real claude-code subprocess reaches a live model and reports honest token accounting. Requires `CapLiveLLM` (driver-injected provider keys via `L2_LIVE_LLM=1`); self-skips otherwise.
+
+**R-E2E-SCN-CODEX-LIVE** (L2 only) — When a `mode=harness` Agent of `kind=codex` runs on a `kata-fc` node with `approvalMode=never` + `outputFormat=json` + `codexBaseURL`, its `CODEX_API_KEY` broker-leased from a single-key secret and the operator-rendered `~/.codex/config.toml` routing codex at the configured provider (`wire_api=responses`), an AgentRun **shall** reach `Completed` with a non-empty `Output` and a non-zero `usage.tokens` — proving the codex harness image resolves, the secret env is leased + injected, the rendered config drives the provider, and a live model is reached. Requires `CapLiveLLM` (driver-injected provider keys via `L2_LIVE_LLM=1`); self-skips otherwise.
+
 ## Verification (R-E2E-VRF-*)
 
 **R-E2E-VRF-1** — Every requirement in this document **shall** map to at least one Go test in `test/e2e/fullstack/`. CI **shall** fail if any R-E2E-* ID is unreferenced by tests (a `coverage.go` file maintains the mapping and the CI check parses it).
