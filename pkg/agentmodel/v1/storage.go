@@ -214,9 +214,9 @@ func validateAgentFS(a AgentFSSpec) error {
 	default:
 		errs = append(errs, fmt.Errorf("agentfs.backend=%q is invalid (want tar|kopia)", a.Backend))
 	}
-	if a.Backend == "kopia" && (a.Backup == nil || a.Backup.S3 == nil) {
-		errs = append(errs, errors.New("agentfs.backend=kopia requires backup.s3 (the repo destination)"))
-	}
+	// kopia without backup.s3 is the ephemeral backend: the sidecar hosts the
+	// repo on local pod storage (content-addressed history/diff/rollback that
+	// lives + dies with the pod). With backup.s3 it is the durable backend.
 	if a.Backup != nil {
 		errs = append(errs, validateBackup(*a.Backup)...)
 	}

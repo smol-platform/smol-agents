@@ -206,6 +206,35 @@ func TestBuildAgentRunPod_StorageKopiaBackend(t *testing.T) {
 	}
 }
 
+// Ephemeral kopia (backend=kopia, no backup.s3) surfaces AGENTFS_BACKEND=kopia
+// on the serving sidecar so the in-pod local repo path engages — with no S3 env
+// and no credentials secret (there is no destination to authenticate to).
+func TestBuildAgentRunPod_StorageKopiaEphemeral(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+
+	agent := storageAgent()
+	agent.Spec.Storage.AgentFS.Backend = "kopia"
+	agent.Spec.Storage.AgentFS.Backup = nil // ephemeral: no S3 destination
+
+	pod := BuildAgentRunPod(run, agent)
+
+	sc := findCtr(pod, storageFSSidecarName)
+	if sc == nil {
+		t.Fatal("agentfs-sidecar missing")
+	}
+	if got := envVal(sc, "AGENTFS_BACKEND"); got != "kopia" {
+		t.Errorf("sidecar AGENTFS_BACKEND = %q, want kopia", got)
+	}
+	if got := envVal(sc, "AGENTFS_S3_BUCKET"); got != "" {
+		t.Errorf("ephemeral kopia must emit no AGENTFS_S3_BUCKET, got %q", got)
+	}
+	if _, _, ok := secretEnvRef(sc, "AGENTFS_KOPIA_PASSWORD"); ok {
+		t.Error("ephemeral kopia must not project a kopia-password secret (no S3 creds)")
+	}
+}
+
 func TestBuildAgentRunPod_NoStorage(t *testing.T) {
 	run := &amv1.AgentRun{}
 	run.Name = "r"
