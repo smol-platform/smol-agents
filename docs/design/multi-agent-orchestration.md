@@ -241,22 +241,25 @@ Each phase reuses the prior; each is independently shippable + governed.
 | Approval | M5 pre-run gate (`RequiresAction`/`PendingAction`/`spec.decision`) | coordinator-issued decision path |
 | Layering | `pkg/turnmodel` + `TurnExecutor` seam | `pkg/turnmodel/team` coordinator |
 
-## 9. Open questions (decide before P0)
+## 9. Decisions (OQ1–6 — resolved 2026-06-07)
 
-1. **Coordinator = agent or controller?** Recommend a **loop-mode coordinator
-   agent** (reuses budget/loop/A2A, stays observable) over an opaque operator
-   controller. The operator still owns the durable CRD/KV/ACL scaffolding.
-2. **Task list backing — NATS KV vs `TeamTask` CRD?** KV is lighter + matches the
-   turn transport; CRD gives RBAC + `kubectl`. Lean KV; revisit if tenants need
-   to inspect tasks via the API.
-3. **Member trust span.** Same-namespace only at GA (D1). Cross-tenant teams need
-   a new policy-gated grant (defer).
-4. **Termination authority.** Who owns `stopCondition` — the coordinator agent or
-   an operator watchdog? Both: agent decides, team budget + deadline backstop.
-5. **Conflict model default.** Shared-RW AgentFS (simple) vs branch-per-member +
-   merge (strong). Ship shared-RW first; branch-merge as the opt-in strong mode.
-6. **Relationship to webterm/attach.** A human can attach (M4 `AttachGrant`) to
-   the **coordinator** to steer a live team — a natural compose, not new work.
+These were the pre-P0 open questions; all are now decided (the build follows
+them). Rationale retained for the record.
+
+1. **Coordinator = loop-mode agent** (not an operator controller). Reuses
+   budget/loop/A2A and stays observable/affordable; the operator owns the durable
+   CRD/KV/ACL scaffolding only.
+2. **Task list backing = NATS JetStream KV** (not a `TeamTask` CRD). Lighter +
+   matches the turn transport; revisit a CRD only if tenants need `kubectl`
+   inspection.
+3. **Member trust span = same-namespace only at GA** (D1). Cross-tenant teams
+   need a new policy-gated grant — deferred (non-goal §10).
+4. **Termination authority = the coordinator agent decides**, with the team
+   `Budget` + pod `ActiveDeadlineSeconds` as the hard backstop (both, layered).
+5. **Conflict model default = shared-RW AgentFS**, with branch-per-member +
+   3-way merge as the opt-in strong mode (P4).
+6. **webterm/attach = compose of the existing M4 `AttachGrant`** to the
+   coordinator — no net-new attach work.
 
 ## 10. Non-goals (for now)
 
