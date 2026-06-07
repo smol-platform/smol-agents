@@ -105,6 +105,20 @@ func Provision(ctx context.Context) (*Cluster, error) {
 			Name: aws.String("smol-agents-e2e-l2"),
 		},
 		UserData: aws.String(base64.StdEncoding.EncodeToString([]byte(userData))),
+		// Enlarge the root volume. The AMI default (8 GiB on AL2023) fills up: the
+		// containerd image content store (/var/lib/k0s/containerd on root EBS) holds
+		// every pulled image, and the big harness bundle images (claude-code/codex
+		// node images, ~0.5-1 GiB each) on top of the platform images push it to
+		// ~97%, which trips a disk-pressure NoSchedule taint and blocks/stalls run
+		// pods. /dev/xvda is the AL2023 (default distro) root device.
+		BlockDeviceMappings: []types.BlockDeviceMapping{{
+			DeviceName: aws.String("/dev/xvda"),
+			Ebs: &types.EbsBlockDevice{
+				VolumeSize:          aws.Int32(60),
+				VolumeType:          types.VolumeTypeGp3,
+				DeleteOnTermination: aws.Bool(true),
+			},
+		}},
 		TagSpecifications: []types.TagSpecification{{
 			ResourceType: types.ResourceTypeInstance,
 			Tags: []types.Tag{
