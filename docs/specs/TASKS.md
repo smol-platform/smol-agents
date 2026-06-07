@@ -438,6 +438,16 @@ M5 (near-term pre-run gate) — INDEPENDENT: D6 severed its form-B deps; ship an
 
 # M4 — Interactive: terminal exposure + long-running daemons
 
+> **STATUS (finish-m4 goal, 2026-06-06): M4.1–M4.22 CODE COMPLETE + unit-tested,
+> both modules green under `-race`, signed commits (d1958ae turn-model/memory,
+> 970d698 session.required, 3ee02ac terminal sidecars, e902b96 AttachGrant+token,
+> 1514d1e agentterminal+broker-policy+Dex, 5389674 pi-mono+bridge, b9f4b19
+> OpenClaw+serving-overrides). M4.13 (SSH) = Phase 2; M4.23 (Option-B session→pod
+> scale routing) + M4.24 (human canvas) = the spec's explicit "ship Option A
+> first" long-tail (Option-A WS path delivered; see docs/design/m4-interactive-
+> scope.md). All live e2e is DEPLOYMENT-GATED (no Dex / ttyd-pod-with-PTY /
+> pi / openclaw binaries / browser in this env), same class as M1–M3 live caveats.**
+
 **Goal:** Make agents human-attachable and persistently resident: the turn-model/runtime seam, the `spec.session{required,interactive}` field, a ttyd loopback terminal fronted by `cmd/agentterminal` with a bundled OIDC IdP + `AttachGrant` driver-mode authz, plus first-class `pi-mono` (HTTP via in-pod `pi-bridge`) and `openclaw` (WebSocket daemon) on the hardened serving path (warm, no Knative scale-to-zero).
 
 **Decision deltas:** attach is **driver-mode in v1** (D5); human identity is now decided — **bundled self-hosted OIDC (Dex/Keycloak)**, a real new infra task (D9); sessions/attach gated by `spec.session{required,interactive}` (D4); `pi`→`inflection-pi` + `pi-mono` is the CLI; the turn-model/runtime split (`pkg/turnmodel`, `TurnExecutor`) underpins it; `AttachGrant` = CRD policy record + short-TTL signed token; serving egress floor default-ON (D1/D3); kata enforced (no weaker posture for OpenClaw); HITL mid-run continuation that terminal §8-P4 leans on is **deferred** (D6).
