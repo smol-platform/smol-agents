@@ -1,0 +1,133 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: agentteams.runtime.agents.smol-agents.ai
+spec:
+  group: runtime.agents.smol-agents.ai
+  names:
+    kind: AgentTeam
+    listKind: AgentTeamList
+    plural: agentteams
+    shortNames:
+    - at
+    singular: agentteam
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.lead
+      name: Lead
+      type: string
+    - jsonPath: .spec.pattern
+      name: Pattern
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          AgentTeam is the durable record + governance envelope for a team of
+          collaborating agents (multi-agent orchestration). P0 is the governed
+          envelope: the operator validates the team, rolls member usage up
+          field-wise into status, and owns the member subtree (OwnerReference GC).
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              lead:
+                description: |-
+                  Lead is the coordinator Agent (loop mode) in THIS namespace — a bare
+                  name; a cross-namespace reference is rejected (D1).
+                type: string
+              members:
+                description: Members are the team's worker agents (at least one required).
+                type: array
+                items:
+                  type: object
+                  required: [name, agentRef]
+                  properties:
+                    name: { type: string, description: 'Stable member handle within the team (unique); used for mailbox addressing.' }
+                    agentRef: { type: string, description: 'Agent backing this member — a bare name in the team namespace (no cross-namespace reference).' }
+                    role: { type: string, description: 'Optional free-text role label (e.g. researcher, critic).' }
+                    maxConcurrent: { type: integer, minimum: 0, description: 'Max in-flight runs for this member (0 -> 1).' }
+              pattern:
+                description: Pattern is the coordination shape (default orchestrator).
+                enum:
+                - orchestrator
+                - generator-verifier
+                - team
+                - bus
+                - shared-state
+                type: string
+              budget:
+                type: object
+                description: |-
+                  Team-wide resource ceiling. Member usage rolls up field-wise into
+                  status; a team cannot out-spend it. Cost stays milli-USD
+                  observability-only and never gates.
+                required: [maxSteps, maxTokens, maxWallClockSeconds, maxToolCalls]
+                properties:
+                  maxSteps: { type: integer, minimum: 1, description: 'Maximum plan-act-observe steps across the team.' }
+                  maxTokens: { type: integer, minimum: 1, description: 'Maximum total LLM tokens across the team.' }
+                  maxWallClockSeconds: { type: integer, minimum: 1, description: 'Maximum team wall-clock duration in seconds.' }
+                  maxToolCalls: { type: integer, minimum: 0, description: 'Maximum total tool invocations across the team (0 forbids).' }
+              maxMembers:
+                description: Caps concurrent team width — the width analog of the A2A MaxDepth guard (0 -> number of declared members).
+                type: integer
+                minimum: 0
+            required:
+            - lead
+            - members
+            type: object
+          status:
+            properties:
+              phase: { type: string, description: 'Team lifecycle as observed by the operator (Pending/Running/Completed/Failed).' }
+              reason: { type: string, description: 'Short machine-readable cause for the current phase (e.g. InvalidSpec, Reconciled).' }
+              message: { type: string, description: 'Human-readable elaboration of reason.' }
+              observedGeneration: { type: integer, format: int64 }
+              lastActivity: { type: string, format: date-time, description: 'When a member last reported progress (a usage change).' }
+              cumulativeUsage:
+                type: object
+                description: Team-wide resource accounting, rolled up field-wise from members (observability only; never gated).
+                properties:
+                  steps: { type: integer }
+                  tokens: { type: integer }
+                  toolCalls: { type: integer }
+                  wallClockUsed: { type: integer, format: int64 }
+                  costUSDMilli: { type: integer, format: int64, description: 'Backend-reported cost in integer milli-USD (observability-only; never gated).' }
+              members:
+                type: array
+                description: Per-member observed phase + usage contribution.
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    phase: { type: string }
+                    usage:
+                      type: object
+                      properties:
+                        steps: { type: integer }
+                        tokens: { type: integer }
+                        toolCalls: { type: integer }
+                        wallClockUsed: { type: integer, format: int64 }
+                        costUSDMilli: { type: integer, format: int64 }
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

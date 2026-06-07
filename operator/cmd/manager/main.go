@@ -181,6 +181,13 @@ func main() {
 		setupLog.Error(err, "unable to register DynamicCredentialBackend controller")
 		os.Exit(1)
 	}
+	if err := (&agentmodel.AgentTeamReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register AgentTeam controller")
+		os.Exit(1)
+	}
 
 	// runtime.agents.smol-agents.ai/v1 — memory CRDs.
 	if err := (&memoryctrl.MemoryRetrieverReconciler{
@@ -214,6 +221,10 @@ func main() {
 		}
 		if err := webhooks.SetupAgentSessionWebhook(mgr); err != nil {
 			setupLog.Error(err, "unable to register AgentSession webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupAgentTeamWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentTeam webhook")
 			os.Exit(1)
 		}
 	}

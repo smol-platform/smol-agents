@@ -26,7 +26,7 @@ rules:
 
   # CR access — runtime CRs (Agent, AgentRun, AgentNetwork, Memory*, etc).
   - apiGroups: [runtime.agents.smol-agents.ai]
-    resources: [agents, tools, modelproviders, agentruns, agentsessions, agentpolicies, agentrunquotas, agentnetworks, dynamiccredentialbackends, memorystores, memoryretrievers]
+    resources: [agents, tools, modelproviders, agentruns, agentsessions, agentteams, agentpolicies, agentrunquotas, agentnetworks, dynamiccredentialbackends, memorystores, memoryretrievers]
     verbs: [get, list, watch, update, patch]
   # A2A (M3.6): the operator grants each kind=agent Agent a Role allowing its run
   # pods to CREATE child AgentRuns. k8s privilege-escalation prevention requires
@@ -41,6 +41,7 @@ rules:
       - agents/status
       - agentruns/status
       - agentsessions/status
+      - agentteams/status
       - agentpolicies/status
       - agentrunquotas/status
       - agentnetworks/status
