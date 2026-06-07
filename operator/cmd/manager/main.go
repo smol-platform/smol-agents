@@ -231,6 +231,10 @@ func main() {
 			setupLog.Error(err, "unable to register Tool webhook")
 			os.Exit(1)
 		}
+		if err := webhooks.SetupAgentWorkflowWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentWorkflow webhook")
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
