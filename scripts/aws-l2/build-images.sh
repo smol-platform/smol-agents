@@ -12,6 +12,10 @@ TAG=${1:?usage: $0 <tag>}
 PROFILE=${AWS_PROFILE:?AWS_PROFILE required}
 REGION=${AWS_REGION:-us-east-2}
 REGISTRY=${L2_ECR_REGISTRY:?L2_ECR_REGISTRY required}
+# L2 metal is arm64 (Graviton), so an arm64-only build is enough for the ring and
+# avoids slow amd64 emulation on arm64 build hosts. Defaults to multiarch so the
+# published-image invariant (amd64+arm64) still holds for non-L2 callers.
+PLATFORMS=${L2_PLATFORMS:-linux/amd64,linux/arm64}
 
 if [[ "$REGION" != "us-east-2" ]]; then
   echo "REGION must be us-east-2 (got $REGION)" >&2
@@ -63,12 +67,12 @@ for entry in "${images[@]}"; do
   read -r name dockerfile ctx <<<"$entry"
   full=$REGISTRY/smol-agents/$name:$TAG
 
-  step "build + push $name → $full (multiarch)"
+  step "build + push $name → $full ($PLATFORMS)"
   # buildx injects TARGETOS/TARGETARCH per platform, so each Go
-  # Dockerfile cross-compiles correctly; one multiarch manifest list
-  # (amd64+arm64) is pushed under the tag.
+  # Dockerfile cross-compiles correctly; the manifest pushed under the
+  # tag covers $PLATFORMS.
   docker buildx build \
-    --platform linux/amd64,linux/arm64 \
+    --platform "$PLATFORMS" \
     --file "$dockerfile" \
     --tag  "$full" \
     --push \
