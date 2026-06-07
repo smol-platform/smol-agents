@@ -46,6 +46,26 @@ type StepSink interface {
 	Emit(ctx context.Context, step v1.Step)
 }
 
+// Verifier is the online LLM-as-judge guardrail (iru.7, the verifier-middleware
+// after_model hook): when the loop reaches a terminal answer the executor asks
+// the Verifier whether it meets the criteria; on reject (with repair rounds
+// left) the executor injects the feedback as a synthetic observation and
+// continues so the model revises (self-correction). A nil Verifier is the
+// default and an exact no-op (the loop terminates on the first final answer, as
+// before). The Verifier is itself a fallible, token-costing LLM call: its Usage
+// folds field-wise (obs-only, never a gate).
+type Verifier interface {
+	Verify(ctx context.Context, output json.RawMessage, criteria string) (VerifyResult, error)
+}
+
+// VerifyResult is a Verifier's verdict.
+type VerifyResult struct {
+	Accepted bool
+	Score    int
+	Feedback string
+	Usage    v1.Usage
+}
+
 // Clock lets tests advance time deterministically.
 type Clock interface {
 	Now() time.Time
