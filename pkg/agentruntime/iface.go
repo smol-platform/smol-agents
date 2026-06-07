@@ -36,6 +36,16 @@ type ToolInvoker interface {
 	Invoke(ctx context.Context, tool v1.Tool, args json.RawMessage) (rt.Observation, error)
 }
 
+// StepSink receives each plan-act-observe Step as it happens — the LangGraph
+// "updates/tasks" streaming seam: today only the FINAL Result is surfaced; a sink
+// makes intermediate progress live. The executor calls Emit AFTER appending each
+// step (redacted first when RedactPatterns is set). A nil sink is the default and
+// an exact no-op. Emit must be non-blocking + best-effort (progress is
+// at-most-once/lossy — never the source of truth, which stays the folded Result).
+type StepSink interface {
+	Emit(ctx context.Context, step v1.Step)
+}
+
 // Clock lets tests advance time deterministically.
 type Clock interface {
 	Now() time.Time
