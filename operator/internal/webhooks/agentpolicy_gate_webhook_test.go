@@ -57,30 +57,32 @@ func TestAgentPolicyGate_LoopToolKinds(t *testing.T) {
 	fnTool := &amv1.Tool{ObjectMeta: metav1.ObjectMeta{Name: "fn", Namespace: "t"}, Spec: pure.ToolSpec{Kind: pure.ToolFunction}}
 	g := gateWith(t, httpTool, fnTool)
 
-	// loop-mode agent referencing a function-kind tool (no loop invoker) → Invalid
+	// loop-mode agent referencing a function-kind tool (no loop invoker) → warns
+	// at admission (does NOT reject; the reconciler is the enforcement and flips
+	// the admitted Agent to Failed/ToolKindUnsupported).
 	bad := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
 	bad.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
-	if err := g.checkLoopToolKinds(context.Background(), bad); err == nil || !apierrors.IsInvalid(err) {
-		t.Fatalf("function-kind loop tool must be Invalid, got %v", err)
+	if warns := g.checkLoopToolKinds(context.Background(), bad); len(warns) != 1 {
+		t.Fatalf("function-kind loop tool must warn (1 warning), got %v", warns)
 	}
-	// http-kind tool → allowed
+	// http-kind tool → no warning
 	good := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
 	good.Spec.Tools = []pure.ToolRef{{Name: "ht"}}
-	if err := g.checkLoopToolKinds(context.Background(), good); err != nil {
-		t.Fatalf("http-kind loop tool must pass: %v", err)
+	if warns := g.checkLoopToolKinds(context.Background(), good); len(warns) != 0 {
+		t.Fatalf("http-kind loop tool must not warn: %v", warns)
 	}
 	// harness mode → loop-tool-kind check is skipped even with a function tool
 	harness := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
 	harness.Spec.Mode = pure.ModeHarness
 	harness.Spec.Tools = []pure.ToolRef{{Name: "fn"}}
-	if err := g.checkLoopToolKinds(context.Background(), harness); err != nil {
-		t.Fatalf("harness mode must skip loop-tool-kind check: %v", err)
+	if warns := g.checkLoopToolKinds(context.Background(), harness); len(warns) != 0 {
+		t.Fatalf("harness mode must skip loop-tool-kind check: %v", warns)
 	}
 	// dangling ref → not judged here (reconciler handles existence)
 	dangling := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
 	dangling.Spec.Tools = []pure.ToolRef{{Name: "nope"}}
-	if err := g.checkLoopToolKinds(context.Background(), dangling); err != nil {
-		t.Fatalf("dangling tool ref must pass at this gate: %v", err)
+	if warns := g.checkLoopToolKinds(context.Background(), dangling); len(warns) != 0 {
+		t.Fatalf("dangling tool ref must not warn at this gate: %v", warns)
 	}
 }
 

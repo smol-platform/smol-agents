@@ -73,17 +73,21 @@ func (g *agentPolicyGate) checkAgent(ctx context.Context, a *amv1.Agent) error {
 	return apierrors.NewInvalid(agentGK, a.Name, errs)
 }
 
-// checkLoopToolKinds fail-closes a loop-mode Agent that references a Tool whose
-// kind has no production loop invoker (M2.16). It mirrors the reconciler's
-// SupportedLoopToolKinds gate at admission. Runs regardless of AgentPolicy; a
-// dangling tool ref is left to the reconciler (its kind can't be judged yet).
-func (g *agentPolicyGate) checkLoopToolKinds(ctx context.Context, a *amv1.Agent) error {
+// checkLoopToolKinds warns when a loop-mode Agent references a Tool whose kind
+// has no production loop invoker (M2.16). The reconciler's SupportedLoopToolKinds
+// gate (agent_controller.go) is the ENFORCEMENT: it flips the admitted Agent to
+// Failed/ToolKindUnsupported, keeping the failure observable in status and robust
+// to a Tool's kind changing after the Agent is admitted. Admission only surfaces
+// it early as a warning and never rejects — a hard reject would pre-empt that
+// observable reconcile state and couple admission to a cross-object Tool read
+// (ordering-fragile). Harness mode and dangling refs are skipped.
+func (g *agentPolicyGate) checkLoopToolKinds(ctx context.Context, a *amv1.Agent) admission.Warnings {
 	if a.Spec.Mode == pure.ModeHarness {
 		return nil
 	}
 	supported := pure.SupportedLoopToolKinds()
-	var errs field.ErrorList
-	for i, ref := range a.Spec.Tools {
+	var warns admission.Warnings
+	for _, ref := range a.Spec.Tools {
 		ns := ref.Namespace
 		if ns == "" {
 			ns = a.Namespace
@@ -93,14 +97,11 @@ func (g *agentPolicyGate) checkLoopToolKinds(ctx context.Context, a *amv1.Agent)
 			continue // dangling ref → the reconciler handles existence; kind unknowable here
 		}
 		if !supported[t.Spec.Kind] {
-			errs = append(errs, field.Forbidden(field.NewPath("spec", "tools").Index(i),
-				"tool "+ref.Name+" has kind "+string(t.Spec.Kind)+" which has no loop-mode invoker"))
+			warns = append(warns, "tool "+ref.Name+" has kind "+string(t.Spec.Kind)+
+				" which has no loop-mode invoker; the Agent will be marked Failed/ToolKindUnsupported")
 		}
 	}
-	if len(errs) == 0 {
-		return nil
-	}
-	return apierrors.NewInvalid(agentGK, a.Name, errs)
+	return warns
 }
 
 func (g *agentPolicyGate) checkRun(ctx context.Context, run *amv1.AgentRun) error {
@@ -135,14 +136,14 @@ func (a agentGate) ValidateCreate(ctx context.Context, obj *amv1.Agent) (admissi
 	if err := a.g.checkAgent(ctx, obj); err != nil {
 		return nil, err
 	}
-	return nil, a.g.checkLoopToolKinds(ctx, obj)
+	return a.g.checkLoopToolKinds(ctx, obj), nil
 }
 
 func (a agentGate) ValidateUpdate(ctx context.Context, _, newObj *amv1.Agent) (admission.Warnings, error) {
 	if err := a.g.checkAgent(ctx, newObj); err != nil {
 		return nil, err
 	}
-	return nil, a.g.checkLoopToolKinds(ctx, newObj)
+	return a.g.checkLoopToolKinds(ctx, newObj), nil
 }
 
 func (a agentGate) ValidateDelete(context.Context, *amv1.Agent) (admission.Warnings, error) {
