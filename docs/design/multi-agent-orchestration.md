@@ -1,10 +1,23 @@
 # Multi-agent orchestration — agent teams on smol-agents
 
-> Status: **design / proposal** (not built). Successor to
+> Status: **P0–P5 code-complete** (decisions OQ1–6 resolved §9; phases built +
+> unit-tested, both modules green under `-race`; live cluster e2e is
+> deployment-gated, the same bar as M1–M5). Successor to
 > [`agent-to-agent-invoker`](../specs/agent-to-agent-invoker.md), building on the
 > turn-model/runtime split ([`turn-model-vs-runtime`](turn-model-vs-runtime.md))
 > and durable sessions ([`durable-session-architecture`](durable-session-architecture.md)).
 > Decisions referenced from [`decisions.md`](decisions.md).
+>
+> **Built:** P0 `AgentTeam` CRD + field-wise usage roll-up + subtree GC
+> (`pkg/agentmodel/v1/agentteam.go`, `operator/internal/controllers/agentmodel/agentteam_controller.go`).
+> P1 shared task list (`pkg/teamtask`, NATS KV CAS) + `kind=task` invoker.
+> P2 peer mailbox (`pkg/teammailbox`) + per-member NATS ACL + `kind=teammate`.
+> P3 coordination (`pkg/turnmodel/team`: generator-verifier loop, BudgetGuard,
+> WidthLimiter) + `ConvergenceSpec`. P4 `SharedWorkspaceSpec` + `ThreeWayMerge`.
+> P5 message bus + `kind=teambus`, `CoordinatorDecision` (M5 reuse), team hooks.
+> **Deployment-gated wiring** (the operator spawning members with the team-context
+> env, the NATS account, kopia-tree extraction for merge): the live coordinator —
+> a follow-up, like the M1–M5 live caveats.
 
 ## 1. What this is, and why
 
