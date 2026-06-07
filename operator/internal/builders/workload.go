@@ -88,6 +88,13 @@ func BuildAgentPodSpec(cr *v1.SmolAgent) corev1.PodSpec {
 		VolumeMounts: agentVolumeMounts(),
 	}
 
+	// Serving-path overrides (M4.21): a heavier daemon (OpenClaw) can raise the
+	// agent container's compute and declare extra in-pod ports (e.g. control:18789).
+	if cr.Spec.Resources != nil {
+		agentContainer.Resources = *cr.Spec.Resources
+	}
+	agentContainer.Ports = append(agentContainer.Ports, cr.Spec.Ports...)
+
 	containers := []corev1.Container{agentContainer}
 	if cr.Spec.Features.Secrets.Enabled {
 		containers = append(containers, secretProxyContainer())

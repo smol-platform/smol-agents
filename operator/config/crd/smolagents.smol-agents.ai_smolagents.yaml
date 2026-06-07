@@ -90,6 +90,16 @@ spec:
                   description: Applies to deployment / statefulset deployment kinds.
                   minimum: 1
                   default: 1
+                resources:
+                  type: object
+                  description: 'Override the agent container compute requests/limits (M4.21); a heavier daemon (OpenClaw) needs more than the default.'
+                  x-kubernetes-preserve-unknown-fields: true
+                ports:
+                  type: array
+                  description: 'Extra in-pod container ports on the agent (M4.21), e.g. OpenClaw control:18789 (in-pod/mesh only).'
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 rollout:
                   type: object
                   description: Pauses or resumes operator-driven changes.

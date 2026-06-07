@@ -119,6 +119,7 @@ func Default() *Registry {
 	r.Register(&PiMonoHarness{})
 	r.Register(&GenericHTTPHarness{})
 	r.Register(&HermesHarness{})
+	r.Register(&OpenClawHarness{})
 	return r
 }
 

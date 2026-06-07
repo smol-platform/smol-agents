@@ -63,3 +63,38 @@ which is implemented and verified. The interactive **attach/terminal/daemon**
 plane (P1–P5 above) is an explicit post-GA track; HermesGateway/attach already
 appear on the README roadmap. Revisit P1 (turn-model split) first — it is the
 only piece with no external prerequisite and it de-risks all of P2–P5.
+
+## Update — `finish m4` goal (supersedes the post-GA deferral above)
+
+A subsequent `finish m4` directive pulled the interactive/daemon plane forward.
+The code for **M4.1–M4.22** is now implemented + unit-tested (both modules green
+under `-race`):
+
+- **P1 turn-model split** — `pkg/turnmodel` + `TurnExecutor` (M4.1), cross-turn
+  memory policy (M4.2), session field + resident-pod enforcement (M4.3/M4.4).
+- **Attach plane** — terminal sidecars (ttyd/tmux/recorder, M4.8/M4.9/M4.11),
+  `AttachGrant` CRD + audience-bound token (`pkg/attachtoken`, M4.6),
+  `cmd/agentterminal` gateway with real OIDC JWKS verify + role→ttyd WSS proxy
+  (M4.10), broker PTY-caller policy (M4.12), bundled Dex (M4.5).
+- **pi-mono** — HTTP harness + `cmd/pi-bridge` (key isolation, JSONL parse) +
+  image + session/deadline (M4.15–M4.19).
+- **OpenClaw** — WS RPC harness (M4.20), SmolAgent serving overrides (M4.21),
+  image + forced-posture `openclaw.json` renderer (M4.22).
+
+**Still deferred — the spec's own "Option B / ship Option A first" long-tail:**
+
+- **M4.23** — agentgateway OpenClaw route + session→pod sticky routing. This is a
+  new subsystem: OpenClaw is a resident WS daemon, not a turn-loop session worker
+  (sessions are loop-only today), so multi-session-scale routing with per-session
+  pod stickiness + NATS durability is genuinely large. The **Option-A** path (a
+  turn reaches the daemon's WS via the M4.20 adapter) is delivered; the
+  multi-session **scale** routing is the tail.
+- **M4.24** — human canvas (`:18789/openclaw`) through `cmd/agentterminal`. Builds
+  directly on the M4.10 gateway (authenticated WSS reverse-proxy) + the M4.21
+  `control:18789` port declaration; the remaining piece is a canvas TargetResolver
+  variant. Tail behind M4.23.
+
+All **live e2e** for the attach/daemon plane is **deployment-gated** (needs Dex,
+a real ttyd pod with a PTY, the pi/openclaw binaries, and a browser WSS client —
+none available in the laptop/kind environment), consistent with the M1–M3 live
+caveats. The code those tests exercise is written + unit-covered.

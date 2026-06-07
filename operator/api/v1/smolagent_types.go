@@ -1,6 +1,7 @@
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -31,6 +32,17 @@ type SmolAgentSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:default:=1
 	Replicas int32 `json:"replicas,omitempty"`
+
+	// Resources overrides the agent container's compute requests/limits (M4.21).
+	// A long-running daemon (OpenClaw) needs more than the compiled default
+	// (~1 CPU / 2Gi request, 4 CPU / 8Gi limit) — set it here. Empty = default.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Ports declares extra container ports on the agent (M4.21) — e.g. OpenClaw's
+	// control plane `control:18789`. These are in-pod/mesh only; egress floor +
+	// terminal ingress NetworkPolicies keep them off the public path. +optional
+	Ports []corev1.ContainerPort `json:"ports,omitempty"`
 
 	// Features carries per-capability config.
 	Features Features `json:"features,omitempty"`

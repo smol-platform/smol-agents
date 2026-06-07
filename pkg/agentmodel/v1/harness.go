@@ -68,6 +68,10 @@ const (
 	// OpenAI-compatible /v1/chat/completions API (HTTP kind). Only HTTP kinds
 	// (hermes/pi/generic-http) unpack multimodal input.images; CLI kinds drop them.
 	HarnessHermes HarnessKind = "hermes"
+	// HarnessOpenClaw drives an OpenClaw agent-loop daemon over a WebSocket RPC
+	// (M4.20). It is WS-first (the single-POST generic-http harness can't speak
+	// its session-open→send→reply envelope) and requires spec.http.url (ws://).
+	HarnessOpenClaw HarnessKind = "openclaw"
 )
 
 // Valid returns true iff k is a known kind. Unknown kinds are rejected
@@ -75,7 +79,7 @@ const (
 func (k HarnessKind) Valid() bool {
 	switch k {
 	case HarnessClaudeCode, HarnessCodex, HarnessInflectionPi, HarnessPi, HarnessPiMono, HarnessAider, HarnessGoose,
-		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes:
+		HarnessGenericCLI, HarnessGenericHTTP, HarnessHermes, HarnessOpenClaw:
 		return true
 	}
 	return false
@@ -463,7 +467,7 @@ func ValidateHarness(h HarnessSpec) error {
 		errs = append(errs, fmt.Errorf("harness.sessionPolicy=%q is invalid", h.SessionPolicy))
 	}
 	switch h.Kind {
-	case HarnessGenericHTTP, HarnessPi, HarnessInflectionPi, HarnessHermes:
+	case HarnessGenericHTTP, HarnessPi, HarnessInflectionPi, HarnessHermes, HarnessOpenClaw:
 		if h.HTTP == nil || strings.TrimSpace(h.HTTP.URL) == "" {
 			errs = append(errs, errors.New("harness.http.url is required for kind="+string(h.Kind)))
 		}
