@@ -73,6 +73,42 @@ type AgentTeamSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	MaxMembers int32 `json:"maxMembers,omitempty"`
+
+	// Convergence bounds an iterative pattern so the team terminates instead of
+	// looping forever. MANDATORY for generator-verifier / bus / shared-state
+	// (their stop condition is not otherwise defined); ignored for orchestrator /
+	// team. The team Budget + pod deadline are the hard backstops beneath it.
+	// +optional
+	Convergence *ConvergenceSpec `json:"convergence,omitempty"`
+}
+
+// ConvergenceSpec bounds an iterative coordination loop (P3). Termination is the
+// blog's #1 multi-agent failure mode ("cycle indefinitely"), so for the patterns
+// without an intrinsic stop it is required, not advisory.
+type ConvergenceSpec struct {
+	// MaxIterations caps generator→verifier rounds (must be ≥ 1).
+	// +kubebuilder:validation:Minimum=1
+	MaxIterations int32 `json:"maxIterations"`
+	// Criteria is the verifier's acceptance standard. Required + non-empty: a
+	// verifier is only as good as its criteria, so this is a first-class field,
+	// not free-form prompt text.
+	Criteria string `json:"criteria"`
+	// TimeBudgetSeconds bounds total wall-clock for the loop (0 → the team
+	// Budget's wall-clock governs).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	TimeBudgetSeconds int32 `json:"timeBudgetSeconds,omitempty"`
+}
+
+// requiresConvergence reports whether a pattern must declare a ConvergenceSpec
+// (it has no intrinsic stop condition). Orchestrator + team converge on their
+// own (the task list drains / the lead synthesizes).
+func requiresConvergence(p TeamPattern) bool {
+	switch p {
+	case TeamPatternGeneratorVerifier, TeamPatternBus, TeamPatternSharedState:
+		return true
+	}
+	return false
 }
 
 // TeamMemberSpec names one member of a team.
@@ -203,6 +239,22 @@ func ValidateAgentTeam(t AgentTeam) error {
 		if err := t.Spec.Budget.Validate(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	// Convergence is mandatory for the patterns without an intrinsic stop, and
+	// whenever present must be well-formed (so a team never loops forever).
+	switch {
+	case t.Spec.Convergence != nil:
+		if t.Spec.Convergence.MaxIterations < 1 {
+			errs = append(errs, errors.New("spec.convergence.maxIterations must be ≥ 1"))
+		}
+		if t.Spec.Convergence.Criteria == "" {
+			errs = append(errs, errors.New("spec.convergence.criteria is required (the verifier's acceptance standard)"))
+		}
+		if t.Spec.Convergence.TimeBudgetSeconds < 0 {
+			errs = append(errs, errors.New("spec.convergence.timeBudgetSeconds must be ≥ 0"))
+		}
+	case requiresConvergence(t.Spec.EffectivePattern()):
+		errs = append(errs, fmt.Errorf("spec.convergence is required for pattern %q (it has no intrinsic stop condition)", t.Spec.EffectivePattern()))
 	}
 	return errors.Join(errs...)
 }

@@ -55,6 +55,39 @@ func TestValidateAgentTeam_Rejections(t *testing.T) {
 	}
 }
 
+func TestValidateAgentTeam_Convergence(t *testing.T) {
+	// generator-verifier REQUIRES a convergence spec (no intrinsic stop).
+	genver := validTeam()
+	genver.Spec.Pattern = TeamPatternGeneratorVerifier
+	if err := ValidateAgentTeam(genver); err == nil {
+		t.Fatalf("generator-verifier without convergence must be rejected")
+	}
+	// ...and is valid with a well-formed one.
+	genver.Spec.Convergence = &ConvergenceSpec{MaxIterations: 5, Criteria: "answer cites sources"}
+	if err := ValidateAgentTeam(genver); err != nil {
+		t.Fatalf("generator-verifier with convergence rejected: %v", err)
+	}
+	// orchestrator does NOT require convergence.
+	orch := validTeam()
+	orch.Spec.Pattern = TeamPatternOrchestrator
+	orch.Spec.Convergence = nil
+	if err := ValidateAgentTeam(orch); err != nil {
+		t.Fatalf("orchestrator without convergence must be allowed: %v", err)
+	}
+	// A present-but-malformed convergence is rejected on any pattern.
+	for _, c := range []*ConvergenceSpec{
+		{MaxIterations: 0, Criteria: "c"},
+		{MaxIterations: 3, Criteria: ""},
+		{MaxIterations: 3, Criteria: "c", TimeBudgetSeconds: -1},
+	} {
+		tm := validTeam()
+		tm.Spec.Convergence = c
+		if err := ValidateAgentTeam(tm); err == nil {
+			t.Fatalf("malformed convergence %+v must be rejected", c)
+		}
+	}
+}
+
 func TestRollUpTeamUsage_FieldWise(t *testing.T) {
 	members := []Usage{
 		{Steps: 3, Tokens: 100, ToolCalls: 2, WallClockUsed: 5 * time.Second, CostUSDMilli: 7},

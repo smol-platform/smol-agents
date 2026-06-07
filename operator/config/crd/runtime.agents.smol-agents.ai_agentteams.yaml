@@ -87,6 +87,16 @@ spec:
                 description: Caps concurrent team width — the width analog of the A2A MaxDepth guard (0 -> number of declared members).
                 type: integer
                 minimum: 0
+              convergence:
+                type: object
+                description: |-
+                  Bounds an iterative pattern so the team terminates. Mandatory for
+                  generator-verifier / bus / shared-state; ignored for orchestrator / team.
+                required: [maxIterations, criteria]
+                properties:
+                  maxIterations: { type: integer, minimum: 1, description: 'Max generator->verifier rounds.' }
+                  criteria: { type: string, description: 'The verifier acceptance standard (required, non-empty).' }
+                  timeBudgetSeconds: { type: integer, minimum: 0, description: 'Wall-clock bound for the loop (0 -> team budget governs).' }
             required:
             - lead
             - members
