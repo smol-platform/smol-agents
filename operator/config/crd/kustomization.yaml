@@ -9,6 +9,7 @@ resources:
   - runtime.agents.smol-agents.ai_modelproviders.yaml
   - runtime.agents.smol-agents.ai_agentruns.yaml
   - runtime.agents.smol-agents.ai_agentsessions.yaml
+  - runtime.agents.smol-agents.ai_agentteams.yaml
   - runtime.agents.smol-agents.ai_agentpolicies.yaml
   - runtime.agents.smol-agents.ai_agentrunquotas.yaml
   - runtime.agents.smol-agents.ai_attachgrants.yaml

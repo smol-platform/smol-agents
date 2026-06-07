@@ -1,10 +1,23 @@
 # Multi-agent orchestration — agent teams on smol-agents
 
-> Status: **design / proposal** (not built). Successor to
+> Status: **P0–P5 code-complete** (decisions OQ1–6 resolved §9; phases built +
+> unit-tested, both modules green under `-race`; live cluster e2e is
+> deployment-gated, the same bar as M1–M5). Successor to
 > [`agent-to-agent-invoker`](../specs/agent-to-agent-invoker.md), building on the
 > turn-model/runtime split ([`turn-model-vs-runtime`](turn-model-vs-runtime.md))
 > and durable sessions ([`durable-session-architecture`](durable-session-architecture.md)).
 > Decisions referenced from [`decisions.md`](decisions.md).
+>
+> **Built:** P0 `AgentTeam` CRD + field-wise usage roll-up + subtree GC
+> (`pkg/agentmodel/v1/agentteam.go`, `operator/internal/controllers/agentmodel/agentteam_controller.go`).
+> P1 shared task list (`pkg/teamtask`, NATS KV CAS) + `kind=task` invoker.
+> P2 peer mailbox (`pkg/teammailbox`) + per-member NATS ACL + `kind=teammate`.
+> P3 coordination (`pkg/turnmodel/team`: generator-verifier loop, BudgetGuard,
+> WidthLimiter) + `ConvergenceSpec`. P4 `SharedWorkspaceSpec` + `ThreeWayMerge`.
+> P5 message bus + `kind=teambus`, `CoordinatorDecision` (M5 reuse), team hooks.
+> **Deployment-gated wiring** (the operator spawning members with the team-context
+> env, the NATS account, kopia-tree extraction for merge): the live coordinator —
+> a follow-up, like the M1–M5 live caveats.
 
 ## 1. What this is, and why
 
@@ -241,22 +254,25 @@ Each phase reuses the prior; each is independently shippable + governed.
 | Approval | M5 pre-run gate (`RequiresAction`/`PendingAction`/`spec.decision`) | coordinator-issued decision path |
 | Layering | `pkg/turnmodel` + `TurnExecutor` seam | `pkg/turnmodel/team` coordinator |
 
-## 9. Open questions (decide before P0)
+## 9. Decisions (OQ1–6 — resolved 2026-06-07)
 
-1. **Coordinator = agent or controller?** Recommend a **loop-mode coordinator
-   agent** (reuses budget/loop/A2A, stays observable) over an opaque operator
-   controller. The operator still owns the durable CRD/KV/ACL scaffolding.
-2. **Task list backing — NATS KV vs `TeamTask` CRD?** KV is lighter + matches the
-   turn transport; CRD gives RBAC + `kubectl`. Lean KV; revisit if tenants need
-   to inspect tasks via the API.
-3. **Member trust span.** Same-namespace only at GA (D1). Cross-tenant teams need
-   a new policy-gated grant (defer).
-4. **Termination authority.** Who owns `stopCondition` — the coordinator agent or
-   an operator watchdog? Both: agent decides, team budget + deadline backstop.
-5. **Conflict model default.** Shared-RW AgentFS (simple) vs branch-per-member +
-   merge (strong). Ship shared-RW first; branch-merge as the opt-in strong mode.
-6. **Relationship to webterm/attach.** A human can attach (M4 `AttachGrant`) to
-   the **coordinator** to steer a live team — a natural compose, not new work.
+These were the pre-P0 open questions; all are now decided (the build follows
+them). Rationale retained for the record.
+
+1. **Coordinator = loop-mode agent** (not an operator controller). Reuses
+   budget/loop/A2A and stays observable/affordable; the operator owns the durable
+   CRD/KV/ACL scaffolding only.
+2. **Task list backing = NATS JetStream KV** (not a `TeamTask` CRD). Lighter +
+   matches the turn transport; revisit a CRD only if tenants need `kubectl`
+   inspection.
+3. **Member trust span = same-namespace only at GA** (D1). Cross-tenant teams
+   need a new policy-gated grant — deferred (non-goal §10).
+4. **Termination authority = the coordinator agent decides**, with the team
+   `Budget` + pod `ActiveDeadlineSeconds` as the hard backstop (both, layered).
+5. **Conflict model default = shared-RW AgentFS**, with branch-per-member +
+   3-way merge as the opt-in strong mode (P4).
+6. **webterm/attach = compose of the existing M4 `AttachGrant`** to the
+   coordinator — no net-new attach work.
 
 ## 10. Non-goals (for now)
 

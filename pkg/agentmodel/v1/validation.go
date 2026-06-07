@@ -143,6 +143,18 @@ func ValidateTool(t Tool) error {
 		if t.Spec.Function == nil || t.Spec.Function.Name == "" {
 			errs = append(errs, errors.New("spec.function.name is required for kind=function"))
 		}
+	case ToolTask:
+		// The team shared-task-list tool (P1) needs no extra spec — the op
+		// (list|claim|complete|create) + args are supplied at call time. The
+		// TaskInvoker is wired only inside a team context (WireTaskInvoker).
+	case ToolTeammate:
+		// The peer mailbox tool (P2) needs no extra spec — the op (send|receive)
+		// + args are supplied at call time. The TeammateInvoker is wired only
+		// inside a team context (WireTeammateInvoker).
+	case ToolTeamBus:
+		// The team bus tool (P5) needs no extra spec — the op
+		// (publish|subscribe|receive) + args are supplied at call time. The
+		// TeamBusInvoker is wired only inside a team context (WireTeamBusInvoker).
 	}
 	return errors.Join(errs...)
 }

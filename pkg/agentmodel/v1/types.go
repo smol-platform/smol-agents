@@ -134,24 +134,40 @@ const (
 	// of v0.2.0 (ToolFunction is test-only). See docs/design/tool-kinds-roadmap.md.
 	ToolAgent    ToolKind = "agent"
 	ToolFunction ToolKind = "function"
+	// ToolTask is the shared team task list (multi-agent orchestration P1): the
+	// TaskInvoker lets a team member list/claim/complete work on the team's NATS
+	// KV task list. Its invoker is wired only inside a team context
+	// (WireTaskInvoker) — outside a team the call fail-closes, like A2A.
+	ToolTask ToolKind = "task"
+	// ToolTeammate is the peer mailbox (multi-agent orchestration P2): the
+	// TeammateInvoker lets a member message another member by name + drain its own
+	// inbox. Wired only inside a team context (WireTeammateInvoker); a per-member
+	// NATS credential makes "read only your own inbox" the enforced boundary.
+	ToolTeammate ToolKind = "teammate"
+	// ToolTeamBus is the team message bus (multi-agent orchestration P5): the
+	// TeamBusInvoker lets a member publish/subscribe team topics for emergent
+	// pub/sub workflows. Wired only inside a team context (WireTeamBusInvoker);
+	// the per-member bus credential confines it to the team's bus subtree.
+	ToolTeamBus ToolKind = "teambus"
 )
 
 // Valid returns true if k is a known ToolKind.
 func (k ToolKind) Valid() bool {
 	switch k {
-	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction:
+	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask, ToolTeammate, ToolTeamBus:
 		return true
 	}
 	return false
 }
 
 // SupportedLoopToolKinds is the single source of truth for the tool kinds with
-// a production invoker on the loop-mode datapath: HTTP + MCP, and ToolAgent
-// (A2A — the AgentRunInvoker spawns a child AgentRun; M3 A1). ToolFunction
-// remains reserved (test-only invoker) and is rejected for loop-mode agents —
-// fail-closed (D3) rather than silently no-op'ing the call.
+// a production invoker on the loop-mode datapath: HTTP + MCP, ToolAgent (A2A —
+// the AgentRunInvoker spawns a child AgentRun; M3 A1), and ToolTask (the team
+// shared task list; P1). ToolFunction remains reserved (test-only invoker) and
+// is rejected for loop-mode agents — fail-closed (D3) rather than silently
+// no-op'ing the call.
 func SupportedLoopToolKinds() map[ToolKind]bool {
-	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true}
+	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true, ToolTeammate: true, ToolTeamBus: true}
 }
 
 // MCPSpec describes an MCP transport target. R-AM-TOOL-3.
