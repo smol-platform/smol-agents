@@ -76,6 +76,16 @@ func runCLI(ctx context.Context, req Request, name string, args []string, cmd co
 		}
 		return Response{Output: out.Bytes(), DurationMs: dur}, fmt.Errorf("harness: %w", err)
 	}
+	// Exit 0 with NOTHING on stdout but content on stderr: the CLI failed in a way
+	// that didn't set a non-zero code (claude --print exits 0 on internal errors;
+	// codex similar). Without this, the discarded stderr left the run folding as a
+	// silent empty success — exactly the undiagnosable "Completed, empty output,
+	// 0 tokens" we hit. Surface stderr so the run fails with the real reason.
+	if len(bytes.TrimSpace(out.Bytes())) == 0 {
+		if msg := strings.TrimSpace(string(errOut.Bytes())); msg != "" {
+			return Response{Output: out.Bytes(), DurationMs: dur}, fmt.Errorf("harness: exited 0 with empty stdout: %s", msg)
+		}
+	}
 	return Response{Output: out.Bytes(), DurationMs: dur}, nil
 }
 
