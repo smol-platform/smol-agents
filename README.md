@@ -64,6 +64,15 @@ built so those four guarantees hold *by construction*.
 - 🤖 **Declarative agent model** — ship an agent as one CR: identity, model,
   tools (MCP-typed), memory, and a **hard budget** (`maxSteps`/`maxTokens`/
   `maxWallClock`/`maxToolCalls`) the formal model proves is never exceeded.
+- 🧩 **Many harnesses, one model** — loop, Hermes, claude-code, codex, aider,
+  goose, inflection-pi, **pi-mono** (HTTP via an in-pod key-isolating bridge),
+  and **OpenClaw** (WebSocket daemon); plus **agent-to-agent** composition
+  (`kind=agent` tools spawn child runs with usage roll-up + subtree GC).
+- 🖥️ **Human-attachable agents** — a turn-model/runtime split underpins durable
+  sessions and a **driver-mode terminal attach** plane: a human authenticates
+  against a bundled OIDC IdP, an `AttachGrant` authorizes, and `agentterminal`
+  reverse-proxies a recorded ttyd/tmux PTY (viewer read-only, driver writable),
+  bypassing the activator.
 - ⚙️ **Operator, not chart** — feature-flagged `SmolAgent`/`SmolAgentPlatform`
   CRs with per-feature status conditions, canary rollouts, and drift healing.
 - 🏗️ **Node provisioning that understands isolation** — `AgentNodePool` derives
@@ -146,6 +155,7 @@ run; the runtime group describes *what* runs.
 | `AgentSession` | Durable, long-running session: a checkpointed `serve-session` worker that resumes its turn log on restart and consumes turns from NATS via the gateway. |
 | `AgentPolicy` | Guardrails: tool allow-lists, budget ceilings, identity constraints. |
 | `AgentNetwork` | Egress: identity proxy / WireGuard mesh + eBPF allow-list (+ TraT / secretless). |
+| `AttachGrant` | Human attach authorization: `{agentRef, subject, role: viewer\|driver, expiresAt}` resolved by `agentterminal` into an audience-bound, short-TTL attach token before a WSS terminal session. |
 | `MemoryStore` | A backend (vector / graph / KV / eventlog / filesystem) + tenancy + broker creds. |
 | `MemoryRetriever` | A retrieval pipeline over stores: embedding, chunking, topK, quota, deny-by-default policy. |
 
@@ -294,6 +304,17 @@ P0–P2 path), live-verified on a single-node cluster:
   verified live on glm-4.6. Run notes + the z.ai gotchas (Coding-Plan endpoint,
   the loop path bridge, claude-code file-writes needing kata) are in
   [docs/examples](docs/examples/README.md#running-these-for-real-with-zai-live-verified-2026-06-06).
+
+**Milestones M1–M4 + M5 (v0.3.0).** The governance/containment floor (M1), the
+capability wire — tools, observability, files (M2), agent composition + A2A (M3),
+the interactive/terminal/daemon plane (M4), and the human-in-the-loop pre-run
+gate (M5) are implemented and unit-/envtest-covered (both Go modules green under
+`-race`). M1–M3 are live-verified (z.ai glm-4.6 on kind, plus a 24/24 L2 datapath
+suite on kata metal). The **M4 attach/daemon plane** (Dex OIDC, ttyd/PTY,
+`pi`/`openclaw` binaries) is code-complete but its **live e2e is a follow-up** on
+a cluster carrying those bundle images. The Option-B OpenClaw scale routing
+(`M4.23`), SSH attach (`M4.13`), and the human canvas (`M4.24`) are the deferred
+long-tail (see [docs/design/m4-interactive-scope.md](docs/design/m4-interactive-scope.md)).
 
 Remaining work is tracked per subsystem (`tasks.md`): multi-tenant hardening,
 serverless cold-start, and broader live-infra coverage.
