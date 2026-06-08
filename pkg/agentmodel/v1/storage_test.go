@@ -48,6 +48,27 @@ func TestValidateStorage_AgentFSHappyPath(t *testing.T) {
 	}
 }
 
+func TestValidateStorage_KopiaEphemeralOK(t *testing.T) {
+	// backend=kopia with NO backup.s3 is the ephemeral (in-pod repo) backend —
+	// valid, so the default can later flip to kopia without breaking no-S3 agents.
+	s := &StorageSpec{Kind: StorageAgentFS, AgentFS: &AgentFSSpec{
+		SizeGiB: 1, MountPath: "/var/agentfs", Backend: "kopia",
+	}}
+	if err := ValidateStorage(s); err != nil {
+		t.Errorf("ephemeral kopia (no s3) should be valid: %v", err)
+	}
+}
+
+func TestValidateStorage_KopiaWithS3OK(t *testing.T) {
+	s := &StorageSpec{Kind: StorageAgentFS, AgentFS: &AgentFSSpec{
+		SizeGiB: 1, Backend: "kopia",
+		Backup: &BackupPolicy{S3: &S3BackupSpec{Bucket: "b", Region: "us-east-1"}},
+	}}
+	if err := ValidateStorage(s); err != nil {
+		t.Errorf("durable kopia (with s3) should be valid: %v", err)
+	}
+}
+
 func TestValidateStorage_AgentFSRequiresPositiveSize(t *testing.T) {
 	s := &StorageSpec{Kind: StorageAgentFS, AgentFS: &AgentFSSpec{SizeGiB: 0}}
 	if err := ValidateStorage(s); err == nil {

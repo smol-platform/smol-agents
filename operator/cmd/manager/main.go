@@ -188,6 +188,13 @@ func main() {
 		setupLog.Error(err, "unable to register AgentTeam controller")
 		os.Exit(1)
 	}
+	if err := (&agentmodel.AgentWorkflowReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register AgentWorkflow controller")
+		os.Exit(1)
+	}
 
 	// runtime.agents.smol-agents.ai/v1 — memory CRDs.
 	if err := (&memoryctrl.MemoryRetrieverReconciler{
@@ -225,6 +232,14 @@ func main() {
 		}
 		if err := webhooks.SetupAgentTeamWebhook(mgr); err != nil {
 			setupLog.Error(err, "unable to register AgentTeam webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupToolWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register Tool webhook")
+			os.Exit(1)
+		}
+		if err := webhooks.SetupAgentWorkflowWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to register AgentWorkflow webhook")
 			os.Exit(1)
 		}
 	}

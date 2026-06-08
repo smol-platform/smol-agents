@@ -35,6 +35,12 @@ type KopiaStore struct {
 	SecretAccessKey string
 	SessionToken    string
 
+	// RepoPath, when non-empty, hosts the kopia repo on the local filesystem
+	// instead of S3 — the ephemeral backend (no durable destination; the repo
+	// lives and dies with the pod, giving in-pod history/diff/rollback without
+	// configuring S3). When set it supersedes the S3 fields above.
+	RepoPath string
+
 	// Password protects the kopia repo (kopia encrypts at rest). Required.
 	Password string
 
@@ -151,13 +157,32 @@ func (k *KopiaStore) s3Args(create bool) []string {
 	return a
 }
 
+// fsArgs builds `repository {connect|create} filesystem --path=<RepoPath>` for
+// the ephemeral (no-S3) backend: a kopia repo on the pod's own local storage.
+func (k *KopiaStore) fsArgs(create bool) []string {
+	verb := "connect"
+	if create {
+		verb = "create"
+	}
+	return []string{"repository", verb, "filesystem", "--path=" + k.RepoPath}
+}
+
+// repoArgs selects the repo backend: a local filesystem repo when RepoPath is
+// set (ephemeral), else the S3 repo (durable).
+func (k *KopiaStore) repoArgs(create bool) []string {
+	if k.RepoPath != "" {
+		return k.fsArgs(create)
+	}
+	return k.s3Args(create)
+}
+
 // Connect connects to the kopia repo, creating it on first use, then (on
 // creation) installs the DB-exclusion ignore policy. Idempotent.
 func (k *KopiaStore) Connect(ctx context.Context) error {
-	if _, err := k.exec(ctx, k.s3Args(false)...); err == nil {
+	if _, err := k.exec(ctx, k.repoArgs(false)...); err == nil {
 		return nil // existing repo
 	}
-	if _, err := k.exec(ctx, k.s3Args(true)...); err != nil {
+	if _, err := k.exec(ctx, k.repoArgs(true)...); err != nil {
 		return fmt.Errorf("agentfs: kopia connect/create: %w", err)
 	}
 	// Install the live-DB exclusion once at creation (kept out of the file

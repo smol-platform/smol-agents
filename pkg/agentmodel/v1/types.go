@@ -149,12 +149,18 @@ const (
 	// pub/sub workflows. Wired only inside a team context (WireTeamBusInvoker);
 	// the per-member bus credential confines it to the team's bus subtree.
 	ToolTeamBus ToolKind = "teambus"
+	// ToolFanout is Send-style runtime map-reduce (LangGraph Send API): one tool
+	// call spawns N parallel child AgentRuns over a runtime-computed list and
+	// folds their outputs via a reducer. The A2A blocking-and-fold generalized
+	// from 1 child to N, with a hard width cap. Wired only with in-cluster access
+	// (WireFanoutInvoker), fail-closed off-cluster like A2A.
+	ToolFanout ToolKind = "fanout"
 )
 
 // Valid returns true if k is a known ToolKind.
 func (k ToolKind) Valid() bool {
 	switch k {
-	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask, ToolTeammate, ToolTeamBus:
+	case ToolMCP, ToolHTTP, ToolAgent, ToolFunction, ToolTask, ToolTeammate, ToolTeamBus, ToolFanout:
 		return true
 	}
 	return false
@@ -167,7 +173,7 @@ func (k ToolKind) Valid() bool {
 // is rejected for loop-mode agents — fail-closed (D3) rather than silently
 // no-op'ing the call.
 func SupportedLoopToolKinds() map[ToolKind]bool {
-	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true, ToolTeammate: true, ToolTeamBus: true}
+	return map[ToolKind]bool{ToolHTTP: true, ToolMCP: true, ToolAgent: true, ToolTask: true, ToolTeammate: true, ToolTeamBus: true, ToolFanout: true}
 }
 
 // MCPSpec describes an MCP transport target. R-AM-TOOL-3.
@@ -225,6 +231,54 @@ type ToolSpec struct {
 	HTTP         *HTTPSpec        `json:"http,omitempty"`
 	Agent        *AgentTargetSpec `json:"agent,omitempty"`
 	Function     *FunctionSpec    `json:"function,omitempty"`
+	// Fanout configures a kind=fanout tool (Send-style runtime map-reduce). +optional
+	Fanout *FanoutTargetSpec `json:"fanout,omitempty"`
+}
+
+// FanoutReducer is how a fanout folds its N child outputs into one observation.
+type FanoutReducer string
+
+const (
+	// FanoutConcat returns the children's outputs as a JSON array (+ an errors
+	// count for any that failed).
+	FanoutConcat FanoutReducer = "concat"
+	// FanoutMerge deep-merges the children's JSON objects (key-last-wins) (+ an
+	// errors count).
+	FanoutMerge FanoutReducer = "merge"
+	// FanoutFirstSuccess returns the first Completed child's output and
+	// cancel-deletes the rest.
+	FanoutFirstSuccess FanoutReducer = "first-success"
+)
+
+// FanoutTargetSpec configures a kind=fanout tool: one LLM tool call spawns one
+// child AgentRun (of Ref) per item in a runtime list, bounded by MaxParallel
+// (and the operator's hard FANOUT_MAX_WIDTH), then folds the children's outputs
+// via Reduce. The A2A child-spawn-and-fold generalized from 1 to N.
+type FanoutTargetSpec struct {
+	// Ref is the Agent each child runs, a bare name in the tool's namespace
+	// (no cross-namespace reference, D1).
+	Ref ToolRef `json:"ref"`
+	// MaxParallel caps concurrent children (the run still passes the per-namespace
+	// admission queue; the operator's FANOUT_MAX_WIDTH is the hard clamp). 0 → 1.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxParallel int32 `json:"maxParallel,omitempty"`
+	// Reduce folds the children's outputs (default concat).
+	// +kubebuilder:validation:Enum=concat;merge;first-success
+	// +optional
+	Reduce FanoutReducer `json:"reduce,omitempty"`
+	// PerItemMaxTokens caps each child's tokens (a budgetOverride). 0 = the child
+	// Agent's own budget. +optional
+	// +kubebuilder:validation:Minimum=0
+	PerItemMaxTokens int64 `json:"perItemMaxTokens,omitempty"`
+}
+
+// EffectiveReduce defaults to concat.
+func (f FanoutTargetSpec) EffectiveReduce() FanoutReducer {
+	if f.Reduce == "" {
+		return FanoutConcat
+	}
+	return f.Reduce
 }
 
 // Tool is a namespaced reusable capability.

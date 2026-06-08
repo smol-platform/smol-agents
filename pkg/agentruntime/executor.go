@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +53,63 @@ type Executor struct {
 	// conversation (M3.19: claude --resume / codex exec resume). Sourced from
 	// AgentRunSpec.ResumeSessionID by RunTurn.
 	ResumeSessionID string
+
+	// StepSink, when set, receives each Step as it happens (the streaming seam,
+	// iru.2). nil = no-op (today's behavior exactly).
+	StepSink StepSink
+	// RedactPatterns are applied to a Step before it is emitted to StepSink, so
+	// the live progress stream never leaks what status redaction hides (D1). Set
+	// by the caller from the effective AgentPolicy redaction. nil = no redaction.
+	RedactPatterns []*regexp.Regexp
+
+	// Verifier, when set, grades the terminal answer (iru.7). nil = no-op.
+	Verifier Verifier
+	// VerifyCriteria is the acceptance standard passed to the Verifier.
+	VerifyCriteria string
+	// MaxRepairRounds bounds verifier-driven self-correction passes (0 → 1 — one
+	// chance to revise). Each repair is still a normal loop iteration bounded by
+	// the Budget (steps/tokens/wallclock).
+	MaxRepairRounds int
+	// VerifyFailOnReject fails the run closed when the answer is still rejected
+	// after the repair budget is spent; default (false) returns the best answer
+	// with a verify:unconverged reason.
+	VerifyFailOnReject bool
+}
+
+// record appends s to steps and, when a StepSink is configured, emits it (after
+// redaction); it also opens+closes a per-step OTel span so the run trace gains a
+// child span per step (wiring the previously-dead StartStepSpan; the global
+// tracer is no-op unless an SDK is installed, so this is free when tracing is
+// off). The single chokepoint for per-step progress + tracing.
+func (e *Executor) record(ctx context.Context, steps []v1.Step, s v1.Step) []v1.Step {
+	_, span := StartStepSpan(ctx, s.Kind, stepToolName(s))
+	span.End()
+	if e.StepSink != nil {
+		out := s
+		if len(e.RedactPatterns) > 0 {
+			out = v1.RedactSteps([]v1.Step{s}, e.RedactPatterns)[0]
+		}
+		e.StepSink.Emit(ctx, out)
+	}
+	return append(steps, s)
+}
+
+// stepToolName returns the step's first tool name for span attribution, if any.
+func stepToolName(s v1.Step) string {
+	if len(s.ToolCalls) > 0 {
+		return s.ToolCalls[0].Tool
+	}
+	return ""
+}
+
+// verifyFeedback renders a rejected verdict as the synthetic observation the
+// model sees on the next loop iteration, so it can revise.
+func verifyFeedback(vr VerifyResult) json.RawMessage {
+	b, err := json.Marshal(map[string]any{"verifierRejected": true, "score": vr.Score, "feedback": vr.Feedback})
+	if err != nil {
+		return json.RawMessage(`{"verifierRejected":true}`)
+	}
+	return b
 }
 
 // New returns a default Executor. Caller must set LLM (for Mode=loop)
@@ -105,6 +163,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 	phase := v1.PhasePending
 	var terminationReason string
 	var output json.RawMessage
+	repairRounds := 0 // verifier-driven self-correction passes (iru.7)
 
 	// Pending → Running
 	phase = v1.PhaseRunning
@@ -142,7 +201,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		usage.WallClockUsed = e.Clock.Since(startedAt)
 
 		if err != nil {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepPlan,
 				StartedAt: metav1.NewTime(planStart), EndedAt: metav1.NewTime(planEnd),
 				Error: err.Error(),
@@ -169,7 +228,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		// for audit, but those counts do not flow into Usage.
 		newTokens := decision.TokensIn + decision.TokensOut
 		if usage.Tokens+newTokens > budget.MaxTokens {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepPlan,
 				StartedAt: metav1.NewTime(planStart), EndedAt: metav1.NewTime(planEnd),
 				TokensIn: decision.TokensIn, TokensOut: decision.TokensOut,
@@ -181,7 +240,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		}
 		usage = usage.Add(newTokens, 0, 0)
 
-		steps = append(steps, v1.Step{
+		steps = e.record(ctx, steps, v1.Step{
 			Index: int32(len(steps)), Kind: v1.StepPlan,
 			StartedAt: metav1.NewTime(planStart), EndedAt: metav1.NewTime(planEnd),
 			TokensIn: decision.TokensIn, TokensOut: decision.TokensOut,
@@ -200,7 +259,46 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 
 		if decision.IsTerminal() {
 			output = decision.FinalAnswer.Output
-			steps = append(steps, v1.Step{
+			// Online verifier guardrail (iru.7): grade the answer; on reject with
+			// repair budget left, inject the feedback as an observation and CONTINUE
+			// so the model revises (self-correction). nil Verifier → terminate
+			// immediately, exactly as before.
+			if e.Verifier != nil {
+				maxRepairs := e.MaxRepairRounds
+				if maxRepairs <= 0 {
+					maxRepairs = 1
+				}
+				vr, verr := e.Verifier.Verify(ctx, output, e.VerifyCriteria)
+				if verr == nil {
+					usage.Tokens += vr.Usage.Tokens // judge tokens fold field-wise (obs-only)
+					if !vr.Accepted {
+						if repairRounds < maxRepairs {
+							repairRounds++
+							steps = e.record(ctx, steps, v1.Step{
+								Index: int32(len(steps)), Kind: v1.StepObservation,
+								StartedAt: metav1.NewTime(planEnd), EndedAt: metav1.NewTime(e.Clock.Now()),
+								ToolCalls: []v1.ToolCallRecord{{Tool: "_verify", Result: verifyFeedback(vr)}},
+							})
+							continue // let the model revise with the feedback in History
+						}
+						// Repair budget spent + still rejected.
+						steps = e.record(ctx, steps, v1.Step{
+							Index: int32(len(steps)), Kind: v1.StepFinal,
+							StartedAt: metav1.NewTime(planEnd), EndedAt: metav1.NewTime(e.Clock.Now()),
+						})
+						if e.VerifyFailOnReject {
+							phase = v1.PhaseFailed
+							terminationReason = "verify:rejected"
+						} else {
+							phase = v1.PhaseCompleted
+							terminationReason = "verify:unconverged"
+						}
+						break
+					}
+				}
+				// verr != nil OR accepted → normal completion below.
+			}
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepFinal,
 				StartedAt: metav1.NewTime(planEnd), EndedAt: metav1.NewTime(e.Clock.Now()),
 			})
@@ -218,7 +316,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 
 		// Allow-list check (R-AM-TOOL-1 + safety invariant OnlyAllowedToolsCalled).
 		if !allowed[tc.Tool] {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
 				ToolCalls: []v1.ToolCallRecord{{
@@ -232,7 +330,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 
 		tool, ok := e.Tools[tc.Tool]
 		if !ok {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				ToolCalls: []v1.ToolCallRecord{{Tool: tc.Tool, Error: ErrToolNotFound.Error()}},
 				StartedAt: metav1.NewTime(e.Clock.Now()), EndedAt: metav1.NewTime(e.Clock.Now()),
@@ -243,7 +341,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 
 		// Validate args vs input schema (real JSON-Schema validation, M2.11).
 		if err := ValidateAgainstSchema(tool.Spec.InputSchema, tc.Arguments); err != nil {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				ToolCalls: []v1.ToolCallRecord{{
 					Tool: tc.Tool, Arguments: tc.Arguments,
@@ -269,7 +367,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		// Invoke.
 		invoker, ok := e.Invokers[tool.Spec.Kind]
 		if !ok {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCallRejected,
 				ToolCalls: []v1.ToolCallRecord{{
 					Tool:  tc.Tool,
@@ -286,7 +384,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 		callEnd := e.Clock.Now()
 
 		if err != nil {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepToolCall,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
 				ToolCalls: []v1.ToolCallRecord{{
@@ -302,7 +400,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 
 		// Validate observation vs output schema (real JSON-Schema validation, M2.11).
 		if err := ValidateAgainstSchema(tool.Spec.OutputSchema, obs.Output); err != nil {
-			steps = append(steps, v1.Step{
+			steps = e.record(ctx, steps, v1.Step{
 				Index: int32(len(steps)), Kind: v1.StepObservationRejected,
 				StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
 				ToolCalls: []v1.ToolCallRecord{{
@@ -317,7 +415,7 @@ func (e *Executor) Run(ctx context.Context, agent v1.Agent, input json.RawMessag
 			continue
 		}
 
-		steps = append(steps, v1.Step{
+		steps = e.record(ctx, steps, v1.Step{
 			Index: int32(len(steps)), Kind: v1.StepObservation,
 			StartedAt: metav1.NewTime(callStart), EndedAt: metav1.NewTime(callEnd),
 			ToolCalls: []v1.ToolCallRecord{{

@@ -36,6 +36,36 @@ type ToolInvoker interface {
 	Invoke(ctx context.Context, tool v1.Tool, args json.RawMessage) (rt.Observation, error)
 }
 
+// StepSink receives each plan-act-observe Step as it happens — the LangGraph
+// "updates/tasks" streaming seam: today only the FINAL Result is surfaced; a sink
+// makes intermediate progress live. The executor calls Emit AFTER appending each
+// step (redacted first when RedactPatterns is set). A nil sink is the default and
+// an exact no-op. Emit must be non-blocking + best-effort (progress is
+// at-most-once/lossy — never the source of truth, which stays the folded Result).
+type StepSink interface {
+	Emit(ctx context.Context, step v1.Step)
+}
+
+// Verifier is the online LLM-as-judge guardrail (iru.7, the verifier-middleware
+// after_model hook): when the loop reaches a terminal answer the executor asks
+// the Verifier whether it meets the criteria; on reject (with repair rounds
+// left) the executor injects the feedback as a synthetic observation and
+// continues so the model revises (self-correction). A nil Verifier is the
+// default and an exact no-op (the loop terminates on the first final answer, as
+// before). The Verifier is itself a fallible, token-costing LLM call: its Usage
+// folds field-wise (obs-only, never a gate).
+type Verifier interface {
+	Verify(ctx context.Context, output json.RawMessage, criteria string) (VerifyResult, error)
+}
+
+// VerifyResult is a Verifier's verdict.
+type VerifyResult struct {
+	Accepted bool
+	Score    int
+	Feedback string
+	Usage    v1.Usage
+}
+
 // Clock lets tests advance time deterministically.
 type Clock interface {
 	Now() time.Time

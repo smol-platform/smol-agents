@@ -69,6 +69,31 @@ type SessionWorker struct {
 	// to a RuntimeExecutor built from Leaser+LLM (the production RunTurn path);
 	// tests inject a fake (ExecutorFunc) so the worker needs no real LLM/harness.
 	Executor TurnExecutor
+
+	// ReviewGate, when set, gates each turn on a human review BETWEEN turns
+	// (iru.5, D6-safe HITL — at the turn boundary, NOT mid-loop). Before running a
+	// turn the worker parks the session in RequiresAction and asks the gate, which
+	// blocks until a human approves (optionally editing the input) or denies. nil
+	// = no review (today's behavior). Use only with MaxConcurrentTurns≤1 (FIFO):
+	// a parked turn must not hold a concurrency slot for others.
+	ReviewGate ReviewGate
+}
+
+// ReviewGate decides whether a turn may run, after a human inspects the pending
+// input + carried memory (the LangGraph interrupt() review-and-edit pattern,
+// reusing the M5 RequiresAction signal). It BLOCKS until a decision arrives.
+type ReviewGate interface {
+	ReviewTurn(ctx context.Context, spec v1.AgentRunSpec, mem TurnMemory) (ReviewDecision, error)
+}
+
+// ReviewDecision is the human's verdict on a parked turn.
+type ReviewDecision struct {
+	// Proceed runs the turn (with EditedInput if set); false cancels it.
+	Proceed bool
+	// EditedInput, when non-empty, replaces the turn's input before it runs.
+	EditedInput json.RawMessage
+	// Reason is recorded on a denied turn.
+	Reason string
 }
 
 // InboundTurn is one pending turn yielded by a TurnSource. Ack marks it durably
@@ -294,9 +319,52 @@ func (w *SessionWorker) handleTurn(ctx context.Context, state *SessionState, t I
 	w.mu.Lock()
 	mem := w.buildMemory(state, w.AgentRef)
 	w.mu.Unlock()
-	res, runErr := w.runTurn(turnCtx, t.Spec, mem) // OUTSIDE the lock — the expensive part
+
+	spec := t.Spec // editable copy: a review may rewrite the input before the turn runs
+	// Between-turns human review (iru.5, D6-safe — at the turn boundary): park the
+	// session in RequiresAction and block on the gate. A denied (or errored, fail-
+	// closed) turn is recorded Cancelled + acked without running; an approval may
+	// carry an edited input.
+	if w.ReviewGate != nil {
+		w.mu.Lock()
+		state.Phase = v1.PhaseRequiresAction
+		w.mu.Unlock()
+		dec, rErr := w.ReviewGate.ReviewTurn(turnCtx, spec, mem)
+		if rErr != nil || !dec.Proceed {
+			reason := "review:denied"
+			if rErr != nil {
+				reason = "review:error:" + rErr.Error()
+			} else if dec.Reason != "" {
+				reason = "review:denied:" + dec.Reason
+			}
+			cancelled := SessionTurn{Input: spec.Input, Phase: v1.PhaseCancelled, TerminationReason: reason, StartedAt: started, EndedAt: w.now()}
+			w.mu.Lock()
+			state.Phase = v1.PhaseRunning
+			cancelled.Index = state.TotalTurns
+			state.Append(cancelled, w.now())
+			w.compact(state)
+			w.mu.Unlock()
+			if err := w.sink().Publish(ctx, t.ID, cancelled); err != nil {
+				w.log("publish result", "turn", t.ID, "err", err)
+			}
+			if t.Ack != nil {
+				if err := t.Ack(); err != nil {
+					w.log("ack", "turn", t.ID, "err", err)
+				}
+			}
+			return
+		}
+		if len(dec.EditedInput) > 0 {
+			spec.Input = dec.EditedInput
+		}
+		w.mu.Lock()
+		state.Phase = v1.PhaseRunning
+		w.mu.Unlock()
+	}
+
+	res, runErr := w.runTurn(turnCtx, spec, mem) // OUTSIDE the lock — the expensive part
 	st := SessionTurn{
-		Input:             t.Spec.Input,
+		Input:             spec.Input,
 		Output:            res.Output,
 		Phase:             res.Phase,
 		Usage:             res.Usage,

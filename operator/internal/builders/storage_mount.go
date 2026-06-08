@@ -191,7 +191,15 @@ func agentFSContainer(name, image, verb, mountPath string, env []corev1.EnvVar) 
 // agentFSBackupEnv renders the S3 destination + crypto + cadence as env, plus
 // AWS credentials projected from BackupPolicy.S3.CredentialsRef (never inlined).
 func agentFSBackupEnv(a *pure.AgentFSSpec) []corev1.EnvVar {
-	if a == nil || a.Backup == nil || a.Backup.S3 == nil {
+	if a == nil {
+		return nil
+	}
+	// Ephemeral kopia: no S3 destination → the sidecar hosts the repo on local
+	// pod storage. Surface only the backend selector; there are no S3 env/creds.
+	if a.Backup == nil || a.Backup.S3 == nil {
+		if a.Backend == "kopia" {
+			return []corev1.EnvVar{{Name: "AGENTFS_BACKEND", Value: "kopia"}}
+		}
 		return nil
 	}
 	b, s3 := a.Backup, a.Backup.S3

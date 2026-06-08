@@ -236,6 +236,35 @@ func TestKopiaStore_Commands(t *testing.T) {
 	}
 }
 
+// TestKopiaStore_FilesystemRepo asserts the ephemeral (no-S3) backend uses a
+// local filesystem repo: Connect issues `repository create filesystem
+// --path=<RepoPath>` (after the connect probe fails) and emits no S3 flags.
+func TestKopiaStore_FilesystemRepo(t *testing.T) {
+	var calls [][]string
+	k := &KopiaStore{RepoPath: "/var/run/agentfs-kopia", Password: "pw"}
+	k.run = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		if args[0] == "repository" && args[1] == "connect" {
+			return nil, errors.New("repository not found") // force the create path
+		}
+		return nil, nil
+	}
+	if err := k.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	create := findCall(calls, "repository", "create", "filesystem")
+	if create == nil {
+		t.Fatal("expected `repository create filesystem` for the ephemeral backend")
+	}
+	joined := strings.Join(create, " ")
+	if !strings.Contains(joined, "--path=/var/run/agentfs-kopia") {
+		t.Errorf("filesystem repo missing --path: %s", joined)
+	}
+	if strings.Contains(joined, "--bucket") || strings.Contains(joined, " s3") {
+		t.Errorf("ephemeral repo must not emit S3 flags: %s", joined)
+	}
+}
+
 // TestManager_BackendRoutes verifies Manager.Backup/Restore/EnforceRetention
 // route to the VersionedStore backend when set (instead of the tar path).
 func TestManager_BackendRoutes(t *testing.T) {

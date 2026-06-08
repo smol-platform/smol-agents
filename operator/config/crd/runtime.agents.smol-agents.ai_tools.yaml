@@ -45,7 +45,7 @@ spec:
                     executor invoker map empty); only harness-mode agents act on
                     tools via embedded logic. See
                     docs/design/tool-kinds-roadmap.md.
-                  enum: [mcp, http, agent, function]
+                  enum: [mcp, http, agent, function, task, teammate, teambus, fanout]
                 description: { type: string, description: 'Human-readable description of what the tool does (surfaced to the model).' }
                 inputSchema:
                   type: object
@@ -97,3 +97,19 @@ spec:
                   description: In-process function target; TEST-ONLY.
                   properties:
                     name: { type: string, description: 'Registered function name.' }
+                fanout:
+                  type: object
+                  description: 'Send-style runtime map-reduce target (kind=fanout): one tool call spawns one child AgentRun per runtime item, folded by reduce. Children are hard-capped by the operator FANOUT_MAX_WIDTH and pass the per-namespace admission queue.'
+                  properties:
+                    ref:
+                      type: object
+                      description: Reference to the Agent each child runs (bare name, same namespace).
+                      properties:
+                        name: { type: string, description: 'Name of the child Agent.' }
+                        namespace: { type: string, description: 'Namespace; defaults to this Tool''s namespace.' }
+                    maxParallel: { type: integer, minimum: 0, description: 'Concurrency cap for in-flight children (clamped to FANOUT_MAX_WIDTH); 0 = all items at once (still clamped).' }
+                    reduce:
+                      type: string
+                      enum: [concat, merge, first-success]
+                      description: 'How to fold the children: concat (array+errors), merge (deep-merge objects+errors), first-success (first completed, cancel the rest). Default concat.'
+                    perItemMaxTokens: { type: integer, format: int64, minimum: 0, description: 'Per-child token budgetOverride; 0 = the child Agent''s own budget.' }

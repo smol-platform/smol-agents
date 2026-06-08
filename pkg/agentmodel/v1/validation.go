@@ -155,6 +155,27 @@ func ValidateTool(t Tool) error {
 		// The team bus tool (P5) needs no extra spec — the op
 		// (publish|subscribe|receive) + args are supplied at call time. The
 		// TeamBusInvoker is wired only inside a team context (WireTeamBusInvoker).
+	case ToolFanout:
+		f := t.Spec.Fanout
+		switch {
+		case f == nil || f.Ref.Name == "":
+			errs = append(errs, errors.New("spec.fanout.ref.name is required for kind=fanout"))
+		case containsSlash(f.Ref.Name):
+			errs = append(errs, errors.New("spec.fanout.ref.name must be a bare name in this namespace (no cross-namespace reference)"))
+		}
+		if f != nil {
+			switch f.Reduce {
+			case "", FanoutConcat, FanoutMerge, FanoutFirstSuccess:
+			default:
+				errs = append(errs, fmt.Errorf("spec.fanout.reduce %q must be concat, merge, or first-success", f.Reduce))
+			}
+			if f.MaxParallel < 0 {
+				errs = append(errs, errors.New("spec.fanout.maxParallel must be ≥ 0"))
+			}
+			if f.PerItemMaxTokens < 0 {
+				errs = append(errs, errors.New("spec.fanout.perItemMaxTokens must be ≥ 0"))
+			}
+		}
 	}
 	return errors.Join(errs...)
 }

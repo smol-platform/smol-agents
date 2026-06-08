@@ -68,6 +68,11 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 		}
 		// A2A recursion ceiling (M3.5), read by WireAgentInvoker → invoker.MaxDepth.
 		main.Env = append(main.Env, corev1.EnvVar{Name: "A2A_MAX_DEPTH", Value: a2aMaxDepth()})
+		// Fan-out hard per-call width ceiling, read by WireFanoutInvoker →
+		// FanoutInvoker.MaxWidth. Absent/zero fail-closes fan-out (no unbounded
+		// map-reduce); every fanned child still passes the per-namespace admission
+		// queue (D10).
+		main.Env = append(main.Env, corev1.EnvVar{Name: "FANOUT_MAX_WIDTH", Value: fanoutMaxWidth()})
 	}
 
 	labels := map[string]string{
@@ -212,4 +217,16 @@ func a2aMaxDepth() string {
 		}
 	}
 	return "4"
+}
+
+// fanoutMaxWidth is the operator's hard ceiling on children per kind=fanout call
+// (env SMOL_AGENTS_FANOUT_MAX_WIDTH, default 64). It bounds the fan-out blast
+// radius; every fanned child still passes the per-namespace admission queue.
+func fanoutMaxWidth() string {
+	if v := strings.TrimSpace(os.Getenv("SMOL_AGENTS_FANOUT_MAX_WIDTH")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return strconv.Itoa(n)
+		}
+	}
+	return "64"
 }

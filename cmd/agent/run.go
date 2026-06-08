@@ -60,8 +60,9 @@ func runAgentRun(args []string) int {
 	// WireTaskInvoker / WireTeammateInvoker / WireTeamBusInvoker add the kind=task
 	// (team shared task list, P1), kind=teammate (peer mailbox, P2), and
 	// kind=teambus (message bus, P5) invokers when the pod carries a team context.
-	// Without each, that kind stays fail-closed.
-	toolInvokers := invokers.WireTeamBusInvoker(invokers.WireTeammateInvoker(invokers.WireTaskInvoker(invokers.WireAgentInvoker(invokers.Default(leaser, nil)))))
+	// WireFanoutInvoker adds kind=fanout (Send map-reduce) under the A2A in-cluster
+	// gate. Without each, that kind stays fail-closed.
+	toolInvokers := invokers.WireFanoutInvoker(invokers.WireTeamBusInvoker(invokers.WireTeammateInvoker(invokers.WireTaskInvoker(invokers.WireAgentInvoker(invokers.Default(leaser, nil))))))
 
 	// pi-mono (M4.16): start the in-pod pi-bridge before the run so the harness's
 	// HTTP call to 127.0.0.1:8848 lands; SIGTERM it on exit. No-op for other kinds.

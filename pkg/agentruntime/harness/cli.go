@@ -76,6 +76,16 @@ func runCLI(ctx context.Context, req Request, name string, args []string, cmd co
 		}
 		return Response{Output: out.Bytes(), DurationMs: dur}, fmt.Errorf("harness: %w", err)
 	}
+	// Exit 0 with NOTHING on stdout but content on stderr: the CLI failed in a way
+	// that didn't set a non-zero code (claude --print exits 0 on internal errors;
+	// codex similar). Without this, the discarded stderr left the run folding as a
+	// silent empty success — exactly the undiagnosable "Completed, empty output,
+	// 0 tokens" we hit. Surface stderr so the run fails with the real reason.
+	if len(bytes.TrimSpace(out.Bytes())) == 0 {
+		if msg := strings.TrimSpace(string(errOut.Bytes())); msg != "" {
+			return Response{Output: out.Bytes(), DurationMs: dur}, fmt.Errorf("harness: exited 0 with empty stdout: %s", msg)
+		}
+	}
 	return Response{Output: out.Bytes(), DurationMs: dur}, nil
 }
 
@@ -198,6 +208,16 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	// flag goes before ExtraFlags + the prompt so a tenant override can't drop it.
 	jsonOut := req.Spec.CLI != nil && req.Spec.CLI.OutputFormat == "json"
 	args := []string{flag}
+	// The prompt goes FIRST (right after --print), NOT last. claude-code's
+	// --allowedTools (from claudePermArgs) is variadic/greedy: a prompt appended
+	// after it is swallowed as a tool value, so claude sees no prompt and prints
+	// "Input must be provided" (non-JSON) → the run folds Completed with empty
+	// output + 0 tokens. Positioning the prompt before every flag keeps it intact
+	// regardless of which greedy flags follow. (Empty prompt → omit; claude then
+	// reads stdin, which is closed in a pod, and reports the missing input.)
+	if prompt != "" {
+		args = append(args, prompt)
+	}
 	if jsonOut {
 		args = append(args, "--output-format", "json")
 	}
@@ -227,7 +247,8 @@ func (h *ClaudeCodeHarness) Run(ctx context.Context, req Request) (Response, err
 	}
 	args = append(args, claudePermArgs(req)...)
 	args = append(args, cliExtraFlags(req)...)
-	args = append(args, prompt)
+	// NB: prompt is intentionally NOT appended here — it is placed first (above),
+	// before --allowedTools, which would otherwise consume it as a tool value.
 
 	resp, err := runCLI(ctx, req, "claude", args, h.Cmd)
 	if err != nil || !jsonOut {

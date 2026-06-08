@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -64,6 +65,35 @@ func main() {
 		if err := os.MkdirAll(*mount, 0o755); err != nil {
 			logger.Error("agentfs-sidecar: ensure ephemeral mount", "err", err)
 			os.Exit(2)
+		}
+		// Ephemeral kopia: no S3, but back the workspace with a kopia repo on
+		// local pod storage so the agent still gets content-addressed
+		// history/diff/rollback within the pod's lifetime. The repo dies with the
+		// pod — that is what "ephemeral" means here. (backend=tar has no ephemeral
+		// story, so it still just idles below.)
+		if os.Getenv("AGENTFS_BACKEND") == "kopia" {
+			mgr := ephemeralKopiaManager(*mount)
+			switch verb {
+			case "init":
+				logger.Info("ephemeral kopia workspace: starting fresh (in-pod repo, no S3)", "mount", *mount, "repo", kopiaRepoPath())
+			case "serve":
+				sched := &agentfs.Scheduler{
+					Manager:          mgr,
+					FullInterval:     scheduleInterval(os.Getenv("AGENTFS_BACKUP_SCHEDULE")),
+					WALInterval:      0,
+					BackupOnShutdown: true, // a final in-pod checkpoint so the last edits stay rollback-able
+					Logger:           logger,
+				}
+				logger.Info("ephemeral kopia workspace: snapshotting to in-pod repo",
+					"mount", *mount, "repo", kopiaRepoPath(), "fullInterval", sched.FullInterval)
+				if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
+					logger.Error("scheduler", "err", err)
+					os.Exit(1)
+				}
+			default:
+				fail("unknown verb %q (init|serve)", verb)
+			}
+			return
 		}
 		switch verb {
 		case "init":
@@ -188,6 +218,39 @@ func buildManager(ctx context.Context, mount string) (*agentfs.Manager, error) {
 		}
 	}
 	return mgr, nil
+}
+
+// ephemeralKopiaPassword protects the in-pod kopia repo. The repo lives in the
+// pod's own ephemeral storage (and, in prod, a kata microVM), so this password
+// is not a security boundary — the pod isolation is. A stable default keeps the
+// init+serve containers and the operator render deterministic (no random env to
+// thrash the pod spec); override with AGENTFS_KOPIA_PASSWORD.
+const ephemeralKopiaPassword = "agentfs-ephemeral-local"
+
+// kopiaRepoPath is where the ephemeral kopia repo lives on local pod storage. It
+// MUST be outside the workspace mount so snapshots don't capture the repo
+// itself. Overridable via AGENTFS_KOPIA_REPO_PATH.
+func kopiaRepoPath() string {
+	if p := os.Getenv("AGENTFS_KOPIA_REPO_PATH"); p != "" {
+		return p
+	}
+	return filepath.Join(os.TempDir(), "agentfs-kopia-repo")
+}
+
+// ephemeralKopiaManager builds a kopia-only Manager backed by a local
+// filesystem repo (no S3). Used when a storage.agentfs volume sets
+// backend=kopia but declares no backup.s3 destination.
+func ephemeralKopiaManager(mount string) *agentfs.Manager {
+	pw := os.Getenv("AGENTFS_KOPIA_PASSWORD")
+	if pw == "" {
+		pw = ephemeralKopiaPassword
+	}
+	return &agentfs.Manager{
+		Spec:    v1.AgentFSSpec{MountPath: mount},
+		Storage: agentfs.FilesystemStorage{Root: mount},
+		Backend: &agentfs.KopiaStore{RepoPath: kopiaRepoPath(), Password: pw},
+		Now:     time.Now,
+	}
 }
 
 // scheduleInterval maps a backup schedule string to a poll interval. Accepts

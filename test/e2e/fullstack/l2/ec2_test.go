@@ -22,6 +22,14 @@ func TestL2(t *testing.T) {
 	if !ok {
 		return
 	}
+	// Inject real provider keys (leak-free, via the artifact S3 bucket) so the
+	// claude-code / codex live-harness scenarios can run. No-op unless
+	// L2_LIVE_LLM=1; cleanup removes the S3 objects.
+	setupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cleanup := setupLiveLLMSecrets(setupCtx, t, env, env.runID)
+	defer cleanup()
+
 	shared.RunAll(t, env, shared.All())
 }
 
