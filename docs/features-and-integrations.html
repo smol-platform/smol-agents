@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>smol-agents — Features &amp; Integrations</title>
+<style>
+  :root{
+    --bg:#0a0d13; --bg2:#0d1117; --panel:#121823; --panel2:#161d2a;
+    --line:#222c3b; --line2:#2c384b;
+    --tx:#e6edf3; --mut:#9aa7b8; --dim:#6b7888;
+    --violet:#a78bfa; --violet-d:#8b5cf6;
+    --green:#34d399; --cyan:#22d3ee; --amber:#fbbf24;
+    --pink:#f472b6; --blue:#60a5fa; --orange:#fb923c; --teal:#2dd4bf; --red:#f87171;
+    --radius:14px; --maxw:1240px;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:
+      radial-gradient(1200px 700px at 12% -8%, rgba(139,92,246,.16), transparent 60%),
+      radial-gradient(1000px 600px at 100% 0%, rgba(34,211,238,.10), transparent 55%),
+      var(--bg);
+    color:var(--tx);font-family:var(--sans);line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--violet);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono)}
+
+  /* ---- nav ---- */
+  .nav{
+    position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
+    background:rgba(10,13,19,.78);border-bottom:1px solid var(--line);
+  }
+  .nav .inner{max-width:var(--maxw);margin:0 auto;padding:11px 22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.2px}
+  .brand .logo{width:26px;height:26px;border-radius:8px;
+    background:conic-gradient(from 200deg,var(--violet-d),var(--cyan),var(--green),var(--violet-d));
+    box-shadow:0 0 0 1px rgba(255,255,255,.08) inset, 0 6px 18px rgba(139,92,246,.35)}
+  .brand small{color:var(--dim);font-weight:500;font-size:12px}
+  .nav nav{display:flex;gap:14px;flex-wrap:wrap;margin-left:auto;font-size:13.5px}
+  .nav nav a{color:var(--mut)}
+  .nav nav a:hover{color:var(--tx);text-decoration:none}
+  #q{
+    flex:0 1 230px;background:var(--bg2);border:1px solid var(--line2);color:var(--tx);
+    padding:7px 12px;border-radius:9px;font-size:13.5px;font-family:var(--sans);outline:none;
+  }
+  #q:focus{border-color:var(--violet-d);box-shadow:0 0 0 3px rgba(139,92,246,.18)}
+
+  /* ---- layout ---- */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  section{padding:46px 0 8px}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin:0 0 4px}
+  .sec-head h2{font-size:23px;margin:0;letter-spacing:-.3px}
+  .sec-head .kick{color:var(--violet);font-family:var(--mono);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px}
+  .sec-sub{color:var(--mut);margin:2px 0 22px;max-width:760px;font-size:14.5px}
+
+  /* ---- hero ---- */
+  .hero{padding:64px 0 26px}
+  .hero h1{font-size:46px;line-height:1.05;margin:0 0 14px;letter-spacing:-1.3px;font-weight:800}
+  .hero h1 .grad{background:linear-gradient(100deg,var(--violet),var(--cyan) 55%,var(--green));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lede{font-size:17.5px;color:var(--mut);max-width:720px;margin:0 0 22px}
+  .pill-row{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:26px}
+  .pill{font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--line2);color:var(--mut);background:var(--panel)}
+  .pill b{color:var(--tx)}
+  .alpha{border-color:rgba(251,191,36,.4);color:var(--amber);background:rgba(251,191,36,.07)}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:8px}
+  .stat{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px}
+  .stat .n{font-size:28px;font-weight:800;letter-spacing:-.5px}
+  .stat .n.v{color:var(--violet)} .stat .n.c{color:var(--cyan)} .stat .n.g{color:var(--green)}
+  .stat .n.a{color:var(--amber)} .stat .n.p{color:var(--pink)} .stat .n.b{color:var(--blue)}
+  .stat .l{color:var(--mut);font-size:12.5px;margin-top:2px}
+
+  /* ---- pillars ---- */
+  .pillars{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  .pillar{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;position:relative;overflow:hidden}
+  .pillar::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent,var(--violet))}
+  .pillar .ic{font-size:22px;margin-bottom:8px}
+  .pillar h3{margin:0 0 8px;font-size:16px}
+  .pillar .vs{display:flex;flex-direction:column;gap:6px;font-size:13px}
+  .pillar .bad{color:var(--dim)} .pillar .bad b{color:var(--red);font-weight:600}
+  .pillar .good{color:var(--mut)} .pillar .good b{color:var(--green);font-weight:600}
+
+  /* ---- filter pills ---- */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 20px}
+  .f{cursor:pointer;font-size:12.5px;padding:6px 13px;border-radius:999px;border:1px solid var(--line2);
+     color:var(--mut);background:var(--panel);user-select:none;transition:.15s}
+  .f:hover{color:var(--tx);border-color:var(--violet-d)}
+  .f.on{background:var(--violet-d);border-color:var(--violet-d);color:#fff}
+
+  /* ---- cards ---- */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);
+        border-radius:var(--radius);padding:17px 17px 15px;transition:.18s;position:relative}
+  .card:hover{border-color:var(--line2);transform:translateY(-2px);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .card h3{margin:0 0 7px;font-size:15.5px;display:flex;align-items:center;gap:8px}
+  .card h3 .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 8px currentColor}
+  .card p{margin:0;color:var(--mut);font-size:13.3px}
+  .card .tag{display:inline-block;margin-top:11px;font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;
+    color:var(--dim);border:1px solid var(--line2);padding:2px 8px;border-radius:6px;font-family:var(--mono)}
+  .card .meta{margin-top:9px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .hidden{display:none !important}
+
+  /* accent dot colors */
+  .c-violet{color:var(--violet)} .c-green{color:var(--green)} .c-cyan{color:var(--cyan)}
+  .c-amber{color:var(--amber)} .c-pink{color:var(--pink)} .c-blue{color:var(--blue)}
+  .c-orange{color:var(--orange)} .c-teal{color:var(--teal)} .c-red{color:var(--red)}
+
+  /* ---- CRD table-ish ---- */
+  .crd-group{margin-bottom:8px}
+  .crd-group .gh{display:flex;align-items:center;gap:10px;margin:18px 0 10px}
+  .crd-group .gh .badge{font-family:var(--mono);font-size:11px;color:var(--cyan);border:1px solid var(--line2);
+     padding:3px 9px;border-radius:7px;background:rgba(34,211,238,.06)}
+  .crd-group .gh h3{margin:0;font-size:15px;color:var(--mut);font-weight:600}
+
+  /* ---- integrations ---- */
+  .intg{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:13px}
+  .icat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .icat h3{margin:0 0 11px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .icat h3 .dot{width:8px;height:8px;border-radius:50%}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font-size:12px;padding:4px 10px;border-radius:8px;background:var(--bg2);border:1px solid var(--line2);color:var(--mut)}
+  .chip b{color:var(--tx);font-weight:600}
+
+  /* ---- flow ---- */
+  .flow{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);border-radius:var(--radius);padding:22px;overflow-x:auto}
+  .flow .steps{display:flex;align-items:stretch;gap:0;min-width:680px}
+  .flow .step{flex:1;padding:14px 14px;border:1px solid var(--line2);border-radius:11px;background:var(--bg2);position:relative}
+  .flow .step h4{margin:0 0 5px;font-size:13.5px}
+  .flow .step p{margin:0;font-size:12px;color:var(--mut)}
+  .flow .arrow{display:flex;align-items:center;color:var(--violet);font-size:20px;padding:0 9px}
+  .flow .num{font-family:var(--mono);font-size:11px;color:var(--violet);font-weight:700}
+
+  /* ---- binaries strip ---- */
+  .bins{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:11px}
+  .bin{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px 14px}
+  .bin code{color:var(--green);font-size:13px;font-weight:600}
+  .bin p{margin:5px 0 0;font-size:12.3px;color:var(--mut)}
+  .bin.test code{color:var(--amber)}
+
+  /* ---- verify ---- */
+  .verify{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .vbox{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .vbox .n{font-size:22px;font-weight:800;color:var(--violet)}
+  .vbox p{margin:4px 0 0;font-size:12.8px;color:var(--mut)}
+
+  footer{margin-top:40px;border-top:1px solid var(--line);padding:26px 0 48px;color:var(--dim);font-size:12.5px}
+  footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .noresults{color:var(--mut);padding:20px;text-align:center;display:none}
+
+  @media (max-width:640px){
+    .hero h1{font-size:34px}.nav nav{display:none}#q{flex:1}
+  }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="inner">
+    <div class="brand"><span class="logo"></span><span>smol-agents <small>features &amp; integrations</small></span></div>
+    <input id="q" type="search" placeholder="Filter features, CRDs, integrations…" autocomplete="off" />
+    <nav>
+      <a href="#pillars">Pillars</a>
+      <a href="#features">Features</a>
+      <a href="#crds">CRDs</a>
+      <a href="#harnesses">Harnesses</a>
+      <a href="#integrations">Integrations</a>
+      <a href="#binaries">Binaries</a>
+      <a href="#verify">Verification</a>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <h1>A <span class="grad">verifiable, hardened runtime</span><br/>for autonomous agents on Kubernetes.</h1>
+    <p class="lede">Every safety property is checkable — not asserted in a comment. Each agent gets a
+      hardware-isolated microVM, a cryptographic identity, brokered secrets it never holds, and an
+      eBPF egress cage it cannot disable. The critical state machines are model-checked in Quint.</p>
+    <div class="pill-row">
+      <span class="pill alpha">● Alpha — interfaces will change</span>
+      <span class="pill">Module <b>github.com/smol-platform/smol-agents</b></span>
+      <span class="pill">License <b>Apache-2.0</b></span>
+      <span class="pill">Milestones <b>M1–M5 (v0.3.0)</b></span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n v">17</div><div class="l">Custom Resources</div></div>
+      <div class="stat"><div class="n c">8</div><div class="l">Agent harnesses</div></div>
+      <div class="stat"><div class="n g">10</div><div class="l">Quint formal specs</div></div>
+      <div class="stat"><div class="n a">3</div><div class="l">E2E rings (L0·L1·L2)</div></div>
+      <div class="stat"><div class="n p">23</div><div class="l">Go packages</div></div>
+      <div class="stat"><div class="n b">10+</div><div class="l">Production binaries</div></div>
+    </div>
+  </header>
+
+  <!-- PILLARS -->
+  <section id="pillars">
+    <div class="sec-head"><span class="kick">why it exists</span><h2>Four concerns, one runtime</h2></div>
+    <p class="sec-sub">A modern agent runs untrusted plans, calls external APIs, and holds credentials —
+      exactly the threat model you don't want on a shared cluster. smol-agents fuses the four hard
+      problems into one coherent runtime so platform teams don't reinvent them per tenant.</p>
+    <div class="pillars">
+      <div class="pillar" style="--accent:var(--violet)">
+        <div class="ic">🛡️</div><h3>Isolation</h3>
+        <div class="vs">
+          <span class="bad">Without: <b>container namespaces</b> (shared kernel)</span>
+          <span class="good">With: <b>Kata + Firecracker microVM</b> per agent (gVisor fallback)</span>
+        </div>
+      </div>
+      <div class="pillar" style="--accent:var(--cyan)">
+        <div class="ic">🪪</div><h3>Identity</h3>
+        <div class="vs">
+          <span class="bad">Without: <b>bearer tokens</b> in env vars</span>
+          <span class="good">With: per-agent <b>SPIFFE SVID</b>, auto-rotated, issued by SPIRE</span>
+        </div>
+      </div>
+      <div class="pillar" style="--accent:var(--green)">
+        <div class="ic">🔑</div><h3>Secrets</h3>
+        <div class="vs">
+          <span class="bad">Without: <b>long-lived keys</b> in agent memory</span>
+          <span class="good">With: <b>broker-minted short leases</b>; secretless egress the agent never sees</span>
+        </div>
+      </div>
+      <div class="pillar" style="--accent:var(--amber)">
+        <div class="ic">🌐</div><h3>Network</h3>
+        <div class="vs">
+          <span class="bad">Without: <b>open egress</b></span>
+          <span class="good">With: <b>eBPF allow-list</b> + identity-aware proxy it can't switch off</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <div class="sec-head"><span class="kick">capabilities</span><h2>Features</h2></div>
+    <p class="sec-sub">Everything the platform does, by construction. Use the filter pills or the search
+      box up top to narrow down.</p>
+    <div class="filters" id="filters">
+      <span class="f on" data-f="all">All</span>
+      <span class="f" data-f="isolation">Isolation</span>
+      <span class="f" data-f="identity">Identity</span>
+      <span class="f" data-f="secrets">Secrets</span>
+      <span class="f" data-f="network">Network</span>
+      <span class="f" data-f="runtime">Runtime</span>
+      <span class="f" data-f="orchestration">Orchestration</span>
+      <span class="f" data-f="memory">Memory</span>
+      <span class="f" data-f="human">Human-in-loop</span>
+      <span class="f" data-f="observability">Observability</span>
+      <span class="f" data-f="verification">Verification</span>
+    </div>
+    <div class="grid" id="featgrid">
+      <!-- isolation -->
+      <div class="card" data-cat="isolation" data-tags="kata firecracker microvm gvisor runc sandbox runtimeclass containment">
+        <h3><span class="dot c-violet"></span>Per-agent microVM sandbox</h3>
+        <p>Kata + Firecracker hardware isolation per agent, with a gVisor fallback when no KVM exists and runc for dev. Two-layer containment: host eBPF visibility <em>and</em> the microVM.</p>
+        <span class="tag">isolation</span>
+      </div>
+      <div class="card" data-cat="isolation" data-tags="failclosed pending runtimeclass d3 strict policy">
+        <h3><span class="dot c-violet"></span>Fail-closed run datapath</h3>
+        <p>AgentRun pods pin a sandbox <code>RuntimeClass</code> — a run holds <code>Pending</code> rather than execute unisolated. Danger flags (<code>--dangerously-skip-permissions</code>) are microVM-gated and opt-in only.</p>
+        <span class="tag">isolation</span>
+      </div>
+      <div class="card" data-cat="isolation" data-tags="agentnodepool karpenter ec2nodeclass kvm metal provisioning node shape">
+        <h3><span class="dot c-violet"></span>Isolation-aware node provisioning</h3>
+        <p><code>AgentNodePool</code> derives KVM/metal node shape from an agent's sandbox and compiles to a Karpenter <code>NodePool</code> + <code>EC2NodeClass</code> — exactly the nodes the isolation needs.</p>
+        <span class="tag">isolation</span>
+      </div>
+
+      <!-- identity -->
+      <div class="card" data-cat="identity" data-tags="spiffe spire svid x509 jwt rotation csi zero-trust">
+        <h3><span class="dot c-cyan"></span>Zero-trust SPIFFE identity</h3>
+        <p>Per-agent X.509 + JWT SVIDs, auto-rotated, issued by SPIRE over the CSI driver. Three modes: <code>insecure</code> / <code>permissive</code> / <code>strict</code>.</p>
+        <span class="tag">identity</span>
+      </div>
+      <div class="card" data-cat="identity" data-tags="mtls dual-rail gateway mesh transport tls">
+        <h3><span class="dot c-cyan"></span>Dual-rail mTLS transport</h3>
+        <p>SPIFFE mTLS on both rails: a public gateway and a private mesh. In <code>strict</code> mode every connection is identity-checked.</p>
+        <span class="tag">identity</span>
+      </div>
+
+      <!-- secrets -->
+      <div class="card" data-cat="secrets" data-tags="broker kloak uds socket so_peercred lease secret-proxy short-lived">
+        <h3><span class="dot c-green"></span>Secret broker (UDS lease)</h3>
+        <p>A kloak-style broker mints credentials per request over a Unix socket, authenticated by <code>SO_PEERCRED</code> + SPIFFE. The agent process never reads a provider key.</p>
+        <span class="tag">secrets</span>
+      </div>
+      <div class="card" data-cat="secrets" data-tags="secretless trat github gitlab token mint exfil agent-blind dynamiccredential">
+        <h3><span class="dot c-green"></span>Secretless egress (TraT)</h3>
+        <p>The agent's GitHub/GitLab token is minted, injected at the proxy seam, and exfil-blocked <em>without the agent ever touching it</em> — authorized by a Transaction Token (TraT).</p>
+        <span class="tag">secrets</span>
+      </div>
+      <div class="card" data-cat="secrets" data-tags="dynamiccredentialbackend policy operator-granted mint rotation">
+        <h3><span class="dot c-green"></span>Dynamic credential policy</h3>
+        <p><code>DynamicCredentialBackend</code> defines operator-granted, dynamically-minted provider credentials — short-lived, TraT-authorized, never persisted.</p>
+        <span class="tag">secrets</span>
+      </div>
+
+      <!-- network -->
+      <div class="card" data-cat="network" data-tags="ebpf cgroup egress allow-list co-re cilium connect4 cage">
+        <h3><span class="dot c-amber"></span>eBPF egress cage</h3>
+        <p>Host CO-RE eBPF transparently redirects outbound calls to the agentnet sidecar and drops anything off the allow-list at the <code>egress</code> hook. The agent can't disable it.</p>
+        <span class="tag">network</span>
+      </div>
+      <div class="card" data-cat="network" data-tags="agentnetwork wireguard mesh identity proxy egress floor networkpolicy">
+        <h3><span class="dot c-amber"></span>Identity-aware egress proxy</h3>
+        <p><code>AgentNetwork</code> wires an identity proxy / WireGuard mesh plus a default-deny egress <code>NetworkPolicy</code> floor (DNS + in-cluster + public 80/443; cloud-metadata &amp; link-local blocked).</p>
+        <span class="tag">network</span>
+      </div>
+
+      <!-- runtime -->
+      <div class="card" data-cat="runtime" data-tags="plan act observe loop executor turn runtime">
+        <h3><span class="dot c-orange"></span>Plan–act–observe loop</h3>
+        <p>The core executor runs a bounded plan→act→observe loop with a replayable step log, behind an explicit <code>TurnExecutor.Execute(Turn)→Result</code> seam.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime" data-tags="budget maxsteps maxtokens maxwallclock maxtoolcalls hard limit proven quint">
+        <h3><span class="dot c-orange"></span>Hard budgets, formally proven</h3>
+        <p>Each agent carries a hard budget — <code>maxSteps</code> / <code>maxTokens</code> / <code>maxWallClock</code> / <code>maxToolCalls</code> — that the Quint model proves is never exceeded.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime" data-tags="tool mcp schema json validation reject dispatch">
+        <h3><span class="dot c-orange"></span>MCP-typed tools</h3>
+        <p><code>Tool</code> declares input/output JSON Schema; malformed tool calls are rejected before dispatch. Kinds: <code>mcp</code>, <code>http</code>, <code>agent</code>, <code>fanout</code>, <code>task</code>, <code>teammate</code>, <code>teambus</code>.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime" data-tags="fanout send map reduce width runtime tool">
+        <h3><span class="dot c-orange"></span>Fanout (map-reduce)</h3>
+        <p><code>kind=fanout</code> is a Send-style runtime map-reduce tool: spawn N child invocations with a width limiter, then fold their results.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime" data-tags="agentrun invocation assistants api state replay step log">
+        <h3><span class="dot c-orange"></span>Replayable runs</h3>
+        <p><code>AgentRun</code> is a single invocation with states aligned to the OpenAI Assistants API and a replayable step log folded into status.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime" data-tags="session durable serve-session checkpoint resume nats requiresaction worker">
+        <h3><span class="dot c-orange"></span>Durable sessions</h3>
+        <p><code>AgentSession</code> runs a long-lived <code>serve-session</code> worker that checkpoints its turn log to AgentFS and <em>resumes on restart</em>, parking in <code>RequiresAction</code> when idle.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime network" data-tags="agentgateway knative scale-to-zero nats jetstream queue autoscaling cold-start">
+        <h3><span class="dot c-orange"></span>Gateway + queue + autoscaling</h3>
+        <p>A stateless <code>agentgateway</code> (Knative Service, scale-to-zero) publishes turns to NATS JetStream; session workers consume them durably with per-tenant concurrency caps.</p>
+        <span class="tag">runtime</span>
+      </div>
+      <div class="card" data-cat="runtime" data-tags="agentrunquota governance concurrency admission queue quota tenant">
+        <h3><span class="dot c-orange"></span>Run governance &amp; quotas</h3>
+        <p><code>AgentRunQuota</code> + an admission queue enforce per-tenant concurrency caps for mid-scale (~100s concurrent) operation.</p>
+        <span class="tag">runtime</span>
+      </div>
+
+      <!-- orchestration -->
+      <div class="card" data-cat="orchestration" data-tags="a2a agent-to-agent composition child run usage roll-up subtree gc ownerref">
+        <h3><span class="dot c-blue"></span>Agent-to-agent composition</h3>
+        <p><code>kind=agent</code> tools spawn child runs with field-wise usage roll-up and ownerRef subtree garbage collection — agents compose into agents.</p>
+        <span class="tag">orchestration</span>
+      </div>
+      <div class="card" data-cat="orchestration" data-tags="agentteam team coordinator budget roll-up mailbox task list nats acl">
+        <h3><span class="dot c-blue"></span>Agent teams</h3>
+        <p><code>AgentTeam</code>: a shared task list (NATS KV CAS), per-member peer mailbox with provable NATS-ACL isolation, team budget roll-up, and subtree GC.</p>
+        <span class="tag">orchestration</span>
+      </div>
+      <div class="card" data-cat="orchestration verification" data-tags="generator verifier judge width limiter three-way merge coordinator decision">
+        <h3><span class="dot c-blue"></span>Generator–verifier coordination</h3>
+        <p>Coordination controllers run a generator-verifier loop with a BudgetGuard, WidthLimiter, ThreeWayMerge, and M5-reuse approval hooks.</p>
+        <span class="tag">orchestration</span>
+      </div>
+      <div class="card" data-cat="orchestration" data-tags="agentworkflow dag stategraph cel predicate result-routed declarative">
+        <h3><span class="dot c-blue"></span>Declarative workflows (DAG)</h3>
+        <p><code>AgentWorkflow</code> is a result-routed DAG (StateGraph) CRD with operator-side CEL predicate evaluation for conditional routing.</p>
+        <span class="tag">orchestration</span>
+      </div>
+
+      <!-- memory -->
+      <div class="card" data-cat="memory" data-tags="memorystore vector graph kv eventlog filesystem mcp gateway tenant quota">
+        <h3><span class="dot c-pink"></span>Agent memory as an MCP service</h3>
+        <p>Vector / graph / KV / event-log / filesystem backends behind one MCP gateway, with tenant isolation, deny-by-default policy, quotas, and audit.</p>
+        <span class="tag">memory</span>
+      </div>
+      <div class="card" data-cat="memory" data-tags="agentfs turso filesystem branch 3-way merge mergeable workspace recovery">
+        <h3><span class="dot c-pink"></span>Branchable filesystem memory</h3>
+        <p>Branchable, 3-way-mergeable filesystem memory backed by Turso AgentFS — with cross-pod file-state recovery proven live.</p>
+        <span class="tag">memory</span>
+      </div>
+      <div class="card" data-cat="memory" data-tags="kopia snapshot content-addressed versioning backend s3 minio backup periodic scheduler">
+        <h3><span class="dot c-pink"></span>Kopia versioning backend</h3>
+        <p>A pluggable kopia backend gives AgentFS content-addressed snapshots with automatic periodic snapshots (S3/minio backup, or ephemeral in-pod repo).</p>
+        <span class="tag">memory</span>
+      </div>
+      <div class="card" data-cat="memory" data-tags="memoryretriever embedding chunking topk rank pipeline policy">
+        <h3><span class="dot c-pink"></span>Retrieval pipelines</h3>
+        <p><code>MemoryRetriever</code> defines an embedding → chunking → topK → quota pipeline over stores, deny-by-default.</p>
+        <span class="tag">memory</span>
+      </div>
+      <div class="card" data-cat="memory observability" data-tags="agentepisode episodic memory few-shot recall record run">
+        <h3><span class="dot c-pink"></span>Episodic memory &amp; recall</h3>
+        <p><code>pkg/agentepisode</code> records run episodes and does pre-run few-shot recall — agents learn from their own history.</p>
+        <span class="tag">memory</span>
+      </div>
+
+      <!-- human -->
+      <div class="card" data-cat="human" data-tags="attach driver terminal ttyd tmux pty agentterminal wss viewer driver attachgrant oidc dex">
+        <h3><span class="dot c-teal"></span>Human-attachable agents</h3>
+        <p>Driver-mode terminal attach: a human authenticates against a bundled OIDC IdP, an <code>AttachGrant</code> authorizes, and <code>agentterminal</code> reverse-proxies a recorded ttyd/tmux PTY (viewer read-only, driver writable).</p>
+        <span class="tag">human-in-loop</span>
+      </div>
+      <div class="card" data-cat="human" data-tags="hitl approval pre-run gate m5 plan approval coordinator decision cancel">
+        <h3><span class="dot c-teal"></span>Human-in-the-loop approval</h3>
+        <p>An M5 pre-run approval gate pauses a run for human plan approval (approve / reject / cancel) before execution — reused by team coordination.</p>
+        <span class="tag">human-in-loop</span>
+      </div>
+      <div class="card" data-cat="human identity" data-tags="attachtoken audience-bound short-ttl token oidc dex keycloak driver-mode">
+        <h3><span class="dot c-teal"></span>Audience-bound attach tokens</h3>
+        <p><code>pkg/attachtoken</code> resolves an <code>AttachGrant</code> into an audience-bound, short-TTL token before a WSS terminal session — human identity on the SPIFFE-machine rail.</p>
+        <span class="tag">human-in-loop</span>
+      </div>
+
+      <!-- observability -->
+      <div class="card" data-cat="observability" data-tags="otel step span trace event stream live turn observability telemetry">
+        <h3><span class="dot c-teal"></span>Live step stream + OTel spans</h3>
+        <p>A live per-step turn event stream with OpenTelemetry step spans — watch a run plan, act, and observe in real time.</p>
+        <span class="tag">observability</span>
+      </div>
+      <div class="card" data-cat="observability" data-tags="cost milli-usd usage roll-up field-wise tokens observability-only no-gate">
+        <h3><span class="dot c-teal"></span>Honest cost accounting</h3>
+        <p>Cost is integer milli-USD, <em>observability-only</em> — never a gate. Usage rolls up field-wise across child runs (never a blind add); tool-calls are never gated on.</p>
+        <span class="tag">observability</span>
+      </div>
+      <div class="card" data-cat="observability verification" data-tags="agentjudge llm judge calibrated verifier primitive in-loop middleware after_model">
+        <h3><span class="dot c-teal"></span>Calibrated LLM-judge verifier</h3>
+        <p><code>pkg/agentjudge</code> is a calibrated LLM-as-judge primitive, usable as an in-loop verifier middleware (after-model hook) or a standalone scorer.</p>
+        <span class="tag">observability</span>
+      </div>
+
+      <!-- verification -->
+      <div class="card" data-cat="verification" data-tags="quint formal model checker safety invariant spec state machine 10">
+        <h3><span class="dot c-violet"></span>10 Quint formal specs</h3>
+        <p>SVID rotation, the secret-broker handshake, agent + operator lifecycle, agentnet egress, AgentFS, TraT/secretless egress, and memory merge are model-checked in Quint.</p>
+        <span class="tag">verification</span>
+      </div>
+      <div class="card" data-cat="verification" data-tags="rapid property test race detector go test unit invariant">
+        <h3><span class="dot c-violet"></span>Property + race testing</h3>
+        <p>Runtime invariants are property-tested with <code>rapid</code> under the race detector. Every tagged requirement is cited by at least one Quint invariant or property.</p>
+        <span class="tag">verification</span>
+      </div>
+      <div class="card" data-cat="verification" data-tags="e2e l0 l1 l2 docker-compose kind aws bare-metal ring coverage gate">
+        <h3><span class="dot c-violet"></span>Three escalating e2e rings</h3>
+        <p>L0 (docker-compose) → L1 (kind) → L2 (AWS Spot bare-metal kata). A coverage gate ties every scenario ID to a requirement.</p>
+        <span class="tag">verification</span>
+      </div>
+      <div class="card" data-cat="verification runtime" data-tags="operator feature flag status condition canary rollout drift healing reconcile">
+        <h3><span class="dot c-violet"></span>Operator, not chart</h3>
+        <p>Feature-flagged <code>SmolAgent</code> / <code>SmolAgentPlatform</code> CRs with per-feature status conditions, canary rollouts, and drift healing.</p>
+        <span class="tag">verification</span>
+      </div>
+    </div>
+    <div class="noresults" id="noresults">No matches — try a different term.</div>
+  </section>
+
+  <!-- CRDs -->
+  <section id="crds">
+    <div class="sec-head"><span class="kick">api surface</span><h2>Custom Resources</h2></div>
+    <p class="sec-sub">17 CRDs across two API groups. The <b>substrate</b> group describes <em>where</em>
+      agents run; the <b>runtime</b> group describes <em>what</em> runs.</p>
+
+    <div class="crd-group">
+      <div class="gh"><span class="badge">smolagents.smol-agents.ai · agents.smol-agents.ai</span><h3>Substrate</h3></div>
+      <div class="grid">
+        <div class="card" data-cat="crd" data-tags="smolagentplatform cluster defaults runtimeclass ebpf trust-domain provisioning">
+          <h3><span class="dot c-cyan"></span>SmolAgentPlatform <span class="meta">Cluster</span></h3>
+          <p>Cluster-wide defaults: RuntimeClass, ebpf-loader, trust domain, node provisioning.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="smolagent namespaced workload feature flag status condition hardened">
+          <h3><span class="dot c-cyan"></span>SmolAgent <span class="meta">Namespaced</span></h3>
+          <p>One hardened agent workload; every capability is a feature flag with a status condition.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentnodepool cluster kata karpenter ec2nodeclass node shape kvm metal">
+          <h3><span class="dot c-cyan"></span>AgentNodePool <span class="meta">Cluster</span></h3>
+          <p>Kata-capable node shape → compiles to a Karpenter <code>NodePool</code> + <code>EC2NodeClass</code>.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="crd-group">
+      <div class="gh"><span class="badge">runtime.agents.smol-agents.ai/v1</span><h3>Workload model</h3></div>
+      <div class="grid">
+        <div class="card" data-cat="crd" data-tags="agent declarative instructions model tools memory budget sandbox harness">
+          <h3><span class="dot c-violet"></span>Agent</h3>
+          <p>Declarative agent: instructions, model, tools, memory, hard budget, sandbox, harness.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="tool mcp schema input output json reject dispatch fanout http">
+          <h3><span class="dot c-violet"></span>Tool</h3>
+          <p>MCP-typed tool with input/output JSON Schema; malformed calls rejected before dispatch.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="modelprovider llm embedding credential broker endpoint">
+          <h3><span class="dot c-violet"></span>ModelProvider</h3>
+          <p>LLM / embedding provider + broker-resolved credentials.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentrun invocation assistants api state step log replay">
+          <h3><span class="dot c-violet"></span>AgentRun</h3>
+          <p>A single invocation (states aligned with the OpenAI Assistants API) with a replayable step log.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentsession durable serve-session checkpoint resume nats turn worker">
+          <h3><span class="dot c-violet"></span>AgentSession</h3>
+          <p>Durable, long-running session: a checkpointed worker that resumes its turn log and consumes turns from NATS.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentteam orchestration coordinator budget roll-up mailbox task subtree gc">
+          <h3><span class="dot c-blue"></span>AgentTeam</h3>
+          <p>A team of agents: shared task list, peer mailbox, team budget roll-up, subtree GC.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentworkflow dag stategraph cel predicate result-routed declarative">
+          <h3><span class="dot c-blue"></span>AgentWorkflow</h3>
+          <p>Declarative result-routed DAG (StateGraph) with operator-side CEL predicate routing.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentpolicy guardrail tool allow-list budget ceiling identity constraint enforce">
+          <h3><span class="dot c-amber"></span>AgentPolicy</h3>
+          <p>Guardrails: tool allow-lists, budget ceilings, identity constraints (enforced, not advisory).</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentrunquota concurrency cap admission queue tenant governance">
+          <h3><span class="dot c-amber"></span>AgentRunQuota</h3>
+          <p>Per-tenant concurrency caps + admission queue for mid-scale operation.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="agentnetwork egress identity proxy wireguard ebpf allow-list trat secretless">
+          <h3><span class="dot c-amber"></span>AgentNetwork</h3>
+          <p>Egress: identity proxy / WireGuard mesh + eBPF allow-list (+ TraT / secretless).</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="dynamiccredentialbackend mint operator-granted short-lived trat provider">
+          <h3><span class="dot c-green"></span>DynamicCredentialBackend</h3>
+          <p>Operator-granted, dynamically-minted provider credentials — short-lived, TraT-authorized.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="attachgrant human attach viewer driver role expiresat agentterminal wss">
+          <h3><span class="dot c-teal"></span>AttachGrant</h3>
+          <p><code>{agentRef, subject, role: viewer|driver, expiresAt}</code> → an audience-bound attach token.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="memorystore backend vector graph kv eventlog filesystem tenancy broker creds">
+          <h3><span class="dot c-pink"></span>MemoryStore</h3>
+          <p>A backend (vector / graph / KV / eventlog / filesystem) + tenancy + broker creds.</p>
+        </div>
+        <div class="card" data-cat="crd" data-tags="memoryretriever retrieval pipeline embedding chunking topk quota policy">
+          <h3><span class="dot c-pink"></span>MemoryRetriever</h3>
+          <p>A retrieval pipeline over stores: embedding, chunking, topK, quota, deny-by-default policy.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HARNESSES -->
+  <section id="harnesses">
+    <div class="sec-head"><span class="kick">many harnesses, one model</span><h2>Agent harnesses</h2></div>
+    <p class="sec-sub">The same declarative <code>Agent</code> model drives any of these execution harnesses —
+      from the built-in loop to bundled coding CLIs to a WebSocket daemon.</p>
+    <div class="grid">
+      <div class="card" data-cat="harness" data-tags="loop plan act observe built-in openai-compatible">
+        <h3><span class="dot c-orange"></span>loop</h3>
+        <p>The built-in plan–act–observe loop. Needs an OpenAI-compatible ModelProvider. Drives sessions.</p>
+        <span class="tag">built-in</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="hermes http harness gateway model source config">
+        <h3><span class="dot c-orange"></span>Hermes</h3>
+        <p>HTTP harness — drives sessions via an HTTP model gateway; the config.yaml is the model source.</p>
+        <span class="tag">http</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="claude-code anthropic cli print json append-system-prompt allowedtools kata">
+        <h3><span class="dot c-orange"></span>claude-code</h3>
+        <p>Anthropic's CLI as a bundled harness (<code>--print --output-format json</code>). File-writes need <code>--dangerously-skip-permissions</code> → kata-only. Run-mode.</p>
+        <span class="tag">cli bundle</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="codex openai exec json responses api config toml">
+        <h3><span class="dot c-orange"></span>codex</h3>
+        <p>OpenAI Codex CLI (<code>codex exec --json</code>, Responses API via config.toml). Needs a Responses-speaking gateway.</p>
+        <span class="tag">cli bundle</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="aider coding cli bundle image harness">
+        <h3><span class="dot c-orange"></span>aider</h3>
+        <p>The aider pair-programming CLI, shipped as a ready-to-run bundle image.</p>
+        <span class="tag">cli bundle</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="goose block coding cli bundle harness">
+        <h3><span class="dot c-orange"></span>goose</h3>
+        <p>Block's goose agent CLI as a bundle image; <code>harness.version</code> pins the tag.</p>
+        <span class="tag">cli bundle</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="pi-mono pi-bridge http key-isolating bridge in-pod">
+        <h3><span class="dot c-orange"></span>pi-mono</h3>
+        <p>HTTP via an in-pod, key-isolating <code>pi-bridge</code> — the harness never sees the upstream key.</p>
+        <span class="tag">http bridge</span>
+      </div>
+      <div class="card" data-cat="harness" data-tags="openclaw websocket daemon wss long-running session attach">
+        <h3><span class="dot c-orange"></span>OpenClaw</h3>
+        <p>A WebSocket daemon harness — a long-running, session-bound, human-attachable agent.</p>
+        <span class="tag">ws daemon</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- INTEGRATIONS -->
+  <section id="integrations">
+    <div class="sec-head"><span class="kick">ecosystem</span><h2>Integrations</h2></div>
+    <p class="sec-sub">What smol-agents plugs into — the runtime substrate, identity, messaging, storage,
+      model providers, and cloud it speaks to.</p>
+    <div class="intg">
+      <div class="icat" data-tags="kubernetes controller-runtime kata firecracker gvisor runc knative karpenter">
+        <h3><span class="dot c-violet"></span>Runtime &amp; isolation</h3>
+        <div class="chips">
+          <span class="chip"><b>Kubernetes</b></span><span class="chip">controller-runtime</span>
+          <span class="chip"><b>Kata</b> Containers</span><span class="chip"><b>Firecracker</b></span>
+          <span class="chip">gVisor</span><span class="chip">runc</span>
+          <span class="chip"><b>Knative</b> Serving</span><span class="chip"><b>Karpenter</b></span>
+        </div>
+      </div>
+      <div class="icat" data-tags="spiffe spire csi identity svid x509 jwt dex keycloak oidc">
+        <h3><span class="dot c-cyan"></span>Identity</h3>
+        <div class="chips">
+          <span class="chip"><b>SPIFFE</b></span><span class="chip"><b>SPIRE</b></span>
+          <span class="chip">SPIFFE CSI driver</span><span class="chip"><b>Dex</b> (OIDC)</span>
+          <span class="chip">Keycloak</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="ebpf co-re cilium wireguard mtls network egress cgroup">
+        <h3><span class="dot c-amber"></span>Networking</h3>
+        <div class="chips">
+          <span class="chip"><b>eBPF</b> / CO-RE</span><span class="chip">cilium/ebpf</span>
+          <span class="chip"><b>WireGuard</b></span><span class="chip">NetworkPolicy</span>
+          <span class="chip">cgroup allow-list</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="nats jetstream kv acl messaging queue turn">
+        <h3><span class="dot c-green"></span>Messaging</h3>
+        <div class="chips">
+          <span class="chip"><b>NATS</b> JetStream</span><span class="chip">NATS KV (CAS)</span>
+          <span class="chip">NATS account ACLs</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="agentfs turso kopia minio s3 storage snapshot backup">
+        <h3><span class="dot c-pink"></span>Storage &amp; memory</h3>
+        <div class="chips">
+          <span class="chip"><b>Turso AgentFS</b></span><span class="chip"><b>kopia</b></span>
+          <span class="chip">MinIO</span><span class="chip">AWS S3</span>
+          <span class="chip">vector / graph / KV</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="mcp model context protocol http stdio tools">
+        <h3><span class="dot c-blue"></span>Protocols</h3>
+        <div class="chips">
+          <span class="chip"><b>MCP</b> (HTTP per-agent)</span><span class="chip">MCP (stdio allow-list)</span>
+          <span class="chip"><b>A2A</b> agent-to-agent</span><span class="chip">OpenAI Assistants API</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="zai openai anthropic claude codex tavily glm-4.6 llm provider">
+        <h3><span class="dot c-teal"></span>Model providers &amp; tools</h3>
+        <div class="chips">
+          <span class="chip"><b>z.ai</b> (glm-4.6)</span><span class="chip"><b>OpenAI</b></span>
+          <span class="chip"><b>Anthropic</b> (claude-code)</span><span class="chip">OpenAI Codex</span>
+          <span class="chip">Tavily (tool)</span><span class="chip">any OpenAI-compat</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="aws ec2 spot ecr irsa c7gd metal cloudflare tunnel hetzner">
+        <h3><span class="dot c-orange"></span>Cloud &amp; deploy</h3>
+        <div class="chips">
+          <span class="chip"><b>AWS</b> EC2 Spot (c7gd.metal)</span><span class="chip">ECR</span>
+          <span class="chip">IRSA</span><span class="chip">Cloudflare Tunnel</span>
+          <span class="chip">Helm</span><span class="chip">Kustomize</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="ttyd tmux pty terminal attach webterm wss">
+        <h3><span class="dot c-teal"></span>Terminal / attach</h3>
+        <div class="chips">
+          <span class="chip"><b>ttyd</b></span><span class="chip">tmux PTY</span>
+          <span class="chip">WSS terminal</span><span class="chip">session recording</span>
+        </div>
+      </div>
+      <div class="icat" data-tags="quint rapid otel opentelemetry kind k0s docker-compose verification">
+        <h3><span class="dot c-violet"></span>Verification &amp; observability</h3>
+        <div class="chips">
+          <span class="chip"><b>Quint</b> model checker</span><span class="chip">rapid (property)</span>
+          <span class="chip"><b>OpenTelemetry</b></span><span class="chip">kind</span>
+          <span class="chip">k0s</span><span class="chip">docker-compose</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FLOW -->
+  <section id="flow">
+    <div class="sec-head"><span class="kick">defense in depth</span><h2>How one egress request stays safe</h2></div>
+    <p class="sec-sub">The agent makes a plain outbound call. It never holds the credential and cannot
+      reach an unlisted host — by construction.</p>
+    <div class="flow">
+      <div class="steps">
+        <div class="step"><div class="num">01</div><h4>Plain call</h4><p>The agent makes an ordinary outbound request — no SDK, no key.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="num">02</div><h4>eBPF redirect</h4><p>Host <code>connect4</code> transparently redirects it to the agentnet sidecar.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="num">03</div><h4>Stamp identity</h4><p>The sidecar originates upstream TLS and stamps a fresh JWT-SVID / TraT.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="num">04</div><h4>Mint credential</h4><p>For provider APIs, the broker injects a short-lived, agent-blind credential.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="num">05</div><h4>Drop the rest</h4><p>eBPF <code>egress</code> drops anything not on the allow-list.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- BINARIES -->
+  <section id="binaries">
+    <div class="sec-head"><span class="kick">what ships</span><h2>Binaries</h2></div>
+    <p class="sec-sub">Production binaries plus the operator manager and the agentbench runner. (E2E test
+      doubles — <code>fake-*</code>, probes — ship alongside but aren't part of the runtime.)</p>
+    <div class="bins">
+      <div class="bin"><code>agent</code><p>The agent runtime entrypoint — <code>run</code> · <code>serve-session</code>.</p></div>
+      <div class="bin"><code>manager</code><p>The controller-runtime operator (all reconcilers + webhooks).</p></div>
+      <div class="bin"><code>agentgateway</code><p>Stateless HTTP front door → NATS turn queue (Knative Service).</p></div>
+      <div class="bin"><code>secret-proxy</code><p>kloak-style broker sidecar (<code>SO_PEERCRED</code> + SPIFFE).</p></div>
+      <div class="bin"><code>agentterminal</code><p>Attach gateway — reverse-proxies a ttyd/tmux PTY over WSS.</p></div>
+      <div class="bin"><code>ebpf-loader</code><p>Privileged per-node DaemonSet that pins CO-RE maps.</p></div>
+      <div class="bin"><code>agentfs-sidecar</code><p>AgentFS snapshot/backup sidecar (kopia / S3 / ephemeral).</p></div>
+      <div class="bin"><code>memory-mcp</code><p>MCP gateway for the memory subsystem (thin).</p></div>
+      <div class="bin"><code>memory-worker</code><p>Retrieval data plane — embed · chunk · rank · backends.</p></div>
+      <div class="bin"><code>pi-bridge</code><p>In-pod, key-isolating HTTP bridge for the pi-mono harness.</p></div>
+      <div class="bin"><code>agentctl</code><p>Diagnostics + deploy CLI (incl. Cloudflare-tunnel deploy).</p></div>
+      <div class="bin"><code>agentbench</code><p>Declarative benchmark runner (correctness · perf · scale · isolation).</p></div>
+    </div>
+  </section>
+
+  <!-- VERIFY -->
+  <section id="verify">
+    <div class="sec-head"><span class="kick">correctness as a build artifact</span><h2>Verification</h2></div>
+    <p class="sec-sub">Safety here is checked, not claimed. Every requirement tagged in a
+      <code>requirements.md</code> is cited by at least one Quint invariant or rapid property.</p>
+    <div class="verify">
+      <div class="vbox"><div class="n">10</div><p>Quint specifications wired into <code>make verify-formal</code> (Safety invariant on each).</p></div>
+      <div class="vbox"><div class="n">3</div><p>E2E rings: L0 compose (~1m) · L1 kind (~5m) · L2 AWS bare-metal kata (~12m).</p></div>
+      <div class="vbox"><div class="n">-race</div><p>All unit + rapid property tests run under the Go race detector.</p></div>
+      <div class="vbox"><div class="n">M1–M5</div><p>Governance floor → capability wire → A2A → interactive plane → HITL.</p></div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>smol-agents · Apache-2.0 · <span class="mono">github.com/smol-platform/smol-agents</span></span>
+    <span>⚠️ Alpha — interfaces will change. Generated from the repository feature surface.</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  const q = document.getElementById('q');
+  const filters = document.getElementById('filters');
+  const featCards = Array.from(document.querySelectorAll('#featgrid .card'));
+  const allCards = Array.from(document.querySelectorAll('.card[data-tags]'));
+  const icats = Array.from(document.querySelectorAll('.icat[data-tags]'));
+  const nores = document.getElementById('noresults');
+  let active = 'all';
+
+  function text(el){ return (el.textContent + ' ' + (el.dataset.tags||'') + ' ' + (el.dataset.cat||'')).toLowerCase(); }
+
+  function applyFeatureFilter(){
+    let shown = 0;
+    featCards.forEach(c=>{
+      const okCat = active==='all' || (c.dataset.cat||'').split(' ').includes(active);
+      c.classList.toggle('hidden', !okCat);
+      if(okCat) shown++;
+    });
+  }
+
+  function applySearch(){
+    const term = q.value.trim().toLowerCase();
+    // feature grid respects both category + search
+    let anyFeat = 0;
+    featCards.forEach(c=>{
+      const okCat = active==='all' || (c.dataset.cat||'').split(' ').includes(active);
+      const okTerm = !term || text(c).includes(term);
+      const show = okCat && okTerm;
+      c.classList.toggle('hidden', !show);
+      if(show) anyFeat++;
+    });
+    // all other cards (CRDs, harnesses) respect search only
+    allCards.forEach(c=>{
+      if(featCards.includes(c)) return;
+      c.classList.toggle('hidden', !!term && !text(c).includes(term));
+    });
+    // integration categories: show if cat text or any chip matches
+    icats.forEach(ic=>{
+      ic.classList.toggle('hidden', !!term && !text(ic).includes(term));
+    });
+    nores.style.display = (anyFeat===0) ? 'block' : 'none';
+  }
+
+  filters.addEventListener('click', e=>{
+    const f = e.target.closest('.f'); if(!f) return;
+    filters.querySelectorAll('.f').forEach(x=>x.classList.remove('on'));
+    f.classList.add('on');
+    active = f.dataset.f;
+    applySearch();
+  });
+
+  let t; q.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(applySearch, 80); });
+
+  applyFeatureFilter();
+})();
+</script>
+</body>
+</html>
