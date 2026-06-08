@@ -28,6 +28,22 @@ var Coverage = map[string]string{
 	"R-E2E-SCN-CLAUDE-LIVE": "shared.claudeHarnessLive",
 	"R-E2E-SCN-CODEX-LIVE":  "shared.codexHarnessLive",
 
+	// M5 human-in-the-loop pre-run approval gate (approve / reject / timeout).
+	"R-E2E-SCN-APPROVAL":         "shared.approvalGate",
+	"R-E2E-SCN-APPROVAL-REJECT":  "shared.approvalReject",
+	"R-E2E-SCN-APPROVAL-TIMEOUT": "shared.approvalTimeout",
+	// M1 governance floor: egress NetworkPolicy + AgentPolicy (webhook + reconcile).
+	"R-E2E-SCN-EGRESS-FLOOR":     "shared.egressFloor",
+	"R-E2E-SCN-POLICY-WEBHOOK":   "shared.policyGate",
+	"R-E2E-SCN-POLICY-RECONCILE": "shared.policyReconcileGate",
+	// M2 capability wire: tool-kind admission + stdio-MCP cluster allow-list.
+	"R-E2E-SCN-TOOL-KIND": "shared.toolKindGuard",
+	"R-E2E-SCN-STDIO-MCP": "shared.stdioMCPGate",
+	// M3/M4 durable sessions + agent-to-agent composition.
+	"R-E2E-SCN-AGENTSESSION":     "shared.agentSession",
+	"R-E2E-SCN-AGENTSESSION-RUN": "shared.agentSessionRunning",
+	"R-E2E-SCN-A2A":              "shared.a2aComposition",
+
 	// Driver / ring orchestration: validated by the existence + green
 	// pass of each ring's TestLn root test. Each entry below names
 	// the test that exercises the requirement structurally.

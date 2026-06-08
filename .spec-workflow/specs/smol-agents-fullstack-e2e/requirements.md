@@ -118,6 +118,28 @@ every ring that has the required capability.
 
 **R-E2E-SCN-CODEX-LIVE** (L2 only) — When a `mode=harness` Agent of `kind=codex` runs on a `kata-fc` node with `approvalMode=never` + `outputFormat=json` + `codexBaseURL`, its `CODEX_API_KEY` broker-leased from a single-key secret and the operator-rendered `~/.codex/config.toml` routing codex at the configured provider (`wire_api=responses`), an AgentRun **shall** reach `Completed` with a non-empty `Output` and a non-zero `usage.tokens` — proving the codex harness image resolves, the secret env is leased + injected, the rendered config drives the provider, and a live model is reached. Requires `CapLiveLLM` (driver-injected provider keys via `L2_LIVE_LLM=1`); self-skips otherwise.
 
+**R-E2E-SCN-APPROVAL** (L1+) — When an Agent declares a pre-run human approval gate (M5 HITL) and an AgentRun is applied, the run **shall** park awaiting a decision and, upon an `approve` decision, proceed through the plan→act→observe loop to `Completed`.
+
+**R-E2E-SCN-APPROVAL-REJECT** (L1+) — When a parked AgentRun receives a `reject` decision, it **shall** transition to a terminal rejected state without executing the plan, and no tool side effects **shall** occur.
+
+**R-E2E-SCN-APPROVAL-TIMEOUT** (L1+) — When a parked AgentRun receives no decision within its approval deadline, it **shall** fail closed to a terminal timed-out state rather than execute.
+
+**R-E2E-SCN-EGRESS-FLOOR** (L1+; enforced only on a policy-enforcing CNI) — An AgentRun Pod **shall** receive a default-deny egress `NetworkPolicy` floor (allowing DNS, in-cluster, and public 80/443 while blocking cloud-metadata and link-local); a dial to a blocked destination **shall** fail while an allowed one succeeds.
+
+**R-E2E-SCN-POLICY-WEBHOOK** (L1-webhook+/L2) — When an Agent references a provider or tool disallowed by an applicable `AgentPolicy`, the validating webhook **shall** reject (or, per config, warn) before the reconciler admits it.
+
+**R-E2E-SCN-POLICY-RECONCILE** (L1+) — When an `AgentPolicy` denies a referenced provider/tool, the Agent reconciler **shall** fail closed (Agent not `Ready`, dependent runs blocked) — enforcement at the controller, independent of the webhook.
+
+**R-E2E-SCN-TOOL-KIND** (L1+) — When an Agent references a `Tool` of an unsupported or disallowed `kind`, admission **shall** reject (or warn) it before any dispatch.
+
+**R-E2E-SCN-STDIO-MCP** (L1+) — A stdio-transport MCP tool **shall** be admitted only when its command is on the operator's cluster allow-list; an off-list command **shall** be rejected.
+
+**R-E2E-SCN-AGENTSESSION** (L1+) — When an `AgentSession` is applied, the operator **shall** start a durable `serve-session` worker that reaches `Ready` and parks in `RequiresAction` when idle.
+
+**R-E2E-SCN-AGENTSESSION-RUN** (L2; requires kata) — When a turn is submitted to a running `AgentSession`, the worker **shall** consume it and fold a non-empty turn result, resuming its checkpointed turn log across a worker restart.
+
+**R-E2E-SCN-A2A** (L2; requires kata) — When an Agent invokes a `kind=agent` tool, the runtime **shall** spawn a child `AgentRun`, roll the child's usage up field-wise into the parent, and GC the child subtree via ownerRef on completion.
+
 ## Verification (R-E2E-VRF-*)
 
 **R-E2E-VRF-1** — Every requirement in this document **shall** map to at least one Go test in `test/e2e/fullstack/`. CI **shall** fail if any R-E2E-* ID is unreferenced by tests (a `coverage.go` file maintains the mapping and the CI check parses it).
