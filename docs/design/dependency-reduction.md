@@ -96,3 +96,30 @@ It covers the two biggest reductions:
   `provider: Karpenter` (the CRD default) for EKS/cloud.
 - **OIDC (`7fr.8`)** — `deploy/oidc/dex.yaml` is already minimal (static-password + a
   kubernetes connector; no LDAP/SAML/Google). Add a GitHub connector for real users.
+
+### gVisor egress verification (7fr.1)
+
+Proven on a kind cluster with **Calico** (policy-enforcing CNI) + **runsc** (gVisor):
+two pods running under gVisor (`KERNEL=4.19.0-gvisor`), one in a namespace with a
+default-deny egress `NetworkPolicy`, one without:
+
+| Pod (both gVisor) | Egress policy | Result curling `1.1.1.1` |
+|---|---|---|
+| `test-blocked/probe` | default-deny egress | **timed out → EGRESS-BLOCKED** |
+| `test-open/probe`    | none                | REACHED HTTP=301 |
+
+So the **default-deny egress NetworkPolicy floor enforces under gVisor** (the only
+difference between the two pods is the policy) — the primary, CNI-enforced,
+runtime-agnostic egress guarantee holds for gVisor pods.
+
+**eBPF cage under gVisor (mechanism):** the host `cgroup/connect4` *redirect* fires
+on a host `connect()` syscall, which only happens for shared-kernel (runc)
+workloads — under gVisor's userspace netstack (exactly as under a kata microVM)
+the agent's `connect()` is handled by the sentry, so connect4 isn't the
+enforcement path for the agent's own connections. The `cgroup_skb/egress`
+*allow-list drop* operates on the pod-cgroup veth, which gVisor's host-side
+traffic traverses, so it is the same host-side defense-in-depth class as kata
+(live-verifying the eBPF drop specifically under gVisor needs the bpf-loader — a
+noted follow-up). The egress *safety* of the gVisor-default flip is carried by
+the proven NetworkPolicy floor; the agentnet sidecar remains the credential-
+injection seam (configured egress, not connect4) under gVisor.
