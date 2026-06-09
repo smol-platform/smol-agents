@@ -48,6 +48,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -69,6 +70,7 @@ func main() {
 	backendEndpoint := flag.String("backend-endpoint", "", "backend DSN/address (pgvector: DSN, qdrant: host:port, redis: host:port, neo4j: bolt URI)")
 	backendAuthSecret := flag.String("backend-auth-secret", "", "broker secret for backend credentials (format: user:password for neo4j, password-only for redis)")
 	backendDims := flag.Int("backend-dims", 1536, "vector dimensions for pgvector/qdrant backends")
+	backendMTLSSpiffeID := flag.String("backend-mtls-spiffe-id", "", "if set, dial the qdrant backend over SPIFFE-mTLS authorizing this peer SPIFFE ID (the mTLS sidecar, x9i.2/x9i.3); empty = insecure dial (Qdrant Cloud / dev only)")
 	agentfsMount := flag.String("agentfs-mount", "/var/memory-agentfs", "mount path for the agentfs backend")
 	spireSocket := flag.String("spire-socket", "unix:///run/spire/agent-sockets/api.sock", "SPIRE workload-API socket")
 	identityMode := flag.String("identity-mode", "permissive", "insecure|permissive|strict")
@@ -148,11 +150,35 @@ func main() {
 			logger.Error("qdrant backend requires -backend-endpoint (host:port)")
 			os.Exit(2)
 		}
-		qb, qErr := memory.NewQdrantBackend(ctx, memory.QdrantConfig{
+		qCfg := memory.QdrantConfig{
 			Addr:          *backendEndpoint,
 			Collection:    "memory",
 			EmbeddingDims: uint64(*backendDims),
-		})
+		}
+		// x9i.3: dial the Qdrant SPIFFE-mTLS sidecar when an authorized peer ID is
+		// given (the in-cluster secure path). Without the flag we dial insecure —
+		// Qdrant Cloud (its own TLS + API key) or dev only. The source lives for
+		// the process (closed at exit), mirroring the server source below.
+		if *backendMTLSSpiffeID != "" {
+			peerID, idErr := spiffeid.FromString(*backendMTLSSpiffeID)
+			if idErr != nil {
+				logger.Error("backend-mtls-spiffe-id", "err", idErr)
+				os.Exit(2)
+			}
+			src, srcErr := identity.Open(ctx, identity.SourceConfig{
+				WorkloadAPIAddr: *spireSocket,
+				BootTimeout:     30 * time.Second,
+				Mode:            identity.ModeStrict,
+			})
+			if srcErr != nil {
+				logger.Error("qdrant mTLS identity source", "err", srcErr)
+				os.Exit(1)
+			}
+			defer func() { _ = src.Close() }()
+			qCfg.TLS = tlsconfig.MTLSClientConfig(src.X509Source(), src.X509Source(), tlsconfig.AuthorizeID(peerID))
+			logger.Info("qdrant mTLS enabled", "peer", peerID.String())
+		}
+		qb, qErr := memory.NewQdrantBackend(ctx, qCfg)
 		if qErr != nil {
 			logger.Error("qdrant backend", "err", qErr)
 			os.Exit(1)

@@ -1,0 +1,144 @@
+# Qdrant — SPIFFE-mTLS variant (x9i.2). Apply this INSTEAD of qdrant.yaml when
+# you want identity-gated access to the vector store (multi-tenant / D1).
+#
+# Topology (a ghostunnel SPIFFE sidecar fronts Qdrant; Qdrant never speaks the
+# wire directly):
+#
+#   memory-worker ──mTLS(7443)──▶ ghostunnel ──plaintext(127.0.0.1:6334)──▶ qdrant
+#     QdrantConfig.TLS =                  server, SPIFFE Workload-API certs,
+#     MTLSClientConfig(authorize qdrant)  --allow-uri-san = memory-worker SVID
+#
+# - Qdrant's own gRPC(6334)/REST(6333) stay pod-local; the NetworkPolicy permits
+#   ONLY the ghostunnel mTLS port (7443) from memory-worker, so the only door is
+#   the mutually-authenticated one. Probes stay httpGet on 6333 (kubelet, node-
+#   local — not subject to the pod ingress policy).
+# - Point the worker at this (collection "memory", dims via -backend-dims):
+#     -backend=qdrant
+#     -backend-endpoint=qdrant-mtls.smol-agents-system.svc:7443
+#     -backend-mtls-spiffe-id=spiffe://smol-agents.ai/ns/smol-agents-system/qdrant
+#
+#   kubectl apply -f deploy/qdrant/qdrant-mtls-sidecar.yaml
+#
+# ── VERIFICATION STATUS ──────────────────────────────────────────────────────
+#   VERIFIED:  kubeconform-strict schema valid; the worker-side mTLS dial path
+#              (QdrantConfig.TLS + AuthorizeID, x9i.3) builds + unit-tested.
+#   GATED (x9i.6, needs a SPIRE cluster): the live mTLS handshake; the exact
+#              ghostunnel SPIFFE flag names (--use-workload-api-addr /
+#              --allow-uri-san) for the pinned image; that the kubelet httpGet
+#              probe survives the pod ingress policy on your CNI; the SVID path
+#              for the qdrant SA. Treat the ghostunnel args as the reference
+#              design until x9i.6 confirms them on a live SPIRE cluster.
+# ─────────────────────────────────────────────────────────────────────────────
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # single RWO PVC
+  selector:
+    matchLabels: { app.kubernetes.io/name: qdrant }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: qdrant }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.4
+          ports:
+            - { name: rest, containerPort: 6333 } # pod-local: probes + ghostunnel only
+            - { name: grpc, containerPort: 6334 } # pod-local: ghostunnel target only
+          readinessProbe:
+            httpGet: { path: /readyz, port: 6333 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /livez, port: 6333 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: storage, mountPath: /qdrant/storage }
+        # SPIFFE-mTLS terminator: only authenticated peers (memory-worker SVID)
+        # reach Qdrant; certs + trust bundle come from the SPIRE Workload API.
+        - name: ghostunnel
+          image: ghostunnel/ghostunnel:v1.8.2
+          args:
+            - server
+            - --listen=0.0.0.0:7443
+            - --target=127.0.0.1:6334
+            - --use-workload-api-addr=unix:///run/spire/agent-sockets/api.sock
+            - --allow-uri-san=spiffe://smol-agents.ai/ns/smol-agents-system/memory-worker
+          ports:
+            - { name: mtls, containerPort: 7443 }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: sockets, mountPath: /run/spire/agent-sockets, readOnly: true }
+      volumes:
+        - name: storage
+          persistentVolumeClaim: { claimName: qdrant }
+        - name: sockets
+          hostPath: { path: /run/spire/agent-sockets, type: DirectoryOrCreate }
+---
+# Only the ghostunnel mTLS port is exposed as a Service. The worker dials this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-mtls
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  selector: { app.kubernetes.io/name: qdrant }
+  ports:
+    - { name: mtls, port: 7443, targetPort: 7443 }
+---
+# Permit ONLY the ghostunnel mTLS port (7443) from memory-worker. Direct 6333/
+# 6334 ingress from any other pod is denied — the only door is the mTLS one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-mtls-ingress
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: qdrant }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: memory-worker }
+      ports:
+        - { protocol: TCP, port: 7443 }
