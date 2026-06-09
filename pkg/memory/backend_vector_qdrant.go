@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 // QdrantConfig holds the configuration for a QdrantBackend.
@@ -242,6 +243,27 @@ func (b *QdrantBackend) Delete(ctx context.Context, id string, filter Filter) er
 // are stored, cosine similarity is used; otherwise a scroll (listing) approach
 // is used for text fallback. The worker calls RetrieveWithEmbedding for the
 // true vector path.
+// qdrantScoredFromPoint builds a ScoredChunk from a Qdrant point, enforcing a
+// defense-in-depth tenant guard (x9i.5): even if the server-side payload filter
+// ever regressed, a point whose payload tenant != the caller's tenant is dropped
+// (ok=false) and never surfaced — the same belt-and-suspenders check Get already
+// applies, now on the shared-collection read paths too (D1). The Document is
+// returned so callers can post-filter on other fields (e.g. substring on Path).
+func qdrantScoredFromPoint(id string, payload map[string]*pb.Value, wantTenant string, score float32) (ScoredChunk, Document, bool) {
+	doc := qdrantPointToDoc(id, payload)
+	if doc.Tenant != wantTenant {
+		return ScoredChunk{}, doc, false
+	}
+	return ScoredChunk{
+		Chunk: Chunk{
+			Text:       string(doc.Content),
+			DocumentID: doc.ID,
+			EndByte:    len(doc.Content),
+		},
+		Score: score,
+	}, doc, true
+}
+
 func (b *QdrantBackend) Retrieve(ctx context.Context, query string, topK int, filter Filter) (RetrieveResult, error) {
 	if filter.Tenant == "" {
 		return RetrieveResult{}, PermissionDenied("qdrant retrieve: tenant is required")
@@ -267,20 +289,16 @@ func (b *QdrantBackend) Retrieve(ctx context.Context, query string, topK int, fi
 
 	chunks := make([]ScoredChunk, 0, len(resp.Result))
 	for _, pt := range resp.Result {
-		doc := qdrantPointToDoc(qdrantPointID(pt.Id), pt.Payload)
+		sc, doc, ok := qdrantScoredFromPoint(qdrantPointID(pt.Id), pt.Payload, filter.Tenant, 1.0)
+		if !ok {
+			continue // defense-in-depth: never surface a cross-tenant point (D1)
+		}
 		if query != "" {
 			if !containsSubstring(string(doc.Content), query) && !containsSubstring(doc.Path, query) {
 				continue
 			}
 		}
-		chunks = append(chunks, ScoredChunk{
-			Chunk: Chunk{
-				Text:       string(doc.Content),
-				DocumentID: doc.ID,
-				EndByte:    len(doc.Content),
-			},
-			Score: 1.0,
-		})
+		chunks = append(chunks, sc)
 	}
 	return RetrieveResult{Chunks: chunks, Total: int64(len(chunks))}, nil
 }
@@ -311,15 +329,11 @@ func (b *QdrantBackend) RetrieveWithEmbedding(ctx context.Context, queryVec []fl
 
 	chunks := make([]ScoredChunk, 0, len(resp.Result))
 	for _, sc := range resp.Result {
-		doc := qdrantPointToDoc(qdrantPointID(sc.Id), sc.Payload)
-		chunks = append(chunks, ScoredChunk{
-			Chunk: Chunk{
-				Text:       string(doc.Content),
-				DocumentID: doc.ID,
-				EndByte:    len(doc.Content),
-			},
-			Score: sc.Score,
-		})
+		chunk, _, ok := qdrantScoredFromPoint(qdrantPointID(sc.Id), sc.Payload, filter.Tenant, sc.Score)
+		if !ok {
+			continue // defense-in-depth: never surface a cross-tenant point (D1)
+		}
+		chunks = append(chunks, chunk)
 	}
 	return RetrieveResult{Chunks: chunks, Total: int64(len(chunks))}, nil
 }
@@ -487,14 +501,14 @@ func qdrantTransportCreds(cfg QdrantConfig) credentials.TransportCredentials {
 	return insecure.NewCredentials()
 }
 
-// qdrantAPIKeyInterceptor adds the api-key header to every unary gRPC call.
+// qdrantAPIKeyInterceptor adds the api-key header to every unary gRPC call
+// (x9i.4). In-cluster the perimeter is the SPIFFE-mTLS sidecar (x9i.2); the
+// API key is the auth path for Qdrant Cloud (its own TLS), and is also
+// defense-in-depth if a key is configured on a self-hosted Qdrant.
 func qdrantAPIKeyInterceptor(key string) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{},
 		cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		// The Qdrant client uses per-RPC metadata; inject via context would
-		// require google.golang.org/grpc/metadata. We skip that to avoid a
-		// new import; instead we note that production deployments use mTLS
-		// sidecar auth; the APIKey path is for Qdrant Cloud only.
+		ctx = metadata.AppendToOutgoingContext(ctx, "api-key", key)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
 }
