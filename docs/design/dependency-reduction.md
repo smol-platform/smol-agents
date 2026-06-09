@@ -91,7 +91,8 @@ It covers the two biggest reductions:
   (`test/e2e/manifests/memory.yaml`: `-backend=vector-inmem`); the Neo4j graph + Redis KV
   backends are opt-in code paths, NOT deployed by default. Keep them out of self-host.
   For durable vectors, ship the turnkey single-pod **Qdrant** (`deploy/qdrant/qdrant.yaml`, `7fr.5`):
-  `-backend=qdrant -backend-endpoint=qdrant.smol-agents-system.svc:6334`.
+  `-backend=qdrant -backend-endpoint=qdrant.smol-agents-system.svc:6334`. For a multi-tenant
+  deployment use the **mTLS variant** (`deploy/qdrant/qdrant-mtls-sidecar.yaml`) — see *Securing Qdrant* below.
 - **Storage (`7fr.3`)** — use single-pod MinIO (`minio server --fs /data` on a PVC) for
   `storage.agentfs.backup.s3`, or the ephemeral-kopia path (no object store) on HEAD.
 - **Node provisioning (`7fr.6`)** — set `AgentNodePool.spec.provider: ClusterAutoscaler`
@@ -126,3 +127,25 @@ traffic traverses, so it is the same host-side defense-in-depth class as kata
 noted follow-up). The egress *safety* of the gVisor-default flip is carried by
 the proven NetworkPolicy floor; the agentnet sidecar remains the credential-
 injection seam (configured egress, not connect4) under gVisor.
+
+## Securing Qdrant (epic `knative-agents-x9i`)
+
+Shipping Qdrant as the easy vector store added a dependency *outside* the
+platform's SPIFFE-mTLS mesh — the plain `qdrant.yaml` dials insecure, runs
+auth-less, and shares one collection across tenants. The `x9i` epic brings it
+back inside the floor:
+
+- **Network perimeter (x9i.1, done).** A `NetworkPolicy` restricts Qdrant pod
+  ingress to `memory-worker` pods on the mTLS port only — no other pod can reach
+  the store. kubeconform-valid.
+- **SPIFFE-mTLS (x9i.2 sidecar / x9i.3 dial, done in code).** `deploy/qdrant/qdrant-mtls-sidecar.yaml`
+  fronts Qdrant with a ghostunnel SPIFFE terminator (port 7443 → pod-local gRPC);
+  the worker dials it with `MTLSClientConfig` authorizing the Qdrant SVID via the
+  `-backend-mtls-spiffe-id` flag (`QdrantConfig.TLS`). The insecure dial stays
+  the **opt-in Qdrant-Cloud / dev** path only. The live mTLS handshake + the exact
+  ghostunnel flag names are confirmed under **x9i.6** on a SPIRE cluster.
+- **Auth + tenancy defense-in-depth (x9i.4 / x9i.5, done).** The previously
+  no-op api-key interceptor now injects the header (was a silent auth bypass on
+  the Cloud path); the shared-collection read paths re-check the payload tenant
+  after fetch (matching `Get`), so a server-filter regression can't leak
+  cross-tenant (D1). Per-tenant collections remain the documented stronger option.
