@@ -123,6 +123,10 @@ should install the runtime via its own operator/chart and leave
 `installRuntimeClass=false`.
 
 Notes:
+- For a **lightweight self-host** (gVisor + a plain Deployment instead of Kata +
+  Knative, single-pod Qdrant for vectors), apply the
+  `deploy/helm/values-lightweight.yaml` overlay — see the
+  [dependency-reduction design](design/dependency-reduction.md).
 - The chart does **not** install Kata or gVisor binaries — those are
   per-node concerns and should be managed by the platform team using
   the upstream installers above.

@@ -57,6 +57,13 @@ their [agentnet](agentnet.md) identity sidecar.
 Backend credentials (DSNs, S3 keys, embedding API keys) are **always
 broker-resolved** — never literal secrets in the CR.
 
+For a turnkey self-host vector store, `deploy/qdrant/qdrant.yaml` ships a
+single-pod Qdrant (`-backend=qdrant`). Multi-tenant installs should use the
+SPIFFE-mTLS variant `deploy/qdrant/qdrant-mtls-sidecar.yaml`, which brings the
+worker↔Qdrant link into the identity mesh (NetworkPolicy + a ghostunnel mTLS
+sidecar + a per-call cross-tenant read guard) — see
+[Securing Qdrant](../design/dependency-reduction.md#securing-qdrant-epic-knative-agents-x9i).
+
 ## MCP surface
 
 **Tools:** `retrieve_memory`, `write_memory`, `list_memory_namespaces`,
