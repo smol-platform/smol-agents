@@ -1,0 +1,40 @@
+# values-lightweight.yaml — the "lightweight self-host" profile.
+#
+# Overlay for self-hosters who want to run smol-agents WITHOUT the heavyweight
+# control planes the default chart assumes (Kata+Firecracker metal nodes, a
+# Knative serving control plane). It flips the chart to the lighter paths that
+# are already supported, preserving the platform's safety properties:
+#
+#   - gVisor sandbox instead of Kata microVMs   → no /dev/kvm, no bare-metal,
+#     no devmapper thin-pool. Still a real kernel-isolation boundary; the
+#     danger-flag gate (D3) keeps --dangerously-skip-permissions kata-only, so
+#     those harnesses must still opt into a kata RuntimeClass explicitly.
+#   - Deployment mode instead of Knative        → no Knative Serving + Kourier
+#     control plane. Trades scale-to-zero for a fixed (HPA-scalable) Deployment.
+#
+# Use:  helm install smol-agents ./deploy/helm -f deploy/helm/values-lightweight.yaml
+#
+# Companion (separate deploys, see docs/design/dependency-reduction.md):
+#   - Memory:   prefer the embedded vector backend (sqlite-vec, knative-agents-7fr.5)
+#               and DROP the Neo4j graph / Redis KV backends (7fr.2).
+#   - Storage:  single-pod MinIO (--fs on a PVC) or ephemeral-kopia (7fr.3).
+#   - Nodes:    provider=ClusterAutoscaler / static pools, not Karpenter (7fr.6).
+#   - OIDC:     trimmed Dex (static-password + GitHub) (7fr.8).
+#
+# NOTE: this does NOT change the chart's hard defaults (kata-fc + knative) —
+# strict/production installs are unaffected. This is an explicit opt-in overlay.
+
+mode: deployment            # no Knative Serving / Kourier control plane
+
+sandbox:
+  preset: generic-gvisor    # gVisor (runsc); no KVM / metal required
+  runtimeClass: gvisor
+  allowHostRuntime: false   # R-SBX-1 still enforced (gVisor is a hardened class)
+  installRuntimeClass: true # render the gvisor RuntimeClass (handler: runsc)
+
+# Deployment mode: no scale-to-zero; a fixed replica (scale with an HPA/KEDA).
+knative:
+  scaleToZero: false
+
+agent:
+  replicas: 1
