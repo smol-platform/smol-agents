@@ -16,12 +16,14 @@ package memory
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	pb "github.com/qdrant/go-client/qdrant"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -41,6 +43,12 @@ type QdrantConfig struct {
 	// APIKey is the optional API key (Qdrant Cloud). Leave empty for
 	// unauthenticated local deployments.
 	APIKey string
+
+	// TLS, when non-nil, makes the gRPC connection use (mutual) TLS instead of
+	// the default insecure transport. In-cluster the memory-worker builds a
+	// SPIFFE mutual-TLS config from its X509Source (authorizer = the Qdrant
+	// sidecar's SPIFFE ID); the insecure path remains for Qdrant Cloud / dev.
+	TLS *tls.Config
 
 	// MaxResults is an optional upper bound on topK (0 = no cap).
 	MaxResults int
@@ -69,7 +77,7 @@ func NewQdrantBackend(ctx context.Context, cfg QdrantConfig) (*QdrantBackend, er
 	}
 
 	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(qdrantTransportCreds(cfg)),
 	}
 	if cfg.APIKey != "" {
 		opts = append(opts, grpc.WithUnaryInterceptor(qdrantAPIKeyInterceptor(cfg.APIKey)))
@@ -467,6 +475,16 @@ func isQdrantAlreadyExists(err error) bool {
 	return len(err.Error()) > 0 &&
 		(containsSubstring(err.Error(), "already exists") ||
 			containsSubstring(err.Error(), "AlreadyExists"))
+}
+
+// qdrantTransportCreds returns (mutual) TLS credentials when cfg.TLS is set —
+// the in-cluster SPIFFE-mTLS path (x9i.3) — otherwise the default insecure
+// transport (Qdrant Cloud / dev only).
+func qdrantTransportCreds(cfg QdrantConfig) credentials.TransportCredentials {
+	if cfg.TLS != nil {
+		return credentials.NewTLS(cfg.TLS)
+	}
+	return insecure.NewCredentials()
 }
 
 // qdrantAPIKeyInterceptor adds the api-key header to every unary gRPC call.

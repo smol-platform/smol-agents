@@ -78,3 +78,24 @@ spec:
   ports:
     - { name: rest, port: 6333, targetPort: 6333 }
     - { name: grpc, port: 6334, targetPort: 6334 }
+---
+# T1 (x9i.1): restrict Qdrant ingress to the memory-worker only. With the mTLS
+# sidecar (T2) terminating on :6334 and Qdrant bound to loopback, this is the
+# network perimeter; mTLS is the identity gate on top.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qdrant-ingress
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: qdrant }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: memory-worker }
+      ports:
+        - { protocol: TCP, port: 6334 }   # mTLS sidecar port (T2)
