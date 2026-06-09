@@ -199,7 +199,10 @@ spec:
 ```
 
 On a laptop without `/dev/kvm`, override the sandbox to `runc` (dev only) or use
-the gVisor preset — see [docs/INSTALL.md §4.2](docs/INSTALL.md).
+the gVisor preset — see [docs/INSTALL.md §4.2](docs/INSTALL.md). For a full
+**lightweight self-host** (gVisor instead of Kata, a plain Deployment instead of
+Knative, single-pod Qdrant for vectors), apply `deploy/helm/values-lightweight.yaml`
+— see the [dependency-reduction design](docs/design/dependency-reduction.md).
 
 For worked, runnable scenarios — loop tools, agent-to-agent composition, durable
 sessions, human approval, the governance floor, and secretless egress — with a
@@ -216,6 +219,7 @@ field-by-field walkthrough, see **[docs/examples/](docs/examples/README.md)**.
 | **[docs/runbooks/](docs/runbooks/)** | Operational guides: [secretless egress](docs/runbooks/secretless-egress.md), [memory-mcp](docs/runbooks/memory-mcp.md), [node pools](docs/runbooks/agent-node-pools.md), [k0s local cluster](docs/runbooks/k0s-local-cluster.md), [L2 e2e](docs/runbooks/e2e-l2.md). |
 | **[.spec-workflow/specs/](.spec-workflow/specs/)** | The source of truth: EARS requirements, design, and tasks per subsystem. |
 | **[spec/quint/](spec/quint/)** | The 10 formal specifications (the actual safety contracts). |
+| **[docs/design/](docs/design/)** | Cross-cutting design notes: [lightweight self-host / dependency-reduction](docs/design/dependency-reduction.md), the turn-model split, the decisions log. |
 
 ### Feature guides
 

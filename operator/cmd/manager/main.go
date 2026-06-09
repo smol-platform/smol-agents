@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"os"
 	"strconv"
@@ -23,6 +24,8 @@ import (
 	"github.com/smol-platform/smol-agents/operator/internal/controllers/agentmodel"
 	memoryctrl "github.com/smol-platform/smol-agents/operator/internal/controllers/memory"
 	"github.com/smol-platform/smol-agents/operator/internal/webhooks"
+
+	"github.com/smol-platform/smol-agents/pkg/embeddednats"
 )
 
 var (
@@ -51,6 +54,8 @@ func main() {
 	var enableAdmissionQueue bool
 	var maxRunPriority int
 	var allowedStdioMCP string
+	var embeddedNATS bool
+	var embeddedNATSStore string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -77,6 +82,10 @@ func main() {
 	flag.IntVar(&maxRunPriority, "max-run-priority", 1000, "clamp for AgentRun.spec.priority (M1.13)")
 	flag.StringVar(&allowedStdioMCP, "allowed-stdio-mcp", "",
 		"comma-separated allow-list of approved stdio MCP server URLs (M2.15; empty = deny all stdio MCP)")
+	flag.BoolVar(&embeddedNATS, "embedded-nats", false,
+		"run an in-process NATS+JetStream server in the operator pod (requires a -tags=embeddednats build) so a self-host needs no separate NATS; used for session/team delivery when -session-nats-url is empty (7fr.7)")
+	flag.StringVar(&embeddedNATSStore, "embedded-nats-store", os.Getenv("EMBEDDED_NATS_STORE"),
+		"JetStream file-store dir for the embedded NATS (a PVC mount); empty = in-memory (non-durable)")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -84,6 +93,23 @@ func main() {
 	// The A2A recursion ceiling reaches the run-pod builder via env (M3.5).
 	if a2aMaxDepth > 0 {
 		_ = os.Setenv("SMOL_AGENTS_A2A_MAX_DEPTH", strconv.Itoa(a2aMaxDepth))
+	}
+
+	// Optional in-process NATS+JetStream (7fr.7): a lighter self-host then needs
+	// no separate NATS deployment. Only wired in a -tags=embeddednats build.
+	if embeddedNATS {
+		h, nerr := embeddednats.Start(context.Background(), embeddednats.Config{
+			Host: "0.0.0.0", Port: 4222, StoreDir: embeddedNATSStore,
+		})
+		if nerr != nil {
+			setupLog.Error(nerr, "embedded NATS requested but not available; build with -tags=embeddednats")
+			os.Exit(1)
+		}
+		defer h.Shutdown()
+		if sessionNATSURL == "" {
+			sessionNATSURL = h.URL
+		}
+		setupLog.Info("embedded NATS started", "url", h.URL, "store", embeddedNATSStore)
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
