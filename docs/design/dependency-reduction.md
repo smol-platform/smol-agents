@@ -15,9 +15,10 @@ per-SA certs, and an etcd-backed memory store (shared-namespace identity breaks 
 ## Cross-cutting themes
 1. **Lighter path = DEFAULT, heavy path = OPT-IN.** Kata, MinIO, memory, Knative, Karpenter
    are all justified at the high end but overkill for most self-hosts. Flip the default.
-2. **Embed-in-operator / single-binary self-host profile.** SPIRE issuer, NATS server, and
-   the sqlite-vec memory backend all converge on: co-locate the control function inside the
-   always-running operator pod instead of a separate stateful system.
+2. **Embed-in-operator / single-binary self-host profile.** The embedded NATS server (7fr.7,
+   build-tagged) and a post-GA SPIRE issuer co-locate the control function inside the
+   always-running operator pod. Vectors instead take the adjacent "easy single-pod dependency"
+   path — ship Qdrant — rather than embedding (a real vector DB avoids the embedded write-wall).
 3. **Move safety gates from infra-selection to explicit policy.** The kata danger-flag gate
    (`--dangerously-skip-permissions` requires a microVM) should be an explicit policy, not
    an implicit consequence of choosing kata — so gVisor can be the default safely.
@@ -33,7 +34,7 @@ per-SA certs, and an etcd-backed memory store (shared-namespace identity breaks 
 | P0 ⚡ | `7fr.2` | Memory (Neo4j/Redis) | **Drop graph+KV backends** from default (P2, never used live) | S | high |
 | P1 ⚡ | `7fr.3` | kopia + MinIO | **MinIO single-pod (--fs)** reference + expose ephemeral-kopia | S | high |
 | P1 ⚡ | `7fr.4` | Knative + Kourier | **Replace with KEDA or fixed-replica** Deployment for agentgateway | M | high |
-| P1 | `7fr.5` | Memory (pgvector) | **Embedded sqlite + sqlite-vec** vector backend (default self-host) | L | high |
+| P1 ⚡ | `7fr.5` | Memory (vectors) | **Ship single-pod Qdrant** as the easy self-host vector store (real DB, no write-wall) | S | high |
 | P2 | `7fr.6` | Karpenter/EKS | **Default to ClusterAutoscaler/static pools** (variant already exists); Karpenter opt-in | M | high |
 | P2 | `7fr.7` | NATS JetStream | **Embed nats-server in the operator** pod (single-binary); external opt-in | M | medium |
 | P2 ⚡ | `7fr.8` | Dex | **Trim reference config** to static-password + GitHub (keep Dex per D9) | S | low |
@@ -45,9 +46,10 @@ per-SA certs, and an etcd-backed memory store (shared-namespace identity breaks 
 - **Kata → gVisor (default).** gVisor is already wired (`runtimeclass.go` handler=runsc,
   `AllowGvisorFallback`, `dangerFlagViolation`) and proven without KVM/metal (j77.1). Biggest
   single self-host blocker removed. Keep kata-fc for the top isolation tier; keep danger-flags microVM-gated.
-- **Memory: drop Neo4j+Redis; add sqlite-vec.** The graph/KV backend kinds are P2 and never
-  used in M1–M5 live e2e — drop from the default (interface retained). A sqlite + sqlite-vec
-  `VectorBackend` (~500 LOC) collapses the vector tier into the operator binary + 1 PVC; pgvector stays opt-in.
+- **Memory: drop Neo4j+Redis; ship single-pod Qdrant for vectors.** The graph/KV backend kinds are P2 and
+  never used in M1–M5 live e2e — drop from the default (interface retained). For durable vectors, ship a
+  turnkey single-pod **Qdrant** (`deploy/qdrant/qdrant.yaml`) — a real, scalable vector DB (millions of
+  vectors, no write-wall), single binary + 1 PVC, wired via `-backend=qdrant`; pgvector stays opt-in.
 - **kopia/MinIO: keep the VersionedStore contract, lighten the topology.** kopia's checkpoint/
   History/Diff/GC is load-bearing for D6 recovery — keep it. Make the reference backup a
   single-pod MinIO (`--fs`) and surface ephemeral-kopia (no object store at all, u9k.5).
@@ -88,7 +90,8 @@ It covers the two biggest reductions:
 - **Memory (`7fr.2`)** — the reference memory deploy uses the in-memory vector backend
   (`test/e2e/manifests/memory.yaml`: `-backend=vector-inmem`); the Neo4j graph + Redis KV
   backends are opt-in code paths, NOT deployed by default. Keep them out of self-host.
-  (Embedded sqlite-vec for durable vectors is `7fr.5`.)
+  For durable vectors, ship the turnkey single-pod **Qdrant** (`deploy/qdrant/qdrant.yaml`, `7fr.5`):
+  `-backend=qdrant -backend-endpoint=qdrant.smol-agents-system.svc:6334`.
 - **Storage (`7fr.3`)** — use single-pod MinIO (`minio server --fs /data` on a PVC) for
   `storage.agentfs.backup.s3`, or the ephemeral-kopia path (no object store) on HEAD.
 - **Node provisioning (`7fr.6`)** — set `AgentNodePool.spec.provider: ClusterAutoscaler`

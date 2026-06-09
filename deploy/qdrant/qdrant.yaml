@@ -1,0 +1,80 @@
+# Turnkey single-pod Qdrant — the easy self-host vector store (7fr.5).
+#
+# A real, scalable vector DB (millions of vectors) with no write-wall and no
+# external Postgres — a single binary + one PVC. Point the memory-worker at it:
+#   -backend=qdrant -backend-endpoint=qdrant.smol-agents-system.svc:6334
+# (collection "memory", dims via -backend-dims). For scale/HA, run Qdrant's
+# own cluster chart instead. pgvector stays an opt-in alternative.
+#
+#   kubectl apply -f deploy/qdrant/qdrant.yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  replicas: 1
+  # Single RWO PVC: Recreate avoids two pods contending for it on rollout.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: qdrant }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: qdrant }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.4
+          ports:
+            - { name: rest, containerPort: 6333 }
+            - { name: grpc, containerPort: 6334 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: 6333 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /livez, port: 6333 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: storage, mountPath: /qdrant/storage }
+      volumes:
+        - name: storage
+          persistentVolumeClaim: { claimName: qdrant }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
+spec:
+  selector: { app.kubernetes.io/name: qdrant }
+  ports:
+    - { name: rest, port: 6333, targetPort: 6333 }
+    - { name: grpc, port: 6334, targetPort: 6334 }
