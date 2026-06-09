@@ -8,7 +8,8 @@
 // Flags:
 //
 //	-addr                  listener address (default :8444)
-//	-backend               backend kind: vector-inmem|agentfs|pgvector|qdrant|redis|neo4j|eventlog (default: vector-inmem)
+//	-backend               backend kind: vector-inmem|vector-embedded|agentfs|pgvector|qdrant|redis|neo4j|eventlog (default: vector-inmem)
+//	                       vector-embedded: durable pure-Go gob snapshot (PVC), no external DB / no cgo
 //	-backend-endpoint      backend connection string / DSN / address (driver-specific)
 //	-backend-auth-secret   broker secret name for backend credentials
 //	-backend-dims          embedding vector dimensions for pgvector/qdrant (default 1536)
@@ -65,7 +66,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8444", "listener address")
 	transport := flag.String("transport", "http", "internal transport: http|grpc (both over mTLS in non-insecure mode)")
-	backendKind := flag.String("backend", "vector-inmem", "backend kind: vector-inmem|agentfs|pgvector|qdrant|redis|neo4j|eventlog")
+	backendKind := flag.String("backend", "vector-inmem", "backend kind: vector-inmem|vector-embedded|agentfs|pgvector|qdrant|redis|neo4j|eventlog")
 	backendEndpoint := flag.String("backend-endpoint", "", "backend DSN/address (pgvector: DSN, qdrant: host:port, redis: host:port, neo4j: bolt URI)")
 	backendAuthSecret := flag.String("backend-auth-secret", "", "broker secret for backend credentials (format: user:password for neo4j, password-only for redis)")
 	backendDims := flag.Int("backend-dims", 1536, "vector dimensions for pgvector/qdrant backends")
@@ -99,6 +100,22 @@ func main() {
 	case "vector-inmem":
 		backend = memory.NewVectorBackend()
 		logger.Info("backend", "kind", "vector-inmem")
+
+	case "vector-embedded":
+		// Durable, pure-Go (CGO_ENABLED=0) embedded vector store: a gob
+		// snapshot on a PVC. No external pgvector/Qdrant. -backend-endpoint
+		// is the snapshot file path (default: /var/lib/smol-agents/memory).
+		path := *backendEndpoint
+		if path == "" {
+			path = "/var/lib/smol-agents/memory/vectors.gob"
+		}
+		pvb, pvErr := memory.NewPersistentVectorBackend(path)
+		if pvErr != nil {
+			logger.Error("vector-embedded backend", "err", pvErr)
+			os.Exit(1)
+		}
+		backend = pvb
+		logger.Info("backend", "kind", "vector-embedded", "path", path)
 
 	case "agentfs":
 		// Resolve S3 adapter: use real AWS S3 when a backend-endpoint (bucket)
