@@ -35,6 +35,19 @@ jobs:
       - name: controller envtests (real apiserver)
         run: make envtest
 
+  crd-drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Informational: CRDs are hand-edited on purpose (operator/config/crd/DRIFT.md),
+      # so intentional drift must not break the build — it just shows in the logs.
+      - name: CRD drift vs controller-gen (informational)
+        continue-on-error: true
+        run: make crd-drift
+
   helm:
     runs-on: ubuntu-24.04
     steps:

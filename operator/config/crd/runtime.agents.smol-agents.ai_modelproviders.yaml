@@ -51,3 +51,4 @@ spec:
                   required: [secretName]
                   properties:
                     secretName: { type: string, description: 'Secret holding the API key; leased by the broker at runtime, never embedded in the pod spec.' }
+                    key: { type: string, description: 'Key within the Secret holding the API key (rv4.2). When empty and the Secret has exactly one key, that key is used.' }
