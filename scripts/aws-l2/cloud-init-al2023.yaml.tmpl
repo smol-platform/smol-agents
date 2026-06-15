@@ -127,7 +127,8 @@ runcmd:
   #    *not* `k0s start` (which isn't a real subcommand). Wait up
   #    to 5 min — first boot has to extract etcd + kube-apiserver
   #    binaries and generate the PKI.
-  - curl -sSf https://get.k0s.sh | sh
+  # Pin k0s (unpinned latest v1.36.1 regressed the controller; matches fcos/flatcar).
+  - curl -sSf https://get.k0s.sh | K0S_VERSION=v1.35.3+k0s.0 sh
   - k0s install controller --single -c /etc/k0s/k0s.yaml
   - systemctl start k0scontroller
   - timeout 300 sh -c 'until k0s status >/dev/null 2>&1; do sleep 5; done'
@@ -235,7 +236,7 @@ runcmd:
   #    k0s applies it alongside spire-system/operator/samples.
   - mkdir -p /var/lib/k0s/manifests/cert-manager
   - |
-    curl -sSL \
+    curl -fsSL \
       https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml \
       > /var/lib/k0s/manifests/cert-manager/00-cert-manager.yaml
 
@@ -255,6 +256,7 @@ runcmd:
       # health-gate failures from the L2 driver look like "spire-
       # server pod" with no signal about WHY.
       {
+        echo === k0scontroller ===; k0s status 2>&1; journalctl -u k0scontroller --no-pager -n 150 2>&1 || true
         echo === all-pods ===
         k0s kubectl get pods -A -o wide
         echo === events ===
