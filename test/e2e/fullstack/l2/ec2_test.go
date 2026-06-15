@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,36 @@ func TestL2(t *testing.T) {
 	defer cleanup()
 
 	shared.RunAll(t, env, shared.All())
+
+	// rv1.2: L2's k0s CNI (kube-router) enforces NetworkPolicy, so the operator
+	// must run with --cni-enforces-networkpolicy=true and report honest egress
+	// posture (default-deny/tiered) instead of the fail-closed "unenforced"
+	// default kindnet (L1) shows. The flag->label behavior is unit-tested
+	// (TestEgressEnforcementLabel); here we prove the flag is effective on the
+	// live cluster (a run's status.egressEnforcement is set only post-placement,
+	// which is node-timing-dependent on L2, so the operator arg is the reliable
+	// live signal).
+	assertCNIEnforcementFlag(t, env)
+}
+
+// assertCNIEnforcementFlag confirms the live L2 operator runs with
+// --cni-enforces-networkpolicy=true (the build-manifests.sh wiring took effect).
+func assertCNIEnforcementFlag(t *testing.T, env *l2Env) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+	out, err := env.Exec(ctx, shared.ExecTarget{}, "get", "-n", "smol-agents-system",
+		"deployment", "smol-agents-operator",
+		"-o", "jsonpath={.spec.template.spec.containers[0].args}")
+	if err != nil {
+		t.Errorf("rv1.2: get operator args: %v", err)
+		return
+	}
+	if args := string(out); strings.Contains(args, "--cni-enforces-networkpolicy=true") {
+		t.Logf("rv1.2: L2 operator runs with --cni-enforces-networkpolicy=true (honest egress reporting)")
+	} else {
+		t.Errorf("rv1.2: operator args missing --cni-enforces-networkpolicy=true: %s", args)
+	}
 }
 
 // TestL2_Smoke is the cheap CI variant: provision, wait for the

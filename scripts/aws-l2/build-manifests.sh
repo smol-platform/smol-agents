@@ -82,6 +82,15 @@ if [[ -n "${L2_ECR_REGISTRY:-}" ]]; then
           ])' "$WORK/operator/00-operator.yaml"
 fi
 
+# Declare CNI NetworkPolicy enforcement (rv1.2). L2's k0s CNI (kube-router)
+# DOES enforce NetworkPolicy (the egress floor is real here, unlike kindnet), so
+# tell the operator to report honest egressEnforcement (default-deny/tiered)
+# instead of the fail-closed "unenforced" default. The kind overlay correctly
+# omits this (kindnet does not enforce).
+yq -i '(select(.kind == "Deployment" and .metadata.name == "smol-agents-operator")
+        | .spec.template.spec.containers[] | select(.name == "manager").args) |=
+        ((. // []) + ["--cni-enforces-networkpolicy=true"])' "$WORK/operator/00-operator.yaml"
+
 # 3. Tenant namespace + fake services + researcher-agent SA. L1's
 #    deployFakes() handles this via separate kubectl commands; we
 #    pre-stage all of it into the manifest tarball so the k0s
