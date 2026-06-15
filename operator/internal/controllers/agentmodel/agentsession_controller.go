@@ -48,6 +48,9 @@ type AgentSessionReconciler struct {
 	Scheme                 *runtime.Scheme
 	DefaultRunRuntimeClass string
 	AllowHostRuntime       bool
+	// CNIEnforcesNetworkPolicy declares the cluster CNI enforces NetworkPolicy;
+	// default false reports the session egress floor as "unenforced" (rv1.2).
+	CNIEnforcesNetworkPolicy bool
 
 	// NATSURL, when set, routes a session's turns through NATS (the gateway
 	// path) by injecting AGENTSESSION_NATS_URL/_KEY into the worker; empty
@@ -182,7 +185,7 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	// Surface the egress posture for observability (M1.19).
 	session.Status.Networks = netPlan.Networks
-	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
+	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan, r.CNIEnforcesNetworkPolicy)
 	np := builders.BuildAgentSessionEgressPolicyWithPlan(synthetic.Name, session.Namespace,
 		map[string]string{"agents.smol-agents.ai/run": synthetic.Name}, netPlan)
 	// M1.18: allow the kube-apiserver endpoints (blocked by the default floor on

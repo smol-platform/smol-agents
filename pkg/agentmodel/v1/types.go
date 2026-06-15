@@ -492,7 +492,9 @@ type RunStatus struct {
 	// the default-deny egress floor applies. +optional
 	Networks []string `json:"networks,omitempty"`
 	// EgressEnforcement summarizes the run's egress posture: "default-deny" (the
-	// floor only) or "tiered" (a bound AgentNetwork allow-list layered on). +optional
+	// floor only), "tiered" (a bound AgentNetwork allow-list layered on), or
+	// "unenforced" when the cluster CNI does not enforce NetworkPolicy so the
+	// created policies are silent no-ops (rv1.2). +optional
 	EgressEnforcement string `json:"egressEnforcement,omitempty"`
 }
 
@@ -653,7 +655,9 @@ type AgentSessionStatus struct {
 	// only the default-deny egress floor applies. +optional
 	Networks []string `json:"networks,omitempty"`
 	// EgressEnforcement summarizes the session's egress posture: "default-deny"
-	// (the floor only) or "tiered" (a bound AgentNetwork allow-list). +optional
+	// (the floor only), "tiered" (a bound AgentNetwork allow-list), or
+	// "unenforced" when the cluster CNI does not enforce NetworkPolicy (rv1.2).
+	// +optional
 	EgressEnforcement string `json:"egressEnforcement,omitempty"`
 
 	// Reason is a short machine-readable cause for the current Phase (e.g.

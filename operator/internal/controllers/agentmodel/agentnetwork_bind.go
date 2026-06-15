@@ -74,10 +74,17 @@ func agentsBoundToNetwork(ctx context.Context, c client.Client, an *amv1.AgentNe
 	return out
 }
 
-// egressEnforcementLabel summarizes a plan's egress posture for status (M1.19):
-// "tiered" when a bound AgentNetwork layers an allow-list on top of the floor,
-// else "default-deny" (the floor only).
-func egressEnforcementLabel(p plan.NetworkPlan) string {
+// egressEnforcementLabel summarizes a plan's egress posture for status (M1.19,
+// rv1.2). The operator creates egress NetworkPolicies, but on a CNI that does
+// not enforce NetworkPolicy (e.g. kindnet) they are silent no-ops. When the
+// operator has not declared enforcement (--cni-enforces-networkpolicy), report
+// "unenforced" rather than pretending containment with "default-deny"/"tiered".
+// When enforcement is declared: "tiered" if a bound AgentNetwork layers an
+// allow-list on top of the floor, else "default-deny" (the floor only).
+func egressEnforcementLabel(p plan.NetworkPlan, cniEnforces bool) string {
+	if !cniEnforces {
+		return "unenforced"
+	}
 	if len(p.AllowRules) > 0 {
 		return "tiered"
 	}

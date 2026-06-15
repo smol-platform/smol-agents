@@ -99,6 +99,11 @@ type AgentRunReconciler struct {
 	// a runc selection is a fail-closed R-SBX-1 policy violation. Set from
 	// --allow-host-runtime (dev/CI clusters without a sandbox runtime).
 	AllowHostRuntime bool
+	// CNIEnforcesNetworkPolicy declares that the cluster CNI actually enforces
+	// NetworkPolicy. Default false: the egress floor is created but reported as
+	// "unenforced" on status (rv1.2) since CNIs like kindnet silently no-op it.
+	// Set true (--cni-enforces-networkpolicy) on Cilium/Calico/eBPF clusters.
+	CNIEnforcesNetworkPolicy bool
 	// MaxConcurrentReconciles bounds parallel run reconciles (default 1).
 	MaxConcurrentReconciles int
 	// RunDeadlineMultiplier scales the run's wall-clock budget into the pod's
@@ -701,7 +706,7 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 	// Surface the egress posture for observability (M1.19): the bound network
 	// names + whether a tightened allow-list applies on top of the floor.
 	run.Status.Networks = netPlan.Networks
-	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan)
+	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan, r.CNIEnforcesNetworkPolicy)
 	// Tier-2 datapath seam (no-op in Phase 1; Tier-1 is the NetworkPolicy below).
 	builders.AttachAgentNetwork(pod, netPlan)
 	np := builders.BuildAgentRunEgressPolicyWithPlan(run, netPlan)
