@@ -77,8 +77,10 @@ func setupAgentmodelEnv(t *testing.T) *agentmodelEnv {
 		// Kataless-dev posture (mirrors kind): the run-sandbox resolution is
 		// fail-closed, so without runc+allow-host the reconciler would hold every
 		// run Pending/SandboxNotReady (envtest registers no kata RuntimeClass).
-		&agentmodel.AgentRunReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-			DefaultRunRuntimeClass: "runc", AllowHostRuntime: true},
+		&agentmodel.AgentRunReconciler{
+			Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+			DefaultRunRuntimeClass: "runc", AllowHostRuntime: true,
+		},
 		&agentmodel.AgentNetworkReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()},
 	} {
 		if err := sub.SetupWithManager(mgr); err != nil {
@@ -533,5 +535,43 @@ func TestEnvtest_ModelProvider_SecretRefKeyPersisted(t *testing.T) {
 	}
 	if got.Spec.SecretRef.Key != "PRIMARY" {
 		t.Errorf("secretRef.key = %q, want PRIMARY (pruned by the apiserver = CRD schema drift)", got.Spec.SecretRef.Key)
+	}
+}
+
+// TestEnvtest_EventBinding_RoundTripAndEnum proves the hand-edited EventBinding
+// CRD (t0d/7d3): a valid binding round-trips through the real apiserver, and the
+// target.kind enum is enforced server-side (a bad kind is rejected).
+func TestEnvtest_EventBinding_RoundTripAndEnum(t *testing.T) {
+	e := setupAgentmodelEnv(t)
+	makeNamespaceAM(t, e, "tenant-eb")
+
+	eb := &amv1.EventBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "incident-to-squad", Namespace: "tenant-eb"},
+		Spec: pure.EventBindingSpec{
+			Filter: pure.EventFilter{Type: "com.acme.incident.opened"},
+			Target: pure.EventTarget{Kind: pure.EventTargetAgentTeam, Name: "squad"},
+		},
+	}
+	if err := e.cli.Create(e.ctx, eb); err != nil {
+		t.Fatalf("create EventBinding: %v", err)
+	}
+	got := &amv1.EventBinding{}
+	if err := e.cli.Get(e.ctx, types.NamespacedName{Namespace: "tenant-eb", Name: "incident-to-squad"}, got); err != nil {
+		t.Fatalf("get EventBinding: %v", err)
+	}
+	if got.Spec.Target.Kind != pure.EventTargetAgentTeam || got.Spec.Target.Name != "squad" {
+		t.Errorf("target = %+v, want AgentTeam/squad", got.Spec.Target)
+	}
+	if got.Spec.Filter.Type != "com.acme.incident.opened" {
+		t.Errorf("filter.type = %q, not preserved", got.Spec.Filter.Type)
+	}
+
+	// The apiserver enforces the target.kind enum (CRD schema): a bad kind is rejected.
+	bad := &amv1.EventBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "bad-kind", Namespace: "tenant-eb"},
+		Spec:       pure.EventBindingSpec{Target: pure.EventTarget{Kind: "Pod", Name: "x"}},
+	}
+	if err := e.cli.Create(e.ctx, bad); err == nil {
+		t.Error("apiserver accepted target.kind=Pod, want rejected by the enum")
 	}
 }
