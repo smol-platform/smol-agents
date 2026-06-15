@@ -58,6 +58,22 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		fmt.Fprintf(out, "      provisioner that knows about *.metal capacity. See docs/runbooks/agent-node-pools.md.\n")
 	}
 
+	fmt.Fprintf(out, "==> Preflight checks\n")
+	checks, err := preflight(ctx, disc, c, o.Common.WithWebhooks)
+	if err != nil {
+		return fmt.Errorf("preflight: %w", err)
+	}
+	fatal := false
+	for _, ck := range checks {
+		fmt.Fprintf(out, "    %s %s — %s\n", ck.Severity.symbol(), ck.Name, ck.Detail)
+		if ck.Severity == sevError {
+			fatal = true
+		}
+	}
+	if fatal {
+		return fmt.Errorf("preflight failed: resolve the ✗ item(s) above (or adjust flags) and re-run")
+	}
+
 	overlay, err := resolveOverlay(o)
 	if err != nil {
 		return err
