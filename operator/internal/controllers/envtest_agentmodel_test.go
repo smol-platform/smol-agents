@@ -507,3 +507,31 @@ func TestEnvtest_AgentNetwork_InvalidSpecRejected(t *testing.T) {
 			return g.Status.Phase == "Failed" && g.Status.Reason == "InvalidSpec"
 		})
 }
+
+// TestEnvtest_ModelProvider_SecretRefKeyPersisted proves the rv4.2 CRD-drift
+// fix: spec.secretRef.key round-trips through the apiserver instead of being
+// pruned (the schema previously omitted the property, so a multi-key provider
+// secret could not select its key — forcing single-key secrets).
+func TestEnvtest_ModelProvider_SecretRefKeyPersisted(t *testing.T) {
+	e := setupAgentmodelEnv(t)
+	makeNamespaceAM(t, e, "tenant-key")
+
+	p := &amv1.ModelProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "multi", Namespace: "tenant-key"},
+		Spec: pure.ModelProviderSpec{
+			Kind:      "openai",
+			SecretRef: pure.AuthRef{SecretName: "multi-key-secret", Key: "PRIMARY"},
+		},
+	}
+	if err := e.cli.Create(e.ctx, p); err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+
+	got := &amv1.ModelProvider{}
+	if err := e.cli.Get(e.ctx, types.NamespacedName{Namespace: "tenant-key", Name: "multi"}, got); err != nil {
+		t.Fatalf("get provider: %v", err)
+	}
+	if got.Spec.SecretRef.Key != "PRIMARY" {
+		t.Errorf("secretRef.key = %q, want PRIMARY (pruned by the apiserver = CRD schema drift)", got.Spec.SecretRef.Key)
+	}
+}

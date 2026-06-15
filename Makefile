@@ -62,6 +62,13 @@ test-e2e-operator:
 kind-verify:
 	bash scripts/kind-verify.sh
 
+# crd-drift: regenerate CRDs from the Go types into a temp dir and diff against
+# the hand-edited operator/config/crd. INFORMATIONAL — CRDs are hand-edited on
+# purpose (see operator/config/crd/DRIFT.md); never blindly `make manifests`.
+.PHONY: crd-drift
+crd-drift: ## show drift between hand-edited CRDs and controller-gen output
+	bash scripts/crd-drift-check.sh
+
 .PHONY: kind-down
 kind-down:
 	kind delete cluster --name $${CLUSTER:-smol-agents-kind}
