@@ -52,7 +52,7 @@ test:
 envtest:
 	@command -v $(HOME)/go/bin/setup-envtest >/dev/null 2>&1 || $(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 	@KUBEBUILDER_ASSETS="$$($(HOME)/go/bin/setup-envtest use 1.31 -p path)" \
-	  $(GO) test -tags=envtest -count=1 -timeout=300s ./operator/internal/controllers/...
+	  $(GO) test -tags=envtest -count=1 -timeout=600s -p 1 ./operator/internal/controllers/... ./operator/internal/webhooks/
 
 .PHONY: test-e2e-operator
 test-e2e-operator:
@@ -65,6 +65,16 @@ kind-verify:
 .PHONY: kind-down
 kind-down:
 	kind delete cluster --name $${CLUSTER:-smol-agents-kind}
+
+# 5-minute demo: kind + operator + keyless fake-llm agent + one followed
+# AgentRun asserting Completed. No API keys needed. See scripts/quickstart.sh.
+.PHONY: quickstart
+quickstart:
+	bash scripts/quickstart.sh
+
+.PHONY: quickstart-down
+quickstart-down:
+	kind delete cluster --name $${CLUSTER:-smol-agents-quickstart}
 
 .PHONY: test-cover
 test-cover:

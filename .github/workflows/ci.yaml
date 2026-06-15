@@ -25,6 +25,16 @@ jobs:
               -o bin/$cmd ./cmd/$cmd
           done
 
+  envtest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: controller envtests (real apiserver)
+        run: make envtest
+
   helm:
     runs-on: ubuntu-24.04
     steps:

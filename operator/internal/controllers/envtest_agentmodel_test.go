@@ -74,7 +74,11 @@ func setupAgentmodelEnv(t *testing.T) *agentmodelEnv {
 		SetupWithManager(ctrl.Manager) error
 	}{
 		&agentmodel.AgentReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()},
-		&agentmodel.AgentRunReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()},
+		// Kataless-dev posture (mirrors kind): the run-sandbox resolution is
+		// fail-closed, so without runc+allow-host the reconciler would hold every
+		// run Pending/SandboxNotReady (envtest registers no kata RuntimeClass).
+		&agentmodel.AgentRunReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+			DefaultRunRuntimeClass: "runc", AllowHostRuntime: true},
 		&agentmodel.AgentNetworkReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()},
 	} {
 		if err := sub.SetupWithManager(mgr); err != nil {
@@ -110,6 +114,15 @@ func makeProvider(t *testing.T, e *agentmodelEnv, ns, name string) {
 	}
 	if err := e.cli.Create(e.ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create provider: %v", err)
+	}
+	// The run-prep broker path resolves the provider's source Secret before any
+	// pod exists; without it the run is held Pending/RunPrepPending.
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "openai-key", Namespace: ns},
+		Data:       map[string][]byte{"OPENAI_API_KEY": []byte("test-key")},
+	}
+	if err := e.cli.Create(e.ctx, sec); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatalf("create provider secret: %v", err)
 	}
 }
 
@@ -178,7 +191,11 @@ func waitForPod(t *testing.T, e *agentmodelEnv, key types.NamespacedName, pred f
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("timeout waiting for pod %s", key)
+			// Include the AgentRun's status (same name) — the usual cause of a
+			// missing pod is the reconciler holding the run Pending.
+			run := &amv1.AgentRun{}
+			_ = e.cli.Get(e.ctx, key, run)
+			t.Fatalf("timeout waiting for pod %s; run status=%+v", key, run.Status)
 		case <-tick.C:
 		}
 	}

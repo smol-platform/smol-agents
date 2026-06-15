@@ -38,6 +38,12 @@ func main() {
 		os.Exit(cmdLease(args[1:]))
 	case "deploy":
 		os.Exit(cmdDeploy(args[1:]))
+	case "run":
+		os.Exit(cmdRun(args[1:]))
+	case "watch":
+		os.Exit(cmdWatch(args[1:]))
+	case "logs":
+		os.Exit(cmdLogs(args[1:]))
 	default:
 		usage()
 		os.Exit(2)
@@ -51,6 +57,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  lease  [-socket path] -name NAME       request a lease from local broker")
 	fmt.Fprintln(os.Stderr, "  deploy -target <k8s|aws|hetzner|baremetal> [flags]")
 	fmt.Fprintln(os.Stderr, "                                         install the operator stack on a target")
+	fmt.Fprintln(os.Stderr, "  run    <agent> -p \"prompt\" [-n ns] [-follow]")
+	fmt.Fprintln(os.Stderr, "                                         create an AgentRun (and stream it with -follow)")
+	fmt.Fprintln(os.Stderr, "  watch  <agentrun> [-n ns]              stream an AgentRun's status to completion")
+	fmt.Fprintln(os.Stderr, "  logs   <agentrun> [-n ns] [-follow]    print the run pod's logs")
 	fmt.Fprintln(os.Stderr, "  version                                print version")
 }
 
