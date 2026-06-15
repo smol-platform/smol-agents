@@ -166,6 +166,18 @@ run; the runtime group describes *what* runs.
 > Full matrix of install paths — devenv, source, kind, production Helm/operator —
 > is in **[docs/INSTALL.md](docs/INSTALL.md)**.
 
+**Fastest path — one command, no API keys** (docker + kind + kubectl + go):
+
+```bash
+make quickstart
+```
+
+That stands up a kind cluster + the operator, deploys a keyless demo agent
+backed by a deterministic in-cluster LLM, and finishes by driving a real
+AgentRun to `Completed` with `agentctl run demo-agent -p "hello" -follow` —
+the full datapath (broker, run pod, status fold) in under five minutes.
+`make quickstart-down` removes the cluster.
+
 ```bash
 git clone https://github.com/smol-platform/smol-agents
 cd smol-agents

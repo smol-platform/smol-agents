@@ -20,6 +20,13 @@ last-touched
 db.sqlite
 bd.db
 
+# Embedded Dolt server runtime (per-machine; never shared)
+embeddeddolt/
+backup/
+dolt-server.port
+dolt-config.log
+.auto-import-issues.jsonl
+
 # Worktree redirect file (contains relative path to main repo's .beads/)
 # Must not be committed as paths would be wrong in other clones
 redirect

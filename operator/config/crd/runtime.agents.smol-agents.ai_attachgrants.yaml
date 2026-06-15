@@ -12,7 +12,7 @@ spec:
     listKind: AttachGrantList
     plural: attachgrants
     shortNames:
-    - ag
+    - atg
     singular: attachgrant
   scope: Namespaced
   versions:

@@ -12,7 +12,7 @@ import (
 // minting an audience-bound attach token.
 //
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Namespaced,shortName=ag
+// +kubebuilder:resource:scope=Namespaced,shortName=atg
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.spec.agentRef`
 // +kubebuilder:printcolumn:name="Subject",type=string,JSONPath=`.spec.subject`

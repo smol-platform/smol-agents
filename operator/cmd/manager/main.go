@@ -244,7 +244,7 @@ func main() {
 			setupLog.Error(err, "unable to register AgentNetwork webhook")
 			os.Exit(1)
 		}
-		if err := webhooks.SetupAgentPolicyGateWebhook(mgr); err != nil {
+		if err := webhooks.SetupAgentPolicyGateWebhook(mgr, defaultRunRuntimeClass); err != nil {
 			setupLog.Error(err, "unable to register AgentPolicy gate webhook")
 			os.Exit(1)
 		}

@@ -335,23 +335,19 @@ func TestEnvtest_Memory_Teardown(t *testing.T) {
 		t.Fatalf("delete MemoryRetriever: %v", err)
 	}
 
-	// Wait for the worker Deployment to disappear (owner ref cascade).
-	deadline := time.After(30 * time.Second)
-	tick := time.NewTicker(500 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		d := &appsv1.Deployment{}
-		err := e.cli.Get(e.ctx, types.NamespacedName{
-			Namespace: "mem-teardown", Name: "mr-to-delete-worker",
-		}, d)
-		if apierrors.IsNotFound(err) {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("timeout: worker Deployment not deleted after MemoryRetriever deletion")
-		case <-tick.C:
-		}
+	// envtest runs no kube-controller-manager, so ownerRef cascade GC never
+	// actually deletes the children here. Assert the controller-ref that the
+	// real cluster's GC acts on instead of waiting for a deletion that can't
+	// happen in this harness.
+	d := &appsv1.Deployment{}
+	if err := e.cli.Get(e.ctx, types.NamespacedName{
+		Namespace: "mem-teardown", Name: "mr-to-delete-worker",
+	}, d); err != nil {
+		t.Fatalf("get worker Deployment: %v", err)
+	}
+	ref := metav1.GetControllerOf(d)
+	if ref == nil || ref.Kind != "MemoryRetriever" || ref.Name != "to-delete" {
+		t.Fatalf("worker Deployment must be controller-owned by the MemoryRetriever for cascade GC, got %+v", ref)
 	}
 
 	// The MemoryStore must still exist.

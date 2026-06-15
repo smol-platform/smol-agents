@@ -24,6 +24,8 @@ bpfeb.o
 bin/
 dist/
 build/
+# Stray root-level CLI binary (build with `make build` -> bin/agentctl)
+/agentctl
 
 # Coverage
 coverage.out

@@ -106,3 +106,48 @@ func TestAgentPolicyGate_RunBudgetOverride(t *testing.T) {
 		t.Fatalf("within-cap override must pass: %v", err)
 	}
 }
+
+func TestAgentPolicyGate_ClaudeWriteRuntime(t *testing.T) {
+	mk := func(kind pure.HarnessKind, cli *pure.HarnessCLISpec, runtimeClass string) *amv1.Agent {
+		a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+		a.Spec.Harness = &pure.HarnessSpec{Kind: kind, CLI: cli}
+		a.Spec.Sandbox = pure.SandboxSpec{RuntimeClass: runtimeClass}
+		return a
+	}
+	g := &agentPolicyGate{defaultRunClass: "kata-fc"}
+
+	// claude + Write tool on runc → warn
+	if w := g.checkClaudeWriteRuntime(mk(pure.HarnessClaudeCode, &pure.HarnessCLISpec{AllowedTools: []string{"Write"}}, "runc")); len(w) != 1 {
+		t.Fatalf("claude+Write on runc must warn, got %v", w)
+	}
+	// approvalMode acceptEdits on gvisor → warn
+	if w := g.checkClaudeWriteRuntime(mk(pure.HarnessClaudeCode, &pure.HarnessCLISpec{ApprovalMode: "acceptEdits"}, "gvisor")); len(w) != 1 {
+		t.Fatalf("claude acceptEdits on gvisor must warn, got %v", w)
+	}
+	// kata explicit → no warn
+	if w := g.checkClaudeWriteRuntime(mk(pure.HarnessClaudeCode, &pure.HarnessCLISpec{AllowedTools: []string{"Edit"}}, "kata-fc")); len(w) != 0 {
+		t.Fatalf("kata must not warn, got %v", w)
+	}
+	// empty runtimeClass resolves to the operator default (kata-fc) → no warn
+	if w := g.checkClaudeWriteRuntime(mk(pure.HarnessClaudeCode, &pure.HarnessCLISpec{AllowedTools: []string{"Write"}}, "")); len(w) != 0 {
+		t.Fatalf("default kata must not warn, got %v", w)
+	}
+	// empty runtimeClass with a runc operator default → warn
+	gRunc := &agentPolicyGate{defaultRunClass: "runc"}
+	if w := gRunc.checkClaudeWriteRuntime(mk(pure.HarnessClaudeCode, &pure.HarnessCLISpec{AllowedTools: []string{"Write"}}, "")); len(w) != 1 {
+		t.Fatalf("runc default must warn, got %v", w)
+	}
+	// read-only tools on runc → no warn
+	if w := g.checkClaudeWriteRuntime(mk(pure.HarnessClaudeCode, &pure.HarnessCLISpec{AllowedTools: []string{"Read", "Grep"}}, "runc")); len(w) != 0 {
+		t.Fatalf("read-only must not warn, got %v", w)
+	}
+	// non-claude harness → no warn
+	if w := g.checkClaudeWriteRuntime(mk(pure.HarnessCodex, &pure.HarnessCLISpec{AllowedTools: []string{"Write"}}, "runc")); len(w) != 0 {
+		t.Fatalf("codex must not warn, got %v", w)
+	}
+	// no harness → no warn
+	bare := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	if w := g.checkClaudeWriteRuntime(bare); len(w) != 0 {
+		t.Fatalf("loop agent must not warn, got %v", w)
+	}
+}

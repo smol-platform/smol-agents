@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"context"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -12,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
@@ -25,16 +27,21 @@ var (
 // admission (the ValidatingWebhookConfiguration runs failurePolicy: Fail, D3).
 // The Agent/AgentRun reconcilers run the same checks as a reconcile-time
 // backstop. It fails open only on a transient list error or an empty effective
-// policy — never wrongly denies on an apiserver hiccup.
-func SetupAgentPolicyGateWebhook(mgr ctrl.Manager) error {
-	g := &agentPolicyGate{client: mgr.GetClient()}
+// policy — never wrongly denies on an apiserver hiccup. defaultRunClass is the
+// operator's --default-run-runtime-class, used to resolve an Agent that leaves
+// spec.sandbox.runtimeClass empty for the claude-write warning.
+func SetupAgentPolicyGateWebhook(mgr ctrl.Manager, defaultRunClass string) error {
+	g := &agentPolicyGate{client: mgr.GetClient(), defaultRunClass: defaultRunClass}
 	if err := ctrl.NewWebhookManagedBy(mgr, &amv1.Agent{}).WithValidator(agentGate{g}).Complete(); err != nil {
 		return err
 	}
 	return ctrl.NewWebhookManagedBy(mgr, &amv1.AgentRun{}).WithValidator(runGate{g}).Complete()
 }
 
-type agentPolicyGate struct{ client client.Client }
+type agentPolicyGate struct {
+	client          client.Client
+	defaultRunClass string
+}
 
 // effective lists + composes the namespace policies. ok=false ⇒ fail open
 // (transient list error or no constraining policy).
@@ -104,6 +111,50 @@ func (g *agentPolicyGate) checkLoopToolKinds(ctx context.Context, a *amv1.Agent)
 	return warns
 }
 
+// claudeWriteTools are the claude-code permission tool names that imply file
+// writes. Headless claude-code only writes files under
+// --dangerously-skip-permissions, which D3 gates to kata microVMs — so a
+// claude Agent that allow-lists these on a shared-kernel runtime fails
+// confusingly at runtime (proven live, see live_zai_5scenarios).
+var claudeWriteTools = map[string]bool{
+	"write": true, "edit": true, "multiedit": true, "notebookedit": true,
+}
+
+// checkClaudeWriteRuntime warns when a claude-code harness Agent allow-lists
+// write-class tools (or sets approvalMode acceptEdits) but its resolved
+// RuntimeClass is not a kata microVM. Warning-only, mirroring
+// checkLoopToolKinds: the danger-flag enforcement (dangerFlagViolation, D3) is
+// the reconcile-time gate; admission just surfaces the inevitable runtime
+// failure early. Pure spec logic — no cluster lookups.
+func (g *agentPolicyGate) checkClaudeWriteRuntime(a *amv1.Agent) admission.Warnings {
+	h := a.Spec.Harness
+	if h == nil || pure.CanonicalHarnessKind(h.Kind) != pure.HarnessClaudeCode || h.CLI == nil {
+		return nil
+	}
+	wantsWrites := h.CLI.ApprovalMode == "acceptEdits"
+	for _, t := range h.CLI.AllowedTools {
+		if claudeWriteTools[strings.ToLower(t)] {
+			wantsWrites = true
+			break
+		}
+	}
+	if !wantsWrites {
+		return nil
+	}
+	class := a.Spec.Sandbox.RuntimeClass
+	if class == "" {
+		class = g.defaultRunClass
+	}
+	if class == "" || builders.RequiresKVM(class) {
+		return nil // microVM (or unknowable default) — writes are gateable via danger flags
+	}
+	return admission.Warnings{
+		"claude-code can only write files with --dangerously-skip-permissions, which D3 restricts to kata microVMs; " +
+			"resolved runtimeClass " + class + " is shared-kernel, so this Agent's file writes will fail at runtime " +
+			"(approvalMode/allowedTools are not sufficient headlessly)",
+	}
+}
+
 func (g *agentPolicyGate) checkRun(ctx context.Context, run *amv1.AgentRun) error {
 	eff, ok := g.effective(ctx, run.Namespace)
 	if !ok || eff.Budget == nil {
@@ -136,14 +187,14 @@ func (a agentGate) ValidateCreate(ctx context.Context, obj *amv1.Agent) (admissi
 	if err := a.g.checkAgent(ctx, obj); err != nil {
 		return nil, err
 	}
-	return a.g.checkLoopToolKinds(ctx, obj), nil
+	return append(a.g.checkLoopToolKinds(ctx, obj), a.g.checkClaudeWriteRuntime(obj)...), nil
 }
 
 func (a agentGate) ValidateUpdate(ctx context.Context, _, newObj *amv1.Agent) (admission.Warnings, error) {
 	if err := a.g.checkAgent(ctx, newObj); err != nil {
 		return nil, err
 	}
-	return a.g.checkLoopToolKinds(ctx, newObj), nil
+	return append(a.g.checkLoopToolKinds(ctx, newObj), a.g.checkClaudeWriteRuntime(newObj)...), nil
 }
 
 func (a agentGate) ValidateDelete(context.Context, *amv1.Agent) (admission.Warnings, error) {
