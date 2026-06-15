@@ -125,6 +125,9 @@ The platform's own `EventBinding` then does the fine-grained filter→target
 routing inside the gateway. (Broker/Trigger does cluster-level fan-out;
 `EventBinding` does platform-level target selection — they compose.)
 
+A complete, runnable wiring (lead Agent + AgentTeam + EventBinding + Broker +
+Trigger) is in `docs/examples/07-event-driven-knative.yaml`.
+
 **As a SOURCE (results).** A finished run/coordinator/workflow optionally emits a
 result **CloudEvent** to a configured sink (a Knative `SinkBinding` resolves the
 sink URI). This makes agent outputs drive *downstream* Triggers — composable

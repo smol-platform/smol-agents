@@ -18,7 +18,14 @@ docs/examples/
   04-approval-gate.yaml     M5  human pre-run approval
   05-governance.yaml        M1  AgentPolicy allow-list + kata isolation
   06-secretless-egress.yaml      credential-blind egress via the broker
+  07-event-driven-knative.yaml   a CloudEvent (via a Knative Trigger) spawns a
+                                 per-event team coordinator (epic t0d)
 ```
+
+> Example 07 needs **Knative Serving + Eventing** in the cluster (the agentgateway
+> is a Knative Service; the example adds a Broker + Trigger). To try the routing
+> without Knative Eventing, `POST` a CloudEvent straight to the gateway's
+> `/v1/events/{ns}` ingress — the `EventBinding` still does the work.
 
 ## The model in one paragraph
 

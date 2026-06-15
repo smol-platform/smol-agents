@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Example 07 — Event-driven agents via Knative Eventing  (epic t0d)
+#
+#     kubectl apply -f docs/examples/00-prerequisites.yaml
+#     kubectl apply -f docs/examples/07-event-driven-knative.yaml
+#
+#     # Send a CloudEvent into the Broker; one coordinator run is created per event:
+#     kubectl -n tenant-a run ce --rm -it --image=curlimages/curl --restart=Never -- \
+#       curl -v "http://broker-ingress.knative-eventing.svc.cluster.local/tenant-a/default" \
+#         -H "Ce-Id: incident-9001" -H "Ce-Specversion: 1.0" \
+#         -H "Ce-Type: com.acme.incident.opened" -H "Ce-Source: /acme/pagerduty" \
+#         -H "Content-Type: application/json" -d '{"sev":1,"summary":"disk full"}'
+#     kubectl -n tenant-a get agentruns -l runtime.agents.smol-agents.ai/team=incident-squad -w
+#
+#     # ...or test WITHOUT Knative, posting straight to the gateway's namespace
+#     # ingress (the EventBinding still does the routing):
+#     curl http://<agentgateway>/v1/events/tenant-a \
+#       -H "Ce-Id: incident-9001" -H "Ce-Type: com.acme.incident.opened" -d '{"sev":1}'
+#
+# The flow (Knative-function style — one coordinator per event):
+#
+#   CloudEvent ─▶ Knative Broker ─▶ Knative Trigger ─▶ agentgateway /v1/events/tenant-a
+#                                                          │  match EventBinding (by type)
+#                                                          ▼
+#                                       AgentTeam "incident-squad" ─▶ per-event coordinator AgentRun
+#
+# The AgentTeam is a DURABLE DEFINITION; each event instantiates a fresh
+# coordinator (the lead agent) with the event payload as its objective, GC'd with
+# the team. Idempotent on the CloudEvent id. See docs/design/event-intake.md.
+#
+# Same-namespace only (D1): the EventBinding, team, and members all live in
+# tenant-a; the per-event run passes the same admission + kata sandbox as any run.
+# ─────────────────────────────────────────────────────────────────────────────
+# The coordinator: an ordinary loop Agent that orchestrates members (A2A / the
+# shared task list). Its instructions are the standing role; the event is the task.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: incident-lead
+  namespace: tenant-a
+spec:
+  model: { providerRef: openai, name: gpt-4 }
+  instructions: |
+    You are the incident coordinator. The event payload describes an incident;
+    delegate investigation + remediation to your team members and synthesize.
+  budget: { maxSteps: 20, maxTokens: 40000, maxWallClockSeconds: 600, maxToolCalls: 30 }
+---
+# The team: a durable definition. Members are same-namespace Agents.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: AgentTeam
+metadata:
+  name: incident-squad
+  namespace: tenant-a
+spec:
+  lead: incident-lead
+  pattern: orchestrator
+  members:
+    - { name: investigator, agentRef: incident-lead }
+  budget: { maxSteps: 60, maxTokens: 200000, maxWallClockSeconds: 1800, maxToolCalls: 120 }
+---
+# The route: a CloudEvent of this type, delivered to the gateway's tenant-a
+# ingress, instantiates a coordinator for the team. The platform's Trigger analog.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: EventBinding
+metadata:
+  name: incident-to-squad
+  namespace: tenant-a
+spec:
+  filter:
+    type: com.acme.incident.opened
+  target:
+    kind: AgentTeam
+    name: incident-squad
+---
+# Knative Eventing: a Broker, and a Trigger that delivers matching events to the
+# agentgateway's namespace ingress. The gateway is an addressable Knative Service
+# that speaks the CloudEvents HTTP binding, so it is a Trigger subscriber as-is.
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: default
+  namespace: tenant-a
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: incidents-to-agentgateway
+  namespace: tenant-a
+spec:
+  broker: default
+  filter:
+    attributes:
+      type: com.acme.incident.opened
+  subscriber:
+    # ref resolves to the agentgateway Service's addressable URL; uri appends the
+    # per-namespace events path the gateway routes EventBindings on.
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: agentgateway
+      namespace: smol-agents-system
+    uri: /v1/events/tenant-a
