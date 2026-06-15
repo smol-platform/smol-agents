@@ -219,19 +219,7 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if len(brokerValues) > 0 {
 		builders.AttachSecretBroker(pod, synthetic.Name)
 	}
-	cmd := []string{"/agent", "serve-session", "--dir=" + builders.RunSpecMountPath, "--agent-ref=" + session.Spec.AgentRef}
-	if session.Spec.IdleTimeoutSeconds > 0 {
-		cmd = append(cmd, fmt.Sprintf("--idle-timeout=%ds", session.Spec.IdleTimeoutSeconds))
-	}
-	// Turn-scaling knobs (M2.18). Accessors default-preserve serial behavior, so
-	// only render when the operator actually opted into concurrency / a bound.
-	if n := session.Spec.ConcurrentTurns(); n > 1 {
-		cmd = append(cmd, fmt.Sprintf("--max-concurrent-turns=%d", n))
-	}
-	if h := session.Spec.HistoryLimit(); h > 0 {
-		cmd = append(cmd, fmt.Sprintf("--history-limit=%d", h))
-	}
-	pod.Spec.Containers[0].Command = cmd
+	pod.Spec.Containers[0].Command = sessionWorkerCommand(session)
 	// Right-size the resident worker (M1.11). A session has no wall-clock deadline,
 	// so worker sizing is expressed here rather than via a run budget.
 	builders.ApplySessionResources(&pod.Spec.Containers[0], session.Spec.Resources)
@@ -424,4 +412,28 @@ func sessionDeployment(session *amv1.AgentSession, name string, pod *corev1.Pod)
 			},
 		},
 	}
+}
+
+// sessionWorkerCommand renders the `agent serve-session` command line for a
+// session worker, including the M2.18 turn-scaling knobs. The spec accessors
+// default-preserve today's behavior (serial, unbounded history, no per-turn
+// cap), so each knob is only rendered when the operator opted into it — keeping
+// a default session's command identical to before.
+func sessionWorkerCommand(session *amv1.AgentSession) []string {
+	cmd := []string{"/agent", "serve-session", "--dir=" + builders.RunSpecMountPath, "--agent-ref=" + session.Spec.AgentRef}
+	if session.Spec.IdleTimeoutSeconds > 0 {
+		cmd = append(cmd, fmt.Sprintf("--idle-timeout=%ds", session.Spec.IdleTimeoutSeconds))
+	}
+	if n := session.Spec.ConcurrentTurns(); n > 1 {
+		cmd = append(cmd, fmt.Sprintf("--max-concurrent-turns=%d", n))
+	}
+	if h := session.Spec.HistoryLimit(); h > 0 {
+		cmd = append(cmd, fmt.Sprintf("--history-limit=%d", h))
+	}
+	// M2.18 per-turn deadline: the worker abandons a turn whose wall-clock
+	// exceeds this (turnCtx = min(TurnTimeout, budget)). Opt-in; 0 = no cap.
+	if d := session.Spec.TurnDeliveryTimeoutSeconds; d > 0 {
+		cmd = append(cmd, fmt.Sprintf("--turn-timeout=%ds", d))
+	}
+	return cmd
 }
