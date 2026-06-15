@@ -28,7 +28,7 @@ spec:
       containerConcurrency: 50
       containers:
         - name: agentgateway
-          image: ghcr.io/smol-platform/smol-agents/agentgateway:0.1.0
+          image: ghcr.io/smol-platform/smol-agents/agentgateway:0.3.0
           args: ["--addr=:8080"]
           env:
             - name: AGENTSESSION_NATS_URL
