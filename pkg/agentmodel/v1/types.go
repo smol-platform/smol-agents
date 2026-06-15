@@ -551,7 +551,10 @@ type AgentSessionSpec struct {
 	// +optional
 	TurnPollIntervalMs int32 `json:"turnPollIntervalMs,omitempty"`
 	// TurnDeliveryTimeoutSeconds bounds how long a single turn may take before the
-	// worker abandons it (0 → 300s). Must be ≤ turnRetentionSeconds (M2.22).
+	// worker abandons it: the operator renders it as serve-session --turn-timeout,
+	// so turnCtx = min(this, the turn's budget) (M2.18). 0 = no worker-enforced
+	// per-turn cap (today's behavior; the turn's own budget still applies). When
+	// set, must be ≤ turnRetentionSeconds (M2.22).
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	TurnDeliveryTimeoutSeconds int32 `json:"turnDeliveryTimeoutSeconds,omitempty"`
