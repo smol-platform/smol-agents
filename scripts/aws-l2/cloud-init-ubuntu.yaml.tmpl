@@ -148,7 +148,8 @@ runcmd:
   #    *not* `k0s start` (which isn't a real subcommand). Wait up
   #    to 5 min — first boot has to extract etcd + kube-apiserver
   #    binaries and generate the PKI.
-  - curl -sSf https://get.k0s.sh | sh
+  # Pin k0s (see al2023 template): unpinned latest regressed the controller.
+  - curl -sSf https://get.k0s.sh | K0S_VERSION=v1.35.3+k0s.0 sh
   - k0s install controller --single -c /etc/k0s/k0s.yaml
   - systemctl start k0scontroller
   - timeout 300 sh -c 'until k0s status >/dev/null 2>&1; do sleep 5; done'
