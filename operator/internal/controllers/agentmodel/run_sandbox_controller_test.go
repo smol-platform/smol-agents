@@ -89,7 +89,8 @@ func TestResolveRunSandbox(t *testing.T) {
 func TestEnsureRunEgressPolicy(t *testing.T) {
 	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
 	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a1", Namespace: "tenant-a"}}
-	r := sandboxReconciler(t, nil, run)
+	// Simulate an enforcing CNI so the floor posture reports honestly (rv1.2).
+	r := sandboxReconciler(t, func(r *AgentRunReconciler) { r.CNIEnforcesNetworkPolicy = true }, run)
 
 	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
 		t.Fatalf("ensureRunEgressPolicy: %v", err)
@@ -111,14 +112,42 @@ func TestEnsureRunEgressPolicy(t *testing.T) {
 	}
 }
 
-// M1.19: the egress-posture label is "tiered" only when a bound AgentNetwork
-// layers an allow-list on the floor.
+// rv1.2: on a non-enforcing CNI (the operator default) the run still creates
+// the egress NetworkPolicy but reports "unenforced" — not pretending containment.
+func TestEnsureRunEgressPolicy_UnenforcedCNI(t *testing.T) {
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a1", Namespace: "tenant-a"}}
+	r := sandboxReconciler(t, nil, run) // CNIEnforcesNetworkPolicy defaults false
+
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
+		t.Fatalf("ensureRunEgressPolicy: %v", err)
+	}
+	// The policy is still created (intent preserved)...
+	var np networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: "r1-egress"}, &np); err != nil {
+		t.Fatalf("egress NetworkPolicy not created: %v", err)
+	}
+	// ...but status reports it is not actually enforced.
+	if run.Status.EgressEnforcement != "unenforced" {
+		t.Errorf("status egress = %q, want unenforced", run.Status.EgressEnforcement)
+	}
+}
+
+// M1.19/rv1.2: the egress-posture label is "tiered" only when a bound
+// AgentNetwork layers an allow-list on an enforcing CNI; on a non-enforcing CNI
+// it is "unenforced" regardless of plan.
 func TestEgressEnforcementLabel(t *testing.T) {
-	if got := egressEnforcementLabel(plan.NetworkPlan{}); got != "default-deny" {
-		t.Errorf("empty plan = %q, want default-deny", got)
+	if got := egressEnforcementLabel(plan.NetworkPlan{}, true); got != "default-deny" {
+		t.Errorf("empty plan (enforcing) = %q, want default-deny", got)
 	}
 	withAllow := plan.NetworkPlan{AllowRules: []pure.EgressRule{{CIDR: "203.0.113.0/24"}}}
-	if got := egressEnforcementLabel(withAllow); got != "tiered" {
-		t.Errorf("plan with allow rules = %q, want tiered", got)
+	if got := egressEnforcementLabel(withAllow, true); got != "tiered" {
+		t.Errorf("plan with allow rules (enforcing) = %q, want tiered", got)
+	}
+	if got := egressEnforcementLabel(plan.NetworkPlan{}, false); got != "unenforced" {
+		t.Errorf("empty plan (non-enforcing) = %q, want unenforced", got)
+	}
+	if got := egressEnforcementLabel(withAllow, false); got != "unenforced" {
+		t.Errorf("plan with allow rules (non-enforcing) = %q, want unenforced", got)
 	}
 }

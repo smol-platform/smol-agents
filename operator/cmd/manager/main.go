@@ -44,6 +44,7 @@ func main() {
 	var enableLeaderElection bool
 	var defaultRunRuntimeClass string
 	var allowHostRuntime bool
+	var cniEnforcesNetworkPolicy bool
 	var sessionNATSURL string
 	var natsAccountSeedFile string
 	var a2aMaxDepth int
@@ -63,6 +64,8 @@ func main() {
 		"sandbox RuntimeClass applied to AgentRun pods when the Agent doesn't override it (empty = kata-fc)")
 	flag.BoolVar(&allowHostRuntime, "allow-host-runtime", false,
 		"permit runc (shared host kernel) for AgentRun pods on clusters with no sandbox runtime; otherwise runc is a fail-closed R-SBX-1 violation")
+	flag.BoolVar(&cniEnforcesNetworkPolicy, "cni-enforces-networkpolicy", false,
+		"declare that the cluster CNI enforces NetworkPolicy (Cilium/Calico/eBPF); default false reports the egress floor as 'unenforced' on AgentRun/AgentSession status since CNIs like kindnet silently no-op it (rv1.2)")
 	flag.StringVar(&sessionNATSURL, "session-nats-url", os.Getenv("SESSION_NATS_URL"),
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
 	flag.StringVar(&natsAccountSeedFile, "nats-account-seed-file", os.Getenv("NATS_ACCOUNT_SEED_FILE"),
@@ -174,6 +177,7 @@ func main() {
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 		DefaultRunRuntimeClass:         defaultRunRuntimeClass,
 		AllowHostRuntime:               allowHostRuntime,
+		CNIEnforcesNetworkPolicy:       cniEnforcesNetworkPolicy,
 		MaxConcurrentReconciles:        maxConcurrentReconciles,
 		RunDeadlineMultiplier:          runDeadlineMultiplier,
 		DefaultApprovalTimeout:         defaultApprovalTimeout,
@@ -186,11 +190,12 @@ func main() {
 	}
 	if err := (&agentmodel.AgentSessionReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-		DefaultRunRuntimeClass:  defaultRunRuntimeClass,
-		AllowHostRuntime:        allowHostRuntime,
-		NATSURL:                 sessionNATSURL,
-		NATSAccountSeed:         natsAccountSeed,
-		MaxConcurrentReconciles: maxConcurrentReconciles,
+		DefaultRunRuntimeClass:   defaultRunRuntimeClass,
+		AllowHostRuntime:         allowHostRuntime,
+		CNIEnforcesNetworkPolicy: cniEnforcesNetworkPolicy,
+		NATSURL:                  sessionNATSURL,
+		NATSAccountSeed:          natsAccountSeed,
+		MaxConcurrentReconciles:  maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentSession controller")
 		os.Exit(1)
