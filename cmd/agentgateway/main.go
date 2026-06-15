@@ -40,12 +40,19 @@ type Gateway struct {
 	// Limits resolves a session's per-turn input cap (M2.20). Nil → every turn
 	// uses defaultInputCap, matching the gateway's pre-M2.20 behavior.
 	Limits *sessionLimits
+	// K8s creates per-event coordinator runs for the CloudEvents team intake
+	// (epic t0d / rv3.1). Nil → the team-event endpoint returns 503 (the gateway
+	// still serves session turns).
+	K8s client.Client
 }
 
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/sessions/{ns}/{name}/turns", g.postTurn)
 	mux.HandleFunc("GET /v1/sessions/{ns}/{name}/turns/{id}", g.getResult)
+	// CloudEvents intake: an event instantiates a per-event coordinator run for
+	// the addressed AgentTeam (t0d). Addressable as a Knative Trigger subscriber.
+	mux.HandleFunc("POST /v1/teams/{ns}/{name}/events", g.postTeamEvent)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	return mux
 }
@@ -171,7 +178,8 @@ func main() {
 
 	// In-cluster client for per-session limits (M2.20); best-effort — without it
 	// every turn uses the default cap and stream retention stays at its default.
-	g := &Gateway{Queue: q, MaxWait: *maxWait, Logger: logger, Limits: newSessionLimits(buildK8sClient(logger), q)}
+	kc := buildK8sClient(logger)
+	g := &Gateway{Queue: q, MaxWait: *maxWait, Logger: logger, Limits: newSessionLimits(kc, q), K8s: kc}
 	srv := &http.Server{Addr: *addr, Handler: g.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

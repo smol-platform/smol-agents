@@ -25,7 +25,7 @@ func TestBuildAgentRunPod_TeamEnv(t *testing.T) {
 	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "tenant-a"}}
 	r := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{
 		Name: "m1", Namespace: "tenant-a",
-		Labels: map[string]string{TeamLabel: "squad", TeamMemberLabel: "researcher"},
+		Labels: map[string]string{amv1.TeamLabel: "squad", amv1.TeamMemberLabel: "researcher"},
 	}}
 	r.Spec.AgentRef = "worker"
 
@@ -51,7 +51,7 @@ func TestBuildAgentRunPod_TeamEnv_NoURLFailsClosed(t *testing.T) {
 	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "worker", Namespace: "t"}}
 	r := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{
 		Name: "m1", Namespace: "t",
-		Labels: map[string]string{TeamLabel: "squad", TeamMemberLabel: "researcher"},
+		Labels: map[string]string{amv1.TeamLabel: "squad", amv1.TeamMemberLabel: "researcher"},
 	}}
 	r.Spec.AgentRef = "worker"
 	if _, ok := teamEnv(BuildAgentRunPod(r, a))["TEAM_NATS_URL"]; ok {
@@ -77,7 +77,7 @@ func TestBuildAgentRunPod_TeamEnv_LeadNoMember(t *testing.T) {
 	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "lead", Namespace: "t"}}
 	r := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{
 		Name: "lead-run", Namespace: "t",
-		Labels: map[string]string{TeamLabel: "squad"},
+		Labels: map[string]string{amv1.TeamLabel: "squad"},
 	}}
 	r.Spec.AgentRef = "lead"
 	env := teamEnv(BuildAgentRunPod(r, a))
