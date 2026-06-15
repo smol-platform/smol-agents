@@ -21,6 +21,16 @@ rules:
   - apiGroups: [runtime.agents.smol-agents.ai]
     resources: [agentsessions]
     verbs: [get, list, watch]
+  # CloudEvents team intake (t0d / rv3.1): read the addressed AgentTeam and
+  # create the per-event coordinator AgentRun. Create-only on runs (the gateway
+  # never reads/mutates existing runs); the run is then governed by admission +
+  # the operator exactly like any other AgentRun.
+  - apiGroups: [runtime.agents.smol-agents.ai]
+    resources: [agentteams]
+    verbs: [get]
+  - apiGroups: [runtime.agents.smol-agents.ai]
+    resources: [agentruns]
+    verbs: [create]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

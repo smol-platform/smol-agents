@@ -1,4 +1,4 @@
-package builders
+package v1
 
 import (
 	"encoding/json"
@@ -6,15 +6,13 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-
-	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 )
 
 // rv3.1: each inbound event instantiates one coordinator run of the team's lead,
 // carrying the event payload + the team label + a team-owned ref so it (and its
 // A2A subtree) GC with the team. Name is <team>-<eventID> for idempotency.
 func TestBuildCoordinatorRun(t *testing.T) {
-	team := &amv1.AgentTeam{ObjectMeta: metav1.ObjectMeta{Name: "squad", Namespace: "tenant-a", UID: types.UID("team-uid-1")}}
+	team := &AgentTeam{ObjectMeta: metav1.ObjectMeta{Name: "squad", Namespace: "tenant-a", UID: types.UID("team-uid-1")}}
 	team.Spec.Lead = "orchestrator"
 	data := json.RawMessage(`{"prompt":"summarize the incident"}`)
 

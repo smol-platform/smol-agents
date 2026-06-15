@@ -80,7 +80,7 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 		// the team's shared task list + peer mailbox (WireTaskInvoker et al.).
 		// Fail-closed: no team label or no operator --team-nats-url → no env → those
 		// invokers stay ABSENT and the executor fail-closes the call.
-		if team := run.Labels[TeamLabel]; team != "" {
+		if team := run.Labels[amv1.TeamLabel]; team != "" {
 			if url := teamNATSURL(); url != "" {
 				main.Env = append(main.Env,
 					corev1.EnvVar{Name: "TEAM_NATS_URL", Value: url},
@@ -89,7 +89,7 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 				)
 				// kind=teammate/teambus require a member identity; kind=task falls
 				// back to RUN_NAME when this is absent (e.g. the lead).
-				if m := run.Labels[TeamMemberLabel]; m != "" {
+				if m := run.Labels[amv1.TeamMemberLabel]; m != "" {
 					main.Env = append(main.Env, corev1.EnvVar{Name: "TEAM_MEMBER", Value: m})
 				}
 			}
@@ -227,18 +227,6 @@ func loopContainer(agent *amv1.Agent, mounts []corev1.VolumeMount) corev1.Contai
 		VolumeMounts: mounts,
 	}
 }
-
-// Team labels mark a run/session as part of an AgentTeam. The coordinator stamps
-// them when it spawns a member; the run-pod builder reads them to inject the
-// team's NATS context, and the AgentTeam reconciler reads them to map an owned
-// run/session back to its member. Canonical here (the builder needs them) and
-// re-exported by the controller package.
-const (
-	// TeamLabel names the owning AgentTeam (set alongside the OwnerReference).
-	TeamLabel = "runtime.agents.smol-agents.ai/team"
-	// TeamMemberLabel marks a run/session as a named team member's worker.
-	TeamMemberLabel = "runtime.agents.smol-agents.ai/team-member"
-)
 
 // teamNATSURL is the NATS URL injected into team-member run/session pods
 // (TEAM_NATS_URL, read by WireTaskInvoker/WireTeammateInvoker/WireTeamBusInvoker
