@@ -13,16 +13,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
 const (
 	// TeamMemberLabel marks an AgentRun/AgentSession as a team member's worker,
 	// set by the coordinator when it spawns the member (from P1). P0 reads it to
-	// map an owned run/session back to its TeamMemberSpec by name.
-	TeamMemberLabel = "runtime.agents.smol-agents.ai/team-member"
+	// map an owned run/session back to its TeamMemberSpec by name. Canonical in
+	// the builders package (the run-pod builder reads it too).
+	TeamMemberLabel = builders.TeamMemberLabel
 	// TeamLabel names the owning AgentTeam (set alongside the OwnerReference).
-	TeamLabel = "runtime.agents.smol-agents.ai/team"
+	TeamLabel = builders.TeamLabel
 )
 
 // AgentTeamReconciler maintains the governance envelope for an AgentTeam (P0):
