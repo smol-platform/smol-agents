@@ -46,6 +46,7 @@ func main() {
 	var allowHostRuntime bool
 	var cniEnforcesNetworkPolicy bool
 	var sessionNATSURL string
+	var teamNATSURL string
 	var natsAccountSeedFile string
 	var a2aMaxDepth int
 	var maxConcurrentReconciles int
@@ -68,6 +69,8 @@ func main() {
 		"declare that the cluster CNI enforces NetworkPolicy (Cilium/Calico/eBPF); default false reports the egress floor as 'unenforced' on AgentRun/AgentSession status since CNIs like kindnet silently no-op it (rv1.2)")
 	flag.StringVar(&sessionNATSURL, "session-nats-url", os.Getenv("SESSION_NATS_URL"),
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
+	flag.StringVar(&teamNATSURL, "team-nats-url", os.Getenv("TEAM_NATS_URL"),
+		"NATS URL injected into AgentTeam member run/session pods (TEAM_NATS_URL) for the shared task list + peer mailbox invokers; empty defaults to --session-nats-url, leaving team coordination fail-closed when neither is set (rv3.1)")
 	flag.StringVar(&natsAccountSeedFile, "nats-account-seed-file", os.Getenv("NATS_ACCOUNT_SEED_FILE"),
 		"path to the NATS account signing seed (mounted Secret) used to mint per-namespace worker credentials (M2.20); empty leaves session workers connecting unauthenticated")
 	flag.IntVar(&a2aMaxDepth, "a2a-max-depth", 4,
@@ -113,6 +116,16 @@ func main() {
 			sessionNATSURL = h.URL
 		}
 		setupLog.Info("embedded NATS started", "url", h.URL, "store", embeddedNATSStore)
+	}
+
+	// Team coordination transport (rv3.1) reaches the run-pod builder via env. It
+	// defaults to the session NATS (reuses the same JetStream); empty leaves the
+	// team task/mailbox invokers fail-closed.
+	if teamNATSURL == "" {
+		teamNATSURL = sessionNATSURL
+	}
+	if teamNATSURL != "" {
+		_ = os.Setenv("SMOL_AGENTS_TEAM_NATS_URL", teamNATSURL)
 	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
