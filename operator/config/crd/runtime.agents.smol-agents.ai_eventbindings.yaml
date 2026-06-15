@@ -1,0 +1,71 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: eventbindings.runtime.agents.smol-agents.ai
+spec:
+  group: runtime.agents.smol-agents.ai
+  scope: Namespaced
+  names:
+    kind: EventBinding
+    plural: eventbindings
+    singular: eventbinding
+    shortNames: [eb]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - { name: Target, type: string, jsonPath: .spec.target.kind }
+        - { name: Name, type: string, jsonPath: .spec.target.name }
+        - { name: Type, type: string, jsonPath: .spec.filter.type, priority: 1 }
+        - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: |-
+            EventBinding is the platform's namespaced analog of a Knative Trigger
+            (docs/design/event-intake.md): it routes a matched CloudEvent — delivered
+            to the agentgateway CloudEvents ingress — to a same-namespace work target
+            (an Agent, AgentTeam, AgentSession, or AgentWorkflow). Same-namespace only
+            (D1 — no cross-tenant routing).
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              description: EventBindingSpec routes a matched CloudEvent to a work target.
+              required: [target]
+              properties:
+                filter:
+                  type: object
+                  description: |-
+                    Selects which CloudEvents this binding routes. Every SET attribute
+                    must match exactly; an empty filter matches any event delivered to
+                    the binding's namespace.
+                  properties:
+                    type: { type: string, description: "Matches the CloudEvent `type`." }
+                    source: { type: string, description: "Matches the CloudEvent `source`." }
+                    subject: { type: string, description: "Matches the CloudEvent `subject`." }
+                target:
+                  type: object
+                  description: The same-namespace object an event instantiates work on.
+                  required: [kind, name]
+                  properties:
+                    kind:
+                      type: string
+                      description: The target object kind.
+                      enum: [Agent, AgentTeam, AgentSession, AgentWorkflow]
+                    name:
+                      type: string
+                      description: The target object in the binding's namespace (D1).
+            status:
+              type: object
+              description: Observability over the binding's dispatch activity.
+              properties:
+                phase: { type: string, description: "Ready (target resolves) or Degraded (target missing)." }
+                lastEventID: { type: string }
+                lastEventTime: { type: string, format: date-time }
+                dispatched: { type: integer, format: int64 }
+                failed: { type: integer, format: int64 }

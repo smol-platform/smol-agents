@@ -10,6 +10,7 @@ resources:
   - runtime.agents.smol-agents.ai_agentruns.yaml
   - runtime.agents.smol-agents.ai_agentsessions.yaml
   - runtime.agents.smol-agents.ai_agentteams.yaml
+  - runtime.agents.smol-agents.ai_eventbindings.yaml
   - runtime.agents.smol-agents.ai_agentworkflows.yaml
   - runtime.agents.smol-agents.ai_agentpolicies.yaml
   - runtime.agents.smol-agents.ai_agentrunquotas.yaml
