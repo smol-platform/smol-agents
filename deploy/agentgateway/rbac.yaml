@@ -31,6 +31,11 @@ rules:
   - apiGroups: [runtime.agents.smol-agents.ai]
     resources: [agentruns]
     verbs: [create]
+  # General CloudEvents intake (h0d): list EventBindings to filter-route an event
+  # to its targets in the namespace.
+  - apiGroups: [runtime.agents.smol-agents.ai]
+    resources: [eventbindings]
+    verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

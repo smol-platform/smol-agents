@@ -14,6 +14,7 @@ import (
 	ctrlfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/sessionqueue"
 )
 
@@ -154,6 +155,84 @@ func TestPostTeamEvent_MissingID(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (no ce-id)", resp.StatusCode)
+	}
+}
+
+func makeBinding(name, ns, filterType string, kind pure.EventTargetKind, target string) *amv1.EventBinding {
+	return &amv1.EventBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: pure.EventBindingSpec{
+			Filter: pure.EventFilter{Type: filterType},
+			Target: pure.EventTarget{Kind: kind, Name: target},
+		},
+	}
+}
+
+func postCE(t *testing.T, url, id, ceType, body string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest("POST", url, strings.NewReader(body))
+	req.Header.Set("Ce-Id", id)
+	if ceType != "" {
+		req.Header.Set("Ce-Type", ceType)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// A matching EventBinding routes a CloudEvent to an AgentTeam → coordinator run.
+func TestPostEvent_BindingRoutesToTeam(t *testing.T) {
+	srv, kc := eventsTestServer(t, makeTeam(),
+		makeBinding("incident-to-squad", "tenant-a", "com.acme.incident.opened", pure.EventTargetAgentTeam, "squad"))
+	defer srv.Close()
+
+	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-1", "com.acme.incident.opened", `{"sev":1}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	var runs amv1.AgentRunList
+	_ = kc.List(t.Context(), &runs)
+	if len(runs.Items) != 1 || runs.Items[0].Spec.AgentRef != "orchestrator" {
+		t.Fatalf("want 1 coordinator run for the team lead, got %+v", runs.Items)
+	}
+}
+
+// A binding to an Agent target creates a plain AgentRun named <agent>-<token>.
+func TestPostEvent_BindingRoutesToAgent(t *testing.T) {
+	srv, kc := eventsTestServer(t, makeBinding("b", "tenant-a", "t", pure.EventTargetAgent, "summarizer"))
+	defer srv.Close()
+	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-2", "t", `{"text":"hi"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+	var runs amv1.AgentRunList
+	_ = kc.List(t.Context(), &runs)
+	if len(runs.Items) != 1 || runs.Items[0].Spec.AgentRef != "summarizer" {
+		t.Fatalf("want 1 AgentRun for the agent target, got %+v", runs.Items)
+	}
+	if string(runs.Items[0].Spec.Input) != `{"text":"hi"}` {
+		t.Errorf("input = %s, want the event data", runs.Items[0].Spec.Input)
+	}
+}
+
+// An event with no matching binding (filter mismatch) → 404, nothing created.
+func TestPostEvent_NoMatch(t *testing.T) {
+	srv, kc := eventsTestServer(t, makeTeam(),
+		makeBinding("only-incidents", "tenant-a", "com.acme.incident.opened", pure.EventTargetAgentTeam, "squad"))
+	defer srv.Close()
+	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-3", "com.other.thing", `{}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (no binding matches)", resp.StatusCode)
+	}
+	var runs amv1.AgentRunList
+	_ = kc.List(t.Context(), &runs)
+	if len(runs.Items) != 0 {
+		t.Errorf("created %d runs for an unmatched event, want 0", len(runs.Items))
 	}
 }
 

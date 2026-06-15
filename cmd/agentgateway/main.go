@@ -53,6 +53,9 @@ func (g *Gateway) Handler() http.Handler {
 	// CloudEvents intake: an event instantiates a per-event coordinator run for
 	// the addressed AgentTeam (t0d). Addressable as a Knative Trigger subscriber.
 	mux.HandleFunc("POST /v1/teams/{ns}/{name}/events", g.postTeamEvent)
+	// General CloudEvents intake: routed by EventBinding to any target in {ns}
+	// (the namespace-wide Knative Trigger subscriber).
+	mux.HandleFunc("POST /v1/events/{ns}", g.postEvent)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	return mux
 }
