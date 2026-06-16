@@ -16,10 +16,11 @@ import (
 // run/session back to its member. Canonical here (the API package both the
 // operator and the agentgateway import).
 const (
-	// TeamLabel names the owning AgentTeam (set alongside the OwnerReference).
-	TeamLabel = "runtime.agents.smol-agents.ai/team"
+	// TeamLabel names the owning AgentTeam (re-exported from the pure package, the
+	// single source of truth shared with the A2A invoker + agentgateway).
+	TeamLabel = pure.TeamLabel
 	// TeamMemberLabel marks a run/session as a named team member's worker.
-	TeamMemberLabel = "runtime.agents.smol-agents.ai/team-member"
+	TeamMemberLabel = pure.TeamMemberLabel
 	// CloudEventIDAnnotation records the source CloudEvent id a per-event
 	// coordinator run was created from (observability; the run name carries a
 	// DNS-safe derivation of it).

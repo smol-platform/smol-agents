@@ -32,9 +32,12 @@ type FanoutInvoker struct {
 	Namespace    string
 	ParentRun    string
 	ParentRunUID string
-	Depth        int
-	MaxDepth     int
-	Poll         time.Duration
+	// TeamName propagates the team onto fanned children (rv3.1 S4) so a team
+	// coordinator's map-reduce children are themselves team members.
+	TeamName string
+	Depth    int
+	MaxDepth int
+	Poll     time.Duration
 	// MaxWidth is the operator's hard ceiling on children per fanout call
 	// (FANOUT_MAX_WIDTH). <= 0 disables the invoker (fail-closed).
 	MaxWidth int
@@ -116,7 +119,7 @@ func (i *FanoutInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.RawM
 					return
 				}
 			}
-			child := buildChildRun(i.Namespace, i.ParentRun, i.ParentRunUID, f.Ref.Name, i.Depth, input, f.PerItemMaxTokens)
+			child := buildChildRun(i.Namespace, i.ParentRun, i.ParentRunUID, i.TeamName, f.Ref.Name, i.Depth, input, f.PerItemMaxTokens)
 			obs, err := spawnAndPoll(fanCtx, i.Client, i.Namespace, child, i.Poll)
 			results[idx] = childResult{obs: obs, err: err}
 			// first-success: the first child to complete cancels the rest, whose

@@ -61,6 +61,12 @@ type AgentRunInvoker struct {
 	ParentRunUID string
 	// Depth is this run's position in the delegation tree (0 = top level).
 	Depth int
+	// TeamName, when set (operator TEAM_NAME env on a team coordinator/member),
+	// is stamped on children so a delegated A2A subagent inherits the team context
+	// — BuildAgentRunPod then injects TEAM_* env so the child can claim the shared
+	// task list / message peers. Empty = a non-team run; children carry no team
+	// label (rv3.1 S4).
+	TeamName string
 	// MaxDepth bounds recursion. <=0 means depth 1 (this run may spawn children,
 	// but those children may not) — the conservative default.
 	MaxDepth int
@@ -103,7 +109,7 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 			return rt.Observation{}, fmt.Errorf("a2a: tool args are not valid JSON: %w", err)
 		}
 	}
-	child := buildChildRun(i.Namespace, i.ParentRun, i.ParentRunUID, target, i.Depth, input, tool.Spec.Agent.MaxTokens)
+	child := buildChildRun(i.Namespace, i.ParentRun, i.ParentRunUID, i.TeamName, target, i.Depth, input, tool.Spec.Agent.MaxTokens)
 	obs, err := spawnAndPoll(ctx, i.Client, i.Namespace, child, i.Poll)
 	if err != nil {
 		return rt.Observation{}, fmt.Errorf("a2a: %w", err)
@@ -116,7 +122,7 @@ func (i *AgentRunInvoker) Invoke(ctx context.Context, tool v1.Tool, args json.Ra
 // GC OwnerReference to the parent (the LITERAL parent run UID — never the pod's
 // downward-API metadata.uid, which is the pod uid). Shared by the A2A and fanout
 // invokers.
-func buildChildRun(ns, parentRun, parentRunUID, target string, depth int, input any, maxTokens int64) *unstructured.Unstructured {
+func buildChildRun(ns, parentRun, parentRunUID, teamName, target string, depth int, input any, maxTokens int64) *unstructured.Unstructured {
 	spec := map[string]any{"agentRef": target, "input": input}
 	if maxTokens > 0 {
 		spec["budgetOverride"] = map[string]any{"maxTokens": maxTokens}
@@ -125,10 +131,17 @@ func buildChildRun(ns, parentRun, parentRunUID, target string, depth int, input 
 	child.SetGroupVersionKind(agentRunGVK)
 	child.SetNamespace(ns)
 	child.SetGenerateName(childPrefix(parentRun, target))
-	child.SetLabels(map[string]string{
+	labels := map[string]string{
 		ParentRunLabel: parentRun,
 		DepthLabel:     strconv.Itoa(depth + 1),
-	})
+	}
+	// rv3.1 S4: a team coordinator/member delegating via A2A makes the child part
+	// of the same team (TEAM_* env then activates the child's task/teammate
+	// invokers). No member label — a delegated subagent claims as its run name.
+	if teamName != "" {
+		labels[v1.TeamLabel] = teamName
+	}
+	child.SetLabels(labels)
 	if parentRunUID != "" && parentRun != "" {
 		child.SetOwnerReferences([]metav1.OwnerReference{{
 			APIVersion: agentRunGVK.GroupVersion().String(),

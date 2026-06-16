@@ -52,8 +52,10 @@ func WireAgentInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.Tool
 		Namespace:    ns,
 		ParentRun:    os.Getenv("RUN_NAME"),
 		ParentRunUID: os.Getenv("AGENT_RUN_UID"),
-		Depth:        depth,
-		MaxDepth:     maxDepth,
+		// rv3.1 S4: propagate the team so A2A children inherit the team context.
+		TeamName: os.Getenv("TEAM_NAME"),
+		Depth:    depth,
+		MaxDepth: maxDepth,
 	}
 	return base
 }
@@ -85,6 +87,7 @@ func WireFanoutInvoker(base map[v1.ToolKind]agentruntime.ToolInvoker) map[v1.Too
 		Namespace:    ns,
 		ParentRun:    os.Getenv("RUN_NAME"),
 		ParentRunUID: os.Getenv("AGENT_RUN_UID"),
+		TeamName:     os.Getenv("TEAM_NAME"), // rv3.1 S4: fanned children join the team
 		Depth:        depth,
 		MaxDepth:     maxDepth,
 		MaxWidth:     maxWidth,
