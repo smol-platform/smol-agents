@@ -89,18 +89,32 @@ func LoadTools(dir string) ([]v1.Tool, error) {
 	return tools, nil
 }
 
-func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM, opts ...RunOption) (Result, error) {
+// LoadRunSpec reads the on-disk agent + run + tool catalog the AgentRun pod is
+// rendered with (agent.json/run.json/tools.json). It is the input-loading half
+// of RunOnce, split out so the pod entrypoint can run the turn through the
+// turnmodel.TurnExecutor seam — that seam lives in pkg/turnmodel, which imports
+// this package, so the routing must happen in cmd/agent (importing both), not
+// here. RunOnce stays as the in-package convenience used by tests + eval.
+func LoadRunSpec(dir string) (v1.Agent, v1.AgentRunSpec, []v1.Tool, error) {
 	var agent v1.Agent
 	if err := readJSONFile(filepath.Join(dir, AgentSpecFile), &agent); err != nil {
-		return Result{}, fmt.Errorf("load agent spec: %w", err)
+		return v1.Agent{}, v1.AgentRunSpec{}, nil, fmt.Errorf("load agent spec: %w", err)
 	}
 	var run v1.AgentRunSpec
 	if err := readJSONFile(filepath.Join(dir, RunSpecFile), &run); err != nil {
-		return Result{}, fmt.Errorf("load run spec: %w", err)
+		return v1.Agent{}, v1.AgentRunSpec{}, nil, fmt.Errorf("load run spec: %w", err)
 	}
-	// Ship the resolved tool catalog into the executor alongside any
+	// The resolved tool catalog rides into the executor alongside any
 	// caller-supplied invokers (cmd/agent injects invokers.Default).
 	tools, err := LoadTools(dir)
+	if err != nil {
+		return v1.Agent{}, v1.AgentRunSpec{}, nil, err
+	}
+	return agent, run, tools, nil
+}
+
+func RunOnce(ctx context.Context, dir string, leaser SecretLeaser, llm LLM, opts ...RunOption) (Result, error) {
+	agent, run, tools, err := LoadRunSpec(dir)
 	if err != nil {
 		return Result{}, err
 	}

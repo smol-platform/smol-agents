@@ -18,6 +18,7 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/agentruntime/invokers"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime/openaillm"
 	"github.com/smol-platform/smol-agents/pkg/secrets"
+	"github.com/smol-platform/smol-agents/pkg/turnmodel"
 )
 
 // secretLeaser adapts pkg/secrets.Client to agentruntime.SecretLeaser.
@@ -84,10 +85,27 @@ func runAgentRun(args []string) int {
 			wire = cr
 		}
 	} else {
-		res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, llm,
-			agentruntime.WithInvokers(toolInvokers))
-		wire = agentruntime.ResultToWire(res, runErr)
-		failed = runErr != nil
+		// Run the one-shot turn through the turnmodel.TurnExecutor seam — the same
+		// runtime boundary AgentSession uses — so AgentRun and AgentSession no
+		// longer diverge (c5r.4). LoadRunSpec is RunOnce's input-loading half; the
+		// RuntimeExecutor carries the leaser/LLM/opts and calls RunTurn.
+		agent, run, tools, lerr := agentruntime.LoadRunSpec(*dir)
+		if lerr != nil {
+			wire = agentruntime.ResultToWire(agentruntime.Result{}, lerr)
+			failed = true
+		} else {
+			exec := turnmodel.RuntimeExecutor{
+				Leaser: leaser,
+				LLM:    llm,
+				Opts: []agentruntime.RunOption{
+					agentruntime.WithInvokers(toolInvokers),
+					agentruntime.WithTools(tools),
+				},
+			}
+			res, runErr := exec.Execute(ctx, turnmodel.Turn{Agent: agent, Spec: run})
+			wire = agentruntime.ResultToWire(res, runErr)
+			failed = runErr != nil
+		}
 	}
 
 	// Full result to stdout for log-based debugging.
