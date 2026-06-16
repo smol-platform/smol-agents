@@ -466,6 +466,22 @@ func ValidateHarness(h HarnessSpec) error {
 	if h.SessionPolicy != "" && h.SessionPolicy != SessionEphemeral && h.SessionPolicy != SessionPersistent {
 		errs = append(errs, fmt.Errorf("harness.sessionPolicy=%q is invalid", h.SessionPolicy))
 	}
+	// Reject a kind-specific config block that does not apply to this kind:
+	// every kind reads exactly one of cli/http/piMono, so a foreign block is
+	// silently dropped at render time and masks a mis-authored spec. Only check
+	// once the kind itself is valid (an unknown kind has no native block).
+	if h.Kind.Valid() {
+		native := nativeHarnessBlock(h.Kind)
+		if h.CLI != nil && native != "cli" {
+			errs = append(errs, fmt.Errorf("harness.cli is set but ignored for kind=%s (only claude-code/codex/aider/goose/generic-cli read it)", h.Kind))
+		}
+		if h.HTTP != nil && native != "http" {
+			errs = append(errs, fmt.Errorf("harness.http is set but ignored for kind=%s (only generic-http/pi/inflection-pi/hermes/openclaw read it)", h.Kind))
+		}
+		if h.PiMono != nil && native != "piMono" {
+			errs = append(errs, fmt.Errorf("harness.piMono is set but ignored for kind=%s (only pi-mono reads it)", h.Kind))
+		}
+	}
 	switch h.Kind {
 	case HarnessGenericHTTP, HarnessPi, HarnessInflectionPi, HarnessHermes, HarnessOpenClaw:
 		if h.HTTP == nil || strings.TrimSpace(h.HTTP.URL) == "" {
@@ -528,6 +544,22 @@ func ValidateHarness(h HarnessSpec) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// nativeHarnessBlock reports which kind-specific config block a harness kind
+// reads — "cli", "http", or "piMono". A block other than this one is ignored at
+// render time, so ValidateHarness rejects it. Returns "" for an unknown kind
+// (kind validity is reported separately).
+func nativeHarnessBlock(k HarnessKind) string {
+	switch k {
+	case HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI:
+		return "cli"
+	case HarnessGenericHTTP, HarnessPi, HarnessInflectionPi, HarnessHermes, HarnessOpenClaw:
+		return "http"
+	case HarnessPiMono:
+		return "piMono"
+	}
+	return ""
 }
 
 // validateMCPServers checks claude MCP server declarations (M3.18): unique names,
