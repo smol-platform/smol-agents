@@ -26,11 +26,6 @@ type ToolRef struct {
 	Namespace string `json:"namespace,omitempty"` // empty = same as Agent
 }
 
-// MemoryRef points at a MemoryStore.
-type MemoryRef struct {
-	Name string `json:"name"`
-}
-
 // IdentitySpec configures the SPIFFE binding for the Run Pod. R-AM-SEC-1.
 type IdentitySpec struct {
 	// SPIFFEIDPrefix lets tenants share a sub-tree (e.g. group runs by team).
@@ -70,11 +65,6 @@ type AgentSpec struct {
 	// docs/design/tool-kinds-roadmap.md.
 	Tools []ToolRef `json:"tools,omitempty"`
 
-	// Memory is DEAD on the Agent as of v0.2.0 — no controller reads spec.memory
-	// and no builder mounts it. Per-run memory is attached via
-	// AgentRunSpec.MemoryRetrieverRef; durable state via spec.storage.
-	Memory *MemoryRef `json:"memory,omitempty"`
-
 	// Storage attaches persistent state (AgentFS today). Required for
 	// SessionPersistent harnesses.
 	// +optional
@@ -107,10 +97,6 @@ type AgentSpec struct {
 	// at-least-once with a stable ce-id (the run UID), so consumers dedupe. Empty =
 	// no emission. +optional
 	ResultSink string `json:"resultSink,omitempty"`
-
-	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
-	// controller; cancel deletes the pod immediately. Slated for removal.
-	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`
 }
 
 // AgentStatus is reported by the controller.

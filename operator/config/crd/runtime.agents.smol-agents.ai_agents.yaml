@@ -371,14 +371,6 @@ spec:
                           properties:
                             secretName: { type: string, description: 'Name of the Secret.' }
                             key: { type: string, description: 'Key within the Secret''s data.' }
-                memory:
-                  type: object
-                  description: |-
-                    DEAD on the Agent in v0.2.0 — read by no controller. Per-run
-                    memory uses AgentRun.spec.memoryRetrieverRef; durable state
-                    uses spec.storage.
-                  properties:
-                    name: { type: string, description: 'MemoryRetriever name (currently unused on the Agent).' }
                 budget:
                   type: object
                   description: |-
@@ -400,9 +392,6 @@ spec:
                   description: Pod isolation settings for runs of this Agent.
                   properties:
                     runtimeClass: { type: string, description: 'Pod RuntimeClass override (R-AM-SEC-2). Empty inherits the operator --default-run-runtime-class (default kata-fc). runc is rejected fail-closed unless the operator runs with --allow-host-runtime.' }
-                gracefulCancelTimeoutSeconds:
-                  type: integer
-                  description: DEPRECATED/UNUSED in v0.2.0 — read by no controller; cancel deletes the pod immediately.
                 resultSink:
                   type: string
                   description: 'URI the operator POSTs a CloudEvent to when one of this Agent''s runs completes successfully (wbb) — platform as event source. At-least-once, stable ce-id = run UID (consumers dedupe). Empty = no emission.'
