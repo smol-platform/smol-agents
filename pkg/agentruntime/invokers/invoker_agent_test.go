@@ -279,3 +279,16 @@ func TestAgentRunInvoker_ChildVanishesFailsFast(t *testing.T) {
 		t.Errorf("expected exactly 1 child create attempt, got %d", fc.created)
 	}
 }
+
+// rv3.1 S4: a team coordinator/member delegating via A2A stamps the team label
+// on children (so BuildAgentRunPod injects TEAM_* env); a non-team run does not.
+func TestBuildChildRun_TeamPropagation(t *testing.T) {
+	withTeam := buildChildRun("ns", "parent", "", "squad", "worker", 0, map[string]any{}, 0)
+	if withTeam.GetLabels()[v1.TeamLabel] != "squad" {
+		t.Errorf("team child missing team label: %v", withTeam.GetLabels())
+	}
+	noTeam := buildChildRun("ns", "parent", "", "", "worker", 0, map[string]any{}, 0)
+	if _, ok := noTeam.GetLabels()[v1.TeamLabel]; ok {
+		t.Errorf("non-team child has a team label: %v", noTeam.GetLabels())
+	}
+}
