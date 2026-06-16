@@ -44,6 +44,9 @@ spec:
               paused:
                 type: boolean
                 description: 'Marks a dormant event TEMPLATE — the operator does not materialize its nodes; each event clones a fresh un-paused per-event instance that runs (mirrors CronJob.spec.suspend).'
+              resultSink:
+                type: string
+                description: 'URI the operator POSTs a CloudEvent to when this workflow completes (wbb) — the final node''s output. At-least-once, stable ce-id = workflow UID. Empty = no emission.'
               nodes:
                 type: array
                 description: The workflow steps (≥1); names are unique, START/END reserved.
