@@ -113,6 +113,7 @@ func gatherRunSecrets(ctx context.Context, c client.Client, agent *amv1.Agent, n
 		provider = &builders.RunProvider{
 			Kind:       mp.Spec.Kind,
 			Endpoint:   mp.Spec.Endpoint,
+			ChatPath:   mp.Spec.ChatPath,
 			SecretName: mp.Spec.SecretRef.SecretName,
 		}
 		if mp.Spec.SecretRef.SecretName != "" {

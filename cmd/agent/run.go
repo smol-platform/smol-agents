@@ -293,6 +293,7 @@ func buildLoopLLM(ctx context.Context, dir string, leaser agentruntime.SecretLea
 	var p struct {
 		Kind       string `json:"kind"`
 		Endpoint   string `json:"endpoint"`
+		ChatPath   string `json:"chatPath"`
 		SecretName string `json:"secretName"`
 	}
 	if json.Unmarshal(b, &p) != nil || p.Endpoint == "" {
@@ -304,5 +305,5 @@ func buildLoopLLM(ctx context.Context, dir string, leaser agentruntime.SecretLea
 			key = string(v)
 		}
 	}
-	return openaillm.New(p.Endpoint, key)
+	return openaillm.NewWithPath(p.Endpoint, key, p.ChatPath)
 }

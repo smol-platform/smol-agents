@@ -45,6 +45,7 @@ spec:
                     brokering + endpoint defaults.
                   enum: [openai, anthropic, bedrock, vertex, local]
                 endpoint: { type: string, description: 'Override the kind default base URL; required for local.' }
+                chatPath: { type: string, description: 'Override the chat-completions path appended to endpoint (default /v1/chat/completions); set for providers whose path differs, e.g. z.ai Coding Plan /api/coding/paas/v4/chat/completions, to avoid a path-rewriting proxy.' }
                 secretRef:
                   type: object
                   description: Reference to the Secret holding the provider API key.
