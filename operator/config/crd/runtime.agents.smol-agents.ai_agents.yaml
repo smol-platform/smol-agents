@@ -403,6 +403,9 @@ spec:
                 gracefulCancelTimeoutSeconds:
                   type: integer
                   description: DEPRECATED/UNUSED in v0.2.0 — read by no controller; cancel deletes the pod immediately.
+                resultSink:
+                  type: string
+                  description: 'URI the operator POSTs a CloudEvent to when one of this Agent''s runs completes successfully (wbb) — platform as event source. At-least-once, stable ce-id = run UID (consumers dedupe). Empty = no emission.'
                 maxConcurrentRuns: { type: integer, minimum: 0, description: 'Cap concurrently-Running runs for this Agent (0 = unlimited); soft per-tenant admission gate (M1.12/D10).' }
                 approval:
                   type: object
