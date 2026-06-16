@@ -2,6 +2,9 @@ package agentmodel
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"reflect"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/eventsink"
 )
 
 // WorkflowNodeLabel ties a child AgentRun to the workflow node it runs.
@@ -29,6 +33,9 @@ type AgentWorkflowReconciler struct {
 	client.Client
 	Scheme                  *runtime.Scheme
 	MaxConcurrentReconciles int
+	// ResultSinkClient POSTs result CloudEvents to a workflow's spec.resultSink
+	// (wbb). nil → a default 5s-timeout client.
+	ResultSinkClient *http.Client
 }
 
 func workflowOwnerRef(wf *amv1.AgentWorkflow) metav1.OwnerReference {
@@ -138,9 +145,13 @@ func (r *AgentWorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		nodeStates = append(nodeStates, st)
 	}
 	endReached := false
+	var finalOutput json.RawMessage
 	for _, e := range wf.Spec.Edges {
 		if e.To == pure.WorkflowEnd && satisfied(e) {
 			endReached = true
+			if c := childByNode[e.From]; c != nil {
+				finalOutput = c.Status.Output // the workflow's result = the END-reaching node's output
+			}
 			break
 		}
 	}
@@ -155,10 +166,27 @@ func (r *AgentWorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	case len(childByNode) == 0:
 		phase, reason = pure.PhasePending, "Forming"
 	}
+	if phase == pure.PhaseCompleted {
+		// wbb: emit a workflow.completed CloudEvent to the workflow's sink, once
+		// (annotation-guarded — a Completed workflow re-reconciles on child events).
+		r.emitWorkflowResultOnce(ctx, &wf, finalOutput)
+	}
 	return r.applyWF(ctx, &wf, pure.AgentWorkflowStatus{
 		Phase: phase, Reason: reason, NodeStates: nodeStates,
 		CumulativeUsage: pure.RollUpTeamUsage(usages),
 	}, res)
+}
+
+// emitWorkflowResultOnce POSTs a com.smol-agents.workflow.completed CloudEvent to
+// the workflow's spec.resultSink when it first completes (wbb), carrying the final
+// node's output. Once-guard + bounded emit live in the shared emitResultEventOnce.
+func (r *AgentWorkflowReconciler) emitWorkflowResultOnce(ctx context.Context, wf *amv1.AgentWorkflow, output json.RawMessage) {
+	emitResultEventOnce(ctx, r.Client, r.ResultSinkClient, wf, wf.Spec.ResultSink, eventsink.Event{
+		ID:     string(wf.UID),
+		Type:   "com.smol-agents.workflow.completed",
+		Source: fmt.Sprintf("/namespaces/%s/agentworkflows/%s", wf.Namespace, wf.Name),
+		Data:   output,
+	})
 }
 
 func (r *AgentWorkflowReconciler) applyWF(ctx context.Context, wf *amv1.AgentWorkflow, desired pure.AgentWorkflowStatus, res ctrl.Result) (ctrl.Result, error) {

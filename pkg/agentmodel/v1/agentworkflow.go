@@ -42,6 +42,13 @@ type AgentWorkflowSpec struct {
 	// when the predicate holds against the from-node's output); edges without one
 	// are unconditional.
 	Edges []WorkflowEdge `json:"edges"`
+
+	// ResultSink, when set, is a URI the operator POSTs a CloudEvent to when this
+	// workflow completes (wbb) — the final node's output, so a workflow's result
+	// can drive downstream Knative Triggers. A per-event instance inherits it from
+	// its template. At-least-once, stable ce-id = workflow UID. Empty = no
+	// emission. +optional
+	ResultSink string `json:"resultSink,omitempty"`
 }
 
 // WorkflowNode is one DAG step.
