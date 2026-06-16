@@ -110,6 +110,26 @@ spec:
                     type: string
                     enum: [shared-rw, branch-merge]
                     description: 'shared-rw (default) or branch-merge (coordinator 3-way-merges member branches).'
+              hooks:
+                type: array
+                description: |-
+                  Fail-closed gates on team-lifecycle events; the coordinator consults
+                  them via team.EvaluateHooks. A TaskCreated veto refuses a turn before
+                  any member work; a TaskCompleted veto rejects an accepted result. An
+                  absent hook = allow (hooks only ever tighten).
+                items:
+                  type: object
+                  required: [event, action]
+                  properties:
+                    event:
+                      type: string
+                      enum: [TeammateIdle, TaskCreated, TaskCompleted]
+                      description: 'The team-lifecycle event this hook gates.'
+                    action:
+                      type: string
+                      enum: [allow, veto, requeue]
+                      description: 'Verdict when the event fires (allow|veto|requeue).'
+                    reason: { type: string, description: 'Optional explanation surfaced when the hook fires.' }
             required:
             - lead
             - members

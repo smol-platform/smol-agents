@@ -43,6 +43,8 @@ func TestValidateAgentTeam_Rejections(t *testing.T) {
 		"bad pattern":           func(tm *AgentTeam) { tm.Spec.Pattern = "freeform" },
 		"negative maxMembers":   func(tm *AgentTeam) { tm.Spec.MaxMembers = -1 },
 		"invalid budget":        func(tm *AgentTeam) { tm.Spec.Budget = &Budget{MaxSteps: 0, MaxTokens: 1, MaxWallClockSeconds: 1} },
+		"bad hook event":        func(tm *AgentTeam) { tm.Spec.Hooks = []TeamHookSpec{{Event: "Nope", Action: HookActionVeto}} },
+		"bad hook action":       func(tm *AgentTeam) { tm.Spec.Hooks = []TeamHookSpec{{Event: TeamHookTaskCreated, Action: "maybe"}} },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -52,6 +54,18 @@ func TestValidateAgentTeam_Rejections(t *testing.T) {
 				t.Fatalf("%s: expected validation error, got nil", name)
 			}
 		})
+	}
+}
+
+func TestValidateAgentTeam_Hooks(t *testing.T) {
+	tm := validTeam()
+	tm.Spec.Hooks = []TeamHookSpec{
+		{Event: TeamHookTaskCreated, Action: HookActionVeto, Reason: "needs sign-off"},
+		{Event: TeamHookTeammateIdle, Action: HookActionRequeue},
+		{Event: TeamHookTaskCompleted, Action: HookActionAllow},
+	}
+	if err := ValidateAgentTeam(tm); err != nil {
+		t.Fatalf("valid hooks rejected: %v", err)
 	}
 }
 
