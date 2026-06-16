@@ -41,6 +41,9 @@ spec:
           spec:
             required: [nodes]
             properties:
+              paused:
+                type: boolean
+                description: 'Marks a dormant event TEMPLATE — the operator does not materialize its nodes; each event clones a fresh un-paused per-event instance that runs (mirrors CronJob.spec.suspend).'
               nodes:
                 type: array
                 description: The workflow steps (≥1); names are unique, START/END reserved.

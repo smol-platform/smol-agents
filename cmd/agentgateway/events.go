@@ -127,9 +127,15 @@ func (g *Gateway) dispatch(ctx context.Context, target pure.EventTarget, ns stri
 		return id, "queued", nil
 
 	case pure.EventTargetAgentWorkflow:
-		// Per-event AgentWorkflow instantiation needs its own template-vs-instance
-		// decision (like the team got); not wired yet (t0d follow-up).
-		return "", "unsupported", errors.New("AgentWorkflow target not yet supported")
+		// Clone the (paused) template AgentWorkflow into a fresh un-paused per-event
+		// instance — the workflow analog of the team coordinator-per-event (v9h).
+		var wf amv1.AgentWorkflow
+		if err := g.K8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: target.Name}, &wf); err != nil {
+			return "", "error", wrapNotFound(err, "AgentWorkflow "+ns+"/"+target.Name)
+		}
+		inst := amv1.BuildWorkflowInstance(&wf, token, ev.Data)
+		inst.Annotations = map[string]string{amv1.CloudEventIDAnnotation: ev.ID}
+		return createIdempotent(ctx, g.K8s, inst)
 
 	default:
 		return "", "error", errors.New("unknown target kind " + string(target.Kind))

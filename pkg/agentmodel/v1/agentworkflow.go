@@ -29,6 +29,12 @@ const (
 )
 
 type AgentWorkflowSpec struct {
+	// Paused marks this workflow a dormant TEMPLATE: the operator does not
+	// materialize its nodes, so it can be referenced as an event target
+	// (EventBinding) without running standalone. Each inbound event clones it into
+	// an un-paused per-event instance (BuildWorkflowInstance) that runs. Mirrors
+	// CronJob.spec.suspend. +optional
+	Paused bool `json:"paused,omitempty"`
 	// Nodes are the workflow steps (at least one). Names are unique; START/END
 	// are reserved and not declared as nodes.
 	Nodes []WorkflowNode `json:"nodes"`

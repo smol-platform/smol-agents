@@ -31,6 +31,11 @@ rules:
   - apiGroups: [runtime.agents.smol-agents.ai]
     resources: [agentruns]
     verbs: [create]
+  # CloudEvents workflow intake (v9h): read the addressed (paused) template
+  # AgentWorkflow and create a fresh un-paused per-event instance.
+  - apiGroups: [runtime.agents.smol-agents.ai]
+    resources: [agentworkflows]
+    verbs: [get, create]
   # General CloudEvents intake (h0d): list EventBindings to filter-route an event
   # to its targets in the namespace.
   - apiGroups: [runtime.agents.smol-agents.ai]

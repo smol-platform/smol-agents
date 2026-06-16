@@ -53,6 +53,33 @@ func completeRun(t *testing.T, c client.Client, run *amv1.AgentRun, output strin
 	}
 }
 
+// v9h: a paused workflow is a dormant event template — the controller marks it
+// Pending/Template and materializes NO node runs (each event clones an un-paused
+// instance instead).
+func TestAgentWorkflowReconcile_PausedTemplateDoesNotRun(t *testing.T) {
+	sch := teamScheme(t)
+	wf := wfFixture()
+	wf.Spec.Paused = true
+	c := fake.NewClientBuilder().WithScheme(sch).WithObjects(wf).
+		WithStatusSubresource(&amv1.AgentWorkflow{}, &amv1.AgentRun{}).Build()
+	r := &AgentWorkflowReconciler{Client: c, Scheme: sch}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "t", Name: "wf"}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if wfChild(t, c, "research") != nil {
+		t.Fatal("a paused template must NOT materialize any node run")
+	}
+	var got amv1.AgentWorkflow
+	if err := c.Get(context.Background(), req.NamespacedName, &got); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status.Phase != pure.PhasePending || got.Status.Reason != "Template" {
+		t.Fatalf("paused template status = %q/%q, want Pending/Template", got.Status.Phase, got.Status.Reason)
+	}
+}
+
 func TestAgentWorkflowReconcile_DAGWalkAndRouting(t *testing.T) {
 	sch := teamScheme(t)
 	wf := wfFixture()
