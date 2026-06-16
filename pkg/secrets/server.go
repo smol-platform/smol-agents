@@ -148,16 +148,13 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 		_ = c.Close()
 	}()
 
-	// Authenticate peer once.
-	id, err := s.Attestor.Attest(ctx, c)
-	if err != nil {
-		s.Logger.Warn("peer attestation failed", "err", err, "conn", sc.id)
-		_ = writeFrame(c, response{ErrorCode: errorCodeFor(ErrUnauthorized), ErrorMessage: err.Error()})
-		return
-	}
-
-	// Classify the caller once per connection (M4.12): agent vs PTY-spawned
-	// driver shell. Stable for the connection's life.
+	// Authenticate + classify the peer once per connection. On attestation
+	// FAILURE we do NOT close yet: the client is still writing its request, and
+	// closing now races its write into an EPIPE ("broken pipe") instead of the
+	// ErrUnauthorized response. We read the (untrusted) request frame first to
+	// drain the client's write, then reject — so the client deterministically
+	// reads the unauthorized response.
+	id, attestErr := s.Attestor.Attest(ctx, c)
 	class := s.callerClass(c)
 
 	for {
@@ -166,6 +163,11 @@ func (s *Server) handle(ctx context.Context, c net.Conn) {
 			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 				s.Logger.Debug("read frame", "err", err, "conn", sc.id)
 			}
+			return
+		}
+		if attestErr != nil {
+			s.Logger.Warn("peer attestation failed", "err", attestErr, "conn", sc.id)
+			_ = writeFrame(c, response{ErrorCode: errorCodeFor(ErrUnauthorized), ErrorMessage: attestErr.Error()})
 			return
 		}
 		resp := s.dispatch(ctx, id, class, req)
