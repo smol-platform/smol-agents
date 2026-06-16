@@ -46,6 +46,14 @@ func AgentA2ARole(agent *amv1.Agent) *rbacv1.Role {
 				Resources: []string{"agentruns/status"},
 				Verbs:     []string{"get"},
 			},
+			{
+				// rv3.1 S5: a team coordinator (an A2A agent — it delegates to members)
+				// reads its own AgentTeam in-pod to assemble the convergence/budget/hooks
+				// config. Read-only + namespace-scoped, so it never escapes the tenant.
+				APIGroups: []string{a2aAPIGroup},
+				Resources: []string{"agentteams"},
+				Verbs:     []string{"get"},
+			},
 		},
 	}
 }

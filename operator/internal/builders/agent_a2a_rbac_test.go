@@ -39,6 +39,10 @@ func TestAgentA2ARole_NamespacedAndScoped(t *testing.T) {
 	if len(verbs["agentruns/status"]) != 1 || verbs["agentruns/status"][0] != "get" {
 		t.Errorf("agentruns/status verbs = %v, want [get]", verbs["agentruns/status"])
 	}
+	// rv3.1 S5: a coordinator reads its own AgentTeam (read-only, namespace-scoped).
+	if len(verbs["agentteams"]) != 1 || verbs["agentteams"][0] != "get" {
+		t.Errorf("agentteams verbs = %v, want [get]", verbs["agentteams"])
+	}
 }
 
 func TestAgentA2ARoleBinding_BindsRunSA(t *testing.T) {

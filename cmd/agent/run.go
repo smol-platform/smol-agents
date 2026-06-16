@@ -69,9 +69,26 @@ func runAgentRun(args []string) int {
 	stopBridge := maybeStartPiBridge(ctx, *dir)
 	defer stopBridge()
 
-	res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, buildLoopLLM(ctx, *dir, leaser),
-		agentruntime.WithInvokers(toolInvokers))
-	wire := agentruntime.ResultToWire(res, runErr)
+	llm := buildLoopLLM(ctx, *dir, leaser)
+
+	// rv3.1 S5: a generator-verifier team coordinator (TEAM_NAME set, no
+	// TEAM_MEMBER) drives the convergence loop instead of a plain plan-act-observe
+	// loop. Every non-coordinator run falls through to RunOnce unchanged.
+	var wire agentruntime.RunResult
+	failed := false
+	if cr, handled, cerr := maybeRunCoordinator(ctx, *dir, toolInvokers, llm); handled {
+		if cerr != nil {
+			wire = agentruntime.RunResult{Phase: v1.PhaseFailed, Error: cerr.Error(), TerminationReason: "CoordinatorError"}
+			failed = true
+		} else {
+			wire = cr
+		}
+	} else {
+		res, runErr := agentruntime.RunOnce(ctx, *dir, leaser, llm,
+			agentruntime.WithInvokers(toolInvokers))
+		wire = agentruntime.ResultToWire(res, runErr)
+		failed = runErr != nil
+	}
 
 	// Full result to stdout for log-based debugging.
 	os.Stdout.Write(marshalRunResult(wire))
@@ -94,7 +111,7 @@ func runAgentRun(args []string) int {
 	// full, untrimmed result is in the stdout logs written above.
 	_ = os.WriteFile(*termLog, marshalRunResult(clampForTerminationMessage(wire)), 0o600)
 
-	if runErr != nil {
+	if failed {
 		return 1
 	}
 	return 0
