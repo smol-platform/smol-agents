@@ -219,6 +219,58 @@ func TestPostEvent_BindingRoutesToAgent(t *testing.T) {
 	}
 }
 
+func makeWorkflow() *amv1.AgentWorkflow {
+	return &amv1.AgentWorkflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "triage", Namespace: "tenant-a", UID: types.UID("wf-uid")},
+		Spec: pure.AgentWorkflowSpec{
+			Paused: true,
+			Nodes:  []pure.WorkflowNode{{Name: "classify", AgentRef: "classifier"}},
+			Edges:  []pure.WorkflowEdge{{From: pure.WorkflowStart, To: "classify"}, {From: "classify", To: pure.WorkflowEnd}},
+		},
+	}
+}
+
+// A binding to an AgentWorkflow target clones a fresh un-paused per-event instance
+// (v9h), idempotent on the CloudEvent id.
+func TestPostEvent_BindingRoutesToWorkflow(t *testing.T) {
+	srv, kc := eventsTestServer(t, makeWorkflow(),
+		makeBinding("triage-bind", "tenant-a", "com.acme.alert", pure.EventTargetAgentWorkflow, "triage"))
+	defer srv.Close()
+
+	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-wf-1", "com.acme.alert", `{"sev":2}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+
+	var wfs amv1.AgentWorkflowList
+	_ = kc.List(t.Context(), &wfs)
+	var inst *amv1.AgentWorkflow
+	for i := range wfs.Items {
+		if wfs.Items[i].Name != "triage" { // the template stays; find the instance
+			inst = &wfs.Items[i]
+		}
+	}
+	if inst == nil {
+		t.Fatalf("want a per-event workflow instance, got %d workflows", len(wfs.Items))
+	}
+	if inst.Spec.Paused {
+		t.Error("the per-event instance must be un-paused so it runs")
+	}
+	if inst.Labels[amv1.WorkflowTemplateLabel] != "triage" {
+		t.Errorf("instance template label = %q, want triage", inst.Labels[amv1.WorkflowTemplateLabel])
+	}
+
+	// Redelivering the same CloudEvent id is idempotent — no duplicate instance.
+	resp2 := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-wf-1", "com.acme.alert", `{"sev":2}`)
+	resp2.Body.Close()
+	var wfs2 amv1.AgentWorkflowList
+	_ = kc.List(t.Context(), &wfs2)
+	if len(wfs2.Items) != len(wfs.Items) {
+		t.Errorf("redelivery created a duplicate: %d → %d workflows", len(wfs.Items), len(wfs2.Items))
+	}
+}
+
 // An event with no matching binding (filter mismatch) → 404, nothing created.
 func TestPostEvent_NoMatch(t *testing.T) {
 	srv, kc := eventsTestServer(t, makeTeam(),

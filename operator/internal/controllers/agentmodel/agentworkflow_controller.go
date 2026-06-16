@@ -51,6 +51,13 @@ func (r *AgentWorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.applyWF(ctx, &wf, pure.AgentWorkflowStatus{Phase: pure.PhaseFailed, Reason: "InvalidSpec", Message: err.Error()}, ctrl.Result{})
 	}
 
+	// A paused workflow is a dormant event template (v9h): never materialize its
+	// nodes — each inbound event clones it into an un-paused per-event instance
+	// (BuildWorkflowInstance) that runs instead.
+	if wf.Spec.Paused {
+		return r.applyWF(ctx, &wf, pure.AgentWorkflowStatus{Phase: pure.PhasePending, Reason: "Template", Message: "paused workflow is an event template; per-event instances run instead"}, ctrl.Result{})
+	}
+
 	// Gather the workflow's child runs, keyed by node.
 	var runs amv1.AgentRunList
 	if err := r.List(ctx, &runs, client.InNamespace(wf.Namespace)); err != nil {
