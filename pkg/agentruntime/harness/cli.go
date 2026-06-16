@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	rt "github.com/smol-platform/smol-agents/pkg/agentmodel/runtime"
 	v1 "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
@@ -132,27 +133,10 @@ func mergeEnv(req Request) []string {
 // promptFromInput pulls the prompt string from the JSON input. If the
 // input parses as an object with a "prompt" key, we use that;
 // otherwise we use the raw input as text.
+// promptFromInput delegates to the shared runtime extractor so the harness and
+// loop paths read the same input identically (rt.PromptFromInput).
 func promptFromInput(in json.RawMessage) string {
-	if len(in) == 0 {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal(in, &m); err == nil {
-		for _, k := range []string{"prompt", "question", "input", "message"} {
-			if v, ok := m[k].(string); ok {
-				return v
-			}
-		}
-	}
-	// Fall back to raw — strip surrounding quotes if it's a JSON string.
-	s := strings.TrimSpace(string(in))
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		var u string
-		if err := json.Unmarshal(in, &u); err == nil {
-			return u
-		}
-	}
-	return s
+	return rt.PromptFromInput(in)
 }
 
 // cliExtraFlags returns the tenant-specified extra CLI flags
