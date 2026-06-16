@@ -101,6 +101,13 @@ type AgentSpec struct {
 	// requires AgentFS storage). +optional
 	Artifacts *ArtifactSpec `json:"artifacts,omitempty"`
 
+	// ResultSink, when set, is a URI the operator POSTs a CloudEvent to when one of
+	// this Agent's runs completes successfully (wbb) — the platform as an event
+	// SOURCE, so agent outputs can drive downstream Knative Triggers. Emitted
+	// at-least-once with a stable ce-id (the run UID), so consumers dedupe. Empty =
+	// no emission. +optional
+	ResultSink string `json:"resultSink,omitempty"`
+
 	// GracefulCancelTimeoutSeconds is DEPRECATED/UNUSED as of v0.2.0 — read by no
 	// controller; cancel deletes the pod immediately. Slated for removal.
 	GracefulCancelTimeoutSeconds int32 `json:"gracefulCancelTimeoutSeconds,omitempty"`

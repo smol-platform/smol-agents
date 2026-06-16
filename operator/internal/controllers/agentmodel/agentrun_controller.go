@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +29,7 @@ import (
 	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
+	"github.com/smol-platform/smol-agents/pkg/eventsink"
 )
 
 // memoryFSRetriever resolves a MemoryRetriever by name in the same namespace as
@@ -127,6 +129,9 @@ type AgentRunReconciler struct {
 	EnableAdmissionQueue bool
 	// MaxPriority clamps spec.priority (0 → 1000). Set from --max-run-priority.
 	MaxPriority int32
+	// ResultSinkClient POSTs result CloudEvents to an Agent's spec.resultSink (wbb).
+	// nil → a default 5s-timeout client (so a slow sink never stalls reconcile).
+	ResultSinkClient *http.Client
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -391,6 +396,10 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.markTerminal(run, pure.PhaseCompleted, "")
 		r.foldRunResult(ctx, run, pod)
 		r.foldArtifacts(run, pod)
+		// wbb: emit a result CloudEvent to the Agent's sink, once (the output is now
+		// folded). Best-effort + annotation-guarded so a re-reconcile of this
+		// terminal run does not re-POST.
+		r.emitResultOnce(ctx, run, agent)
 	case corev1.PodFailed:
 		r.markTerminal(run, pure.PhaseFailed, terminationReason(pod))
 		r.foldRunResult(ctx, run, pod)
@@ -684,6 +693,57 @@ func (r *AgentRunReconciler) markTerminal(run *amv1.AgentRun, phase pure.Phase, 
 	// Running hint (e.g. "Pod is Pending" left by an earlier markPending).
 	// foldRunResult may refine this further with the runtime's own reason.
 	run.Status.TerminationReason = reason
+}
+
+// resultEmittedAnnotation marks an AgentRun whose completion CloudEvent has been
+// POSTed to the Agent's resultSink (wbb), so a re-reconcile of the terminal run
+// never re-emits. At-least-once: a POST failure leaves it unset to retry, and the
+// stable ce-id (the run UID) lets consumers dedupe a rare duplicate.
+const resultEmittedAnnotation = "runtime.agents.smol-agents.ai/result-emitted"
+
+// emitResultOnce POSTs a com.smol-agents.run.completed CloudEvent to the Agent's
+// spec.resultSink when this run first completes (wbb — platform as event source).
+// No sink, or already emitted → no-op. Best-effort + bounded (a slow sink never
+// stalls reconcile); on success it stamps the annotation via a conflict-free merge
+// patch (the status write that follows is independent of this metadata patch).
+func (r *AgentRunReconciler) emitResultOnce(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent) {
+	sink := agent.Spec.ResultSink
+	if sink == "" || run.Annotations[resultEmittedAnnotation] == "true" {
+		return
+	}
+	logger := log.FromContext(ctx)
+	ev := eventsink.Event{
+		ID:     string(run.UID),
+		Type:   "com.smol-agents.run.completed",
+		Source: fmt.Sprintf("/namespaces/%s/agentruns/%s", run.Namespace, run.Name),
+		Data:   run.Status.Output,
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := eventsink.Emit(cctx, r.resultSinkClient(), sink, ev); err != nil {
+		// Best-effort: leave the annotation unset so the next reconcile retries.
+		logger.Info("result sink emit failed (will retry)", "sink", sink, "err", err.Error())
+		return
+	}
+	patch := client.MergeFrom(run.DeepCopy())
+	if run.Annotations == nil {
+		run.Annotations = map[string]string{}
+	}
+	run.Annotations[resultEmittedAnnotation] = "true"
+	if err := r.Patch(ctx, run, patch); err != nil {
+		// The CloudEvent was sent; a failed annotation patch only risks one
+		// duplicate next reconcile (consumers dedupe on the stable ce-id).
+		logger.Info("result-emitted annotation patch failed", "err", err.Error())
+	}
+}
+
+// resultSinkClient is the bounded HTTP client for result emission (5s default, so
+// a slow sink never stalls reconcile).
+func (r *AgentRunReconciler) resultSinkClient() *http.Client {
+	if r.ResultSinkClient != nil {
+		return r.ResultSinkClient
+	}
+	return &http.Client{Timeout: 5 * time.Second}
 }
 
 func (r *AgentRunReconciler) deletePod(ctx context.Context, run *amv1.AgentRun) error {
