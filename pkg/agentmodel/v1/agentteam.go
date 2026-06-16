@@ -86,6 +86,13 @@ type AgentTeamSpec struct {
 	// workspace. nil = members keep only their private workspaces.
 	// +optional
 	SharedWorkspace *SharedWorkspaceSpec `json:"sharedWorkspace,omitempty"`
+
+	// Hooks attach fail-closed gates to team-lifecycle events; the coordinator
+	// consults them via team.EvaluateHooks (pkg/turnmodel/team). A TaskCreated
+	// veto refuses a turn before any member work runs; a TaskCompleted veto
+	// rejects an otherwise-accepted result. An absent hook = allow — hooks only
+	// ever tighten. +optional
+	Hooks []TeamHookSpec `json:"hooks,omitempty"`
 }
 
 // WorkspaceConflictMode selects how concurrent writes to the shared workspace
@@ -151,6 +158,45 @@ func requiresConvergence(p TeamPattern) bool {
 		return true
 	}
 	return false
+}
+
+// TeamHookEvent is a gated team-lifecycle event — the platform analog of Claude
+// Code's TeammateIdle / TaskCreated / TaskCompleted hooks. The coordinator
+// consults the team's hooks at these points (the pure evaluation is
+// team.EvaluateHooks). The string values match that package's constants 1:1.
+// +kubebuilder:validation:Enum=TeammateIdle;TaskCreated;TaskCompleted
+type TeamHookEvent string
+
+const (
+	TeamHookTeammateIdle  TeamHookEvent = "TeammateIdle"
+	TeamHookTaskCreated   TeamHookEvent = "TaskCreated"
+	TeamHookTaskCompleted TeamHookEvent = "TaskCompleted"
+)
+
+// HookAction is a hook's verdict on its event: allow proceeds, veto refuses
+// fail-closed, requeue defers an idle member. A hook only ever tightens.
+// +kubebuilder:validation:Enum=allow;veto;requeue
+type HookAction string
+
+const (
+	HookActionAllow   HookAction = "allow"
+	HookActionVeto    HookAction = "veto"
+	HookActionRequeue HookAction = "requeue"
+)
+
+// TeamHookSpec attaches one fail-closed gate to a team-lifecycle event: when
+// Event fires, Action (veto/requeue) tightens behavior — an absent hook = allow.
+// Converted to the pure team.TeamHook by team.TeamHooksFromSpec (the CRD type and
+// the domain type are split to keep this package free of any dependency on
+// pkg/turnmodel/team — the import only runs the other way).
+type TeamHookSpec struct {
+	// Event is the team-lifecycle event this hook gates.
+	Event TeamHookEvent `json:"event"`
+	// Action is the verdict when the event fires (allow|veto|requeue).
+	Action HookAction `json:"action"`
+	// Reason is an optional human-readable explanation surfaced when the hook
+	// fires. +optional
+	Reason string `json:"reason,omitempty"`
 }
 
 // TeamMemberSpec names one member of a team.
@@ -306,6 +352,20 @@ func ValidateAgentTeam(t AgentTeam) error {
 		case "", ConflictSharedRW, ConflictBranchMerge:
 		default:
 			errs = append(errs, fmt.Errorf("spec.sharedWorkspace.conflictMode %q must be shared-rw or branch-merge", w.ConflictMode))
+		}
+	}
+	// Hooks gate team-lifecycle events; each must name a known event + action so a
+	// typo fails admission rather than silently never firing (fail-closed).
+	for i, h := range t.Spec.Hooks {
+		switch h.Event {
+		case TeamHookTeammateIdle, TeamHookTaskCreated, TeamHookTaskCompleted:
+		default:
+			errs = append(errs, fmt.Errorf("spec.hooks[%d].event %q is not a known team-lifecycle event", i, h.Event))
+		}
+		switch h.Action {
+		case HookActionAllow, HookActionVeto, HookActionRequeue:
+		default:
+			errs = append(errs, fmt.Errorf("spec.hooks[%d].action %q must be allow, veto, or requeue", i, h.Action))
 		}
 	}
 	return errors.Join(errs...)
