@@ -76,6 +76,35 @@ func TestValidateAgent_Session(t *testing.T) {
 	}
 }
 
+// c5r.2: a durable session is loop-only — the session worker has no harness
+// runner, so a harness-mode Agent with session.required=true is a silent
+// dead-end and must be rejected at validation.
+func TestValidateAgent_SessionRequiresLoop(t *testing.T) {
+	harnessBase := AgentSpec{
+		Mode:         ModeHarness,
+		Harness:      &HarnessSpec{Kind: HarnessClaudeCode},
+		Instructions: "x",
+		Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0},
+	}
+	bad := harnessBase
+	bad.Session = &SessionSpec{Required: true}
+	err := ValidateAgent(Agent{Spec: bad})
+	if err == nil || !strings.Contains(err.Error(), "mode=loop") {
+		t.Errorf("harness Agent with session.required must be rejected with a mode=loop hint, got %v", err)
+	}
+
+	// A loop-mode Agent backing a session is fine.
+	ok := AgentSpec{
+		Model:        ModelRef{ProviderRef: "p", Name: "m"},
+		Instructions: "x",
+		Budget:       Budget{MaxSteps: 1, MaxTokens: 100, MaxWallClockSeconds: 10, MaxToolCalls: 0},
+		Session:      &SessionSpec{Required: true},
+	}
+	if err := ValidateAgent(Agent{Spec: ok}); err != nil {
+		t.Errorf("loop Agent with session.required must pass: %v", err)
+	}
+}
+
 // M2.23: artifacts require agentfs storage, unique names, and relative globs.
 func TestValidateAgent_Artifacts(t *testing.T) {
 	base := AgentSpec{

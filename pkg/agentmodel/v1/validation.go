@@ -76,6 +76,16 @@ func ValidateAgent(a Agent) error {
 	if a.Spec.Session != nil && a.Spec.Session.Interactive && !a.Spec.Session.Required {
 		errs = append(errs, errors.New("spec.session.interactive requires session.required=true (an attach plane needs a resident pod)"))
 	}
+	// A durable session is driven by the loop LLM: the session worker
+	// (turnmodel.SessionWorker) holds an OpenAI-compatible LLM built from the
+	// Agent's ModelProvider and has no harness runner, so a harness-mode Agent
+	// cannot back a session — without this guard it deploys a worker whose LLM
+	// is nil and silently never processes a turn. Fail closed at validation
+	// instead. (A "Hermes session" is loop mode pointed at Hermes's
+	// OpenAI-compatible endpoint, not mode=harness.)
+	if a.Spec.Session != nil && a.Spec.Session.Required && mode == ModeHarness {
+		errs = append(errs, errors.New("spec.session.required=true needs mode=loop: a durable session is driven by an OpenAI-compatible ModelProvider and the session worker has no harness runner, so a harness Agent cannot back a session (use loop mode with a provider pointed at an OpenAI-compatible endpoint such as Hermes)"))
+	}
 	if a.Spec.Artifacts != nil {
 		errs = append(errs, validateArtifacts(a.Spec)...)
 	}
