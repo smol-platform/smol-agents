@@ -30,17 +30,41 @@ type Doer interface {
 type Client struct {
 	Endpoint string // base URL, e.g. https://api.openai.com (no trailing /v1)
 	APIKey   string
+	// ChatPath overrides the path appended to Endpoint for chat completions.
+	// Empty defaults to "/v1/chat/completions". This lets a provider whose path
+	// differs (e.g. z.ai's coding plan at /api/coding/paas/v4/chat/completions)
+	// work without an out-of-band path-rewriting proxy.
+	ChatPath string
 	HTTP     Doer
 }
 
-// New builds a Client. endpoint is the provider base; the /v1/chat/completions
-// path is appended.
+// New builds a Client. endpoint is the provider base; the default
+// /v1/chat/completions path is appended. Use NewWithPath to override it.
 func New(endpoint, apiKey string) *Client {
+	return NewWithPath(endpoint, apiKey, "")
+}
+
+// NewWithPath is New with an explicit chat-completions path (empty = the
+// /v1/chat/completions default).
+func NewWithPath(endpoint, apiKey, chatPath string) *Client {
 	return &Client{
 		Endpoint: strings.TrimRight(endpoint, "/"),
 		APIKey:   apiKey,
+		ChatPath: chatPath,
 		HTTP:     &http.Client{Timeout: 120 * time.Second},
 	}
+}
+
+// chatURL is Endpoint + the chat-completions path (ChatPath or the default).
+func (c *Client) chatURL() string {
+	path := c.ChatPath
+	if path == "" {
+		path = "/v1/chat/completions"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return c.Endpoint + path
 }
 
 // Chat satisfies agentruntime.LLM.
@@ -71,7 +95,7 @@ func (c *Client) Chat(ctx context.Context, req agentruntime.ChatRequest) (rt.LLM
 	if err != nil {
 		return rt.LLMDecision{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+"/v1/chat/completions", bytes.NewReader(raw))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.chatURL(), bytes.NewReader(raw))
 	if err != nil {
 		return rt.LLMDecision{}, err
 	}

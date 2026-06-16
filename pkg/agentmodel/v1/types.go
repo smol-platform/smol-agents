@@ -298,6 +298,11 @@ type ModelProviderSpec struct {
 	Kind string `json:"kind"`
 	// Endpoint overrides the kind's default base URL; required for local.
 	Endpoint string `json:"endpoint,omitempty"`
+	// ChatPath overrides the path appended to Endpoint for chat completions
+	// (default /v1/chat/completions). Set it when a provider's path differs —
+	// e.g. z.ai's Coding Plan at /api/coding/paas/v4/chat/completions — so it
+	// works without an in-cluster path-rewriting proxy. +optional
+	ChatPath string `json:"chatPath,omitempty"`
 	// SecretRef is the API-key Secret, leased by the broker at runtime — never
 	// embedded in the pod spec.
 	SecretRef AuthRef `json:"secretRef"`

@@ -45,6 +45,7 @@ const (
 type RunProvider struct {
 	Kind       string `json:"kind"`
 	Endpoint   string `json:"endpoint"`
+	ChatPath   string `json:"chatPath,omitempty"`
 	SecretName string `json:"secretName,omitempty"`
 }
 
