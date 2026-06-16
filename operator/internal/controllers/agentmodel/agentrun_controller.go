@@ -573,11 +573,16 @@ func (r *AgentRunReconciler) namespaceRunState(ctx context.Context, ns, selfName
 	return perAgent, total, queued, nil
 }
 
-// rankAhead counts the queued runs that should be admitted before run: higher
-// effective priority, or equal priority and older (creationTimestamp asc, then
-// name asc for a total order).
+// rankAhead counts the queued runs that should be admitted before run. Ordering
+// is higher effective priority first, then — within a priority tier —
+// PER-AGENT ROUND-ROBIN (rv2.3): a run is ranked by its position in its OWN
+// Agent's FIFO queue, so Agent A's 2nd run waits behind Agent B's 1st rather than
+// a noisy Agent's backlog starving everyone else under a namespace cap. Same
+// round-robin slot ties break by creationTimestamp asc, then name asc (a total
+// order). A single-Agent queue degenerates to plain priority-then-FIFO.
 func (r *AgentRunReconciler) rankAhead(queued []amv1.AgentRun, run *amv1.AgentRun) int {
 	selfP := r.clampPriority(run.Spec.Priority)
+	selfIdx := r.agentLocalRank(queued, run)
 	ahead := 0
 	for i := range queued {
 		q := &queued[i]
@@ -587,13 +592,41 @@ func (r *AgentRunReconciler) rankAhead(queued []amv1.AgentRun, run *amv1.AgentRu
 			ahead++
 		case qP < selfP:
 			// behind
-		case q.CreationTimestamp.Before(&run.CreationTimestamp):
-			ahead++
-		case q.CreationTimestamp.Equal(&run.CreationTimestamp) && q.Name < run.Name:
-			ahead++
+		default: // same priority tier → per-Agent round-robin
+			qIdx := r.agentLocalRank(queued, q)
+			switch {
+			case qIdx < selfIdx:
+				ahead++
+			case qIdx > selfIdx:
+				// behind
+			case q.CreationTimestamp.Before(&run.CreationTimestamp):
+				ahead++
+			case q.CreationTimestamp.Equal(&run.CreationTimestamp) && q.Name < run.Name:
+				ahead++
+			}
 		}
 	}
 	return ahead
+}
+
+// agentLocalRank is run's position in its OWN Agent's FIFO queue within its
+// priority tier: how many queued runs of the SAME agentRef at the SAME effective
+// priority are older (creation asc, then name asc). Round-robin fairness ranks
+// across Agents by this index (every Agent's k-th run competes together).
+func (r *AgentRunReconciler) agentLocalRank(queued []amv1.AgentRun, run *amv1.AgentRun) int {
+	selfP := r.clampPriority(run.Spec.Priority)
+	idx := 0
+	for i := range queued {
+		q := &queued[i]
+		if q.Spec.AgentRef != run.Spec.AgentRef || r.clampPriority(q.Spec.Priority) != selfP || q.Name == run.Name {
+			continue
+		}
+		if q.CreationTimestamp.Before(&run.CreationTimestamp) ||
+			(q.CreationTimestamp.Equal(&run.CreationTimestamp) && q.Name < run.Name) {
+			idx++
+		}
+	}
+	return idx
 }
 
 // clampPriority bounds spec.priority to [0, MaxPriority] (MaxPriority 0 → 1000).
