@@ -123,6 +123,33 @@ func TestRunOnce_MissingSpec(t *testing.T) {
 	}
 }
 
+// c5r.4: LoadRunSpec is RunOnce's input-loading half, used by the pod entrypoint
+// to run the turn through the turnmodel.TurnExecutor seam.
+func TestLoadRunSpec(t *testing.T) {
+	dir := t.TempDir()
+	writeSpec(t, dir, AgentSpecFile, v1.Agent{Spec: v1.AgentSpec{
+		Instructions: "x", Budget: v1.Budget{MaxSteps: 1, MaxTokens: 10, MaxWallClockSeconds: 1},
+	}})
+	writeSpec(t, dir, RunSpecFile, v1.AgentRunSpec{Input: json.RawMessage(`{"prompt":"hi"}`), Seed: 7})
+
+	agent, run, tools, err := LoadRunSpec(dir)
+	if err != nil {
+		t.Fatalf("LoadRunSpec: %v", err)
+	}
+	if agent.Spec.Instructions != "x" {
+		t.Errorf("agent.spec.instructions = %q, want x", agent.Spec.Instructions)
+	}
+	if run.Seed != 7 || string(run.Input) != `{"prompt":"hi"}` {
+		t.Errorf("run = %+v", run)
+	}
+	if len(tools) != 0 {
+		t.Errorf("tools = %v, want none (no tools.json)", tools)
+	}
+	if _, _, _, err := LoadRunSpec(t.TempDir()); err == nil {
+		t.Error("expected error when agent.json is absent")
+	}
+}
+
 func TestResultToWire(t *testing.T) {
 	w := ResultToWire(Result{
 		Phase:  v1.PhaseCompleted,
