@@ -178,7 +178,7 @@ func buildMessages(req agentruntime.ChatRequest) []chatMessage {
 	if strings.TrimSpace(req.Instructions) != "" {
 		msgs = append(msgs, chatMessage{Role: "system", Content: req.Instructions})
 	}
-	msgs = append(msgs, chatMessage{Role: "user", Content: promptFromInput(req.Input)})
+	msgs = append(msgs, chatMessage{Role: "user", Content: rt.PromptFromInput(req.Input)})
 	for _, s := range req.History {
 		for i, tc := range s.ToolCalls {
 			id := fmt.Sprintf("call_%d_%d", s.Index, i)
@@ -216,28 +216,4 @@ func buildTools(tools []v1.Tool) []chatTool {
 		out = append(out, ct)
 	}
 	return out
-}
-
-// promptFromInput extracts a user prompt from the Run input: a bare JSON string,
-// a common field (prompt/question/input/task), else the raw JSON.
-func promptFromInput(in json.RawMessage) string {
-	if len(in) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(in, &s) == nil {
-		return s
-	}
-	var m map[string]json.RawMessage
-	if json.Unmarshal(in, &m) == nil {
-		for _, k := range []string{"prompt", "question", "input", "task"} {
-			if v, ok := m[k]; ok {
-				var sv string
-				if json.Unmarshal(v, &sv) == nil {
-					return sv
-				}
-			}
-		}
-	}
-	return string(in)
 }
