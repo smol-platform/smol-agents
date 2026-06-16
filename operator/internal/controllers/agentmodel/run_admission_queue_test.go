@@ -20,6 +20,42 @@ func runWith(name string, pri int32, sec int64) amv1.AgentRun {
 	}
 }
 
+func runFor(name, agent string, pri int32, sec int64) amv1.AgentRun {
+	r := runWith(name, pri, sec)
+	r.Spec.AgentRef = agent
+	return r
+}
+
+// rv2.3: within a priority tier, ordering is PER-AGENT ROUND-ROBIN, so a quiet
+// Agent's single run is not starved behind a noisy Agent's backlog. Agent A has
+// a backlog (t0,t1,t2); Agent B has one run at t1.5. B's run is its Agent's 1st
+// (local index 0), so it only waits behind other Agents' 1st runs — here A's t0
+// — NOT behind A's t1/t2. Strict FIFO would put B behind both A@t0 and A@t1.
+func TestRankAhead_PerAgentFairness(t *testing.T) {
+	r := &AgentRunReconciler{MaxPriority: 1000}
+	queued := []amv1.AgentRun{
+		runFor("a0", "a", 0, 0),
+		runFor("a1", "a", 0, 1),
+		runFor("a2", "a", 0, 2),
+		runFor("b0", "b", 0, 1), // B's only run, arrives mid-backlog
+	}
+
+	b := runFor("b0", "b", 0, 1)
+	if got := r.rankAhead(queued, &b); got != 1 {
+		t.Errorf("rankAhead(B's 1st run) = %d, want 1 (only A's 1st ahead; FIFO would give 2)", got)
+	}
+	// A's 3rd run waits behind everyone's earlier-slot runs, incl. B's 1st.
+	a2 := runFor("a2", "a", 0, 2)
+	if got := r.rankAhead(queued, &a2); got != 3 {
+		t.Errorf("rankAhead(A's 3rd run) = %d, want 3 (A@t0, A@t1, B@t1.5)", got)
+	}
+	// Fairness invariant: the quiet Agent's run is admitted before the noisy
+	// Agent's later runs.
+	if r.rankAhead(queued, &b) >= r.rankAhead(queued, &a2) {
+		t.Error("quiet Agent B's run should rank ahead of noisy Agent A's 3rd run")
+	}
+}
+
 // M1.13: rankAhead orders by priority desc, then creation asc, then name asc;
 // clampPriority bounds to [0, MaxPriority].
 func TestRankAheadAndClamp(t *testing.T) {
