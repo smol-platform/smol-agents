@@ -64,6 +64,36 @@ func TestValidateHarness_HTTPRequiresURL(t *testing.T) {
 	}
 }
 
+// c5r.2: a kind-specific config block set on a kind that does not read it is a
+// mis-author the runtime would silently ignore — reject it.
+func TestValidateHarness_ForeignBlockRejected(t *testing.T) {
+	// CLI kind carrying an http / piMono block.
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessClaudeCode, HTTP: &HarnessHTTPSpec{URL: "https://x"}}); err == nil || !strings.Contains(err.Error(), "harness.http is set but ignored") {
+		t.Errorf("CLI kind with http block must be rejected, got %v", err)
+	}
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessCodex, PiMono: &HarnessPiMonoSpec{}}); err == nil || !strings.Contains(err.Error(), "harness.piMono is set but ignored") {
+		t.Errorf("CLI kind with piMono block must be rejected, got %v", err)
+	}
+	// HTTP kind carrying a cli block (http.url set so only the foreign-block error fires).
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "https://h"}, CLI: &HarnessCLISpec{}}); err == nil || !strings.Contains(err.Error(), "harness.cli is set but ignored") {
+		t.Errorf("HTTP kind with cli block must be rejected, got %v", err)
+	}
+	// pi-mono carrying a foreign cli block.
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessPiMono, CLI: &HarnessCLISpec{}}); err == nil || !strings.Contains(err.Error(), "harness.cli is set but ignored") {
+		t.Errorf("pi-mono with cli block must be rejected, got %v", err)
+	}
+	// Native blocks accepted.
+	for _, h := range []HarnessSpec{
+		{Kind: HarnessClaudeCode, CLI: &HarnessCLISpec{}},
+		{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "https://h"}},
+		{Kind: HarnessPiMono, PiMono: &HarnessPiMonoSpec{}},
+	} {
+		if err := ValidateHarness(h); err != nil {
+			t.Errorf("native block for kind=%s rejected: %v", h.Kind, err)
+		}
+	}
+}
+
 // M3.18: MCP server validation — transport enum, stdio⇒command, http/sse⇒url,
 // internal-host URLs rejected, unique names.
 func TestValidateHarness_MCPServers(t *testing.T) {
