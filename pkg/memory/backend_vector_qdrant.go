@@ -4,10 +4,11 @@
 // github.com/qdrant/go-client. It enforces tenant+namespace isolation in every
 // operation via Qdrant payload filters (R-MEM-WORK-1, R-MEM-SEC-1).
 //
-// Each MemoryStore maps to one Qdrant collection. Tenant and namespace are
-// stored as payload fields ("tenant", "namespace") on every point. All queries
-// carry a payload filter that restricts results to the caller's tenant
-// (and namespace when specified).
+// Each TENANT maps to its own Qdrant collection ("<base>-<tenant>", x9i.5) for
+// hard isolation; namespace is a payload field within it. Every query ALSO
+// carries a payload filter restricting results to the caller's tenant (and
+// namespace when specified) plus a client-side read-guard — defense-in-depth
+// beneath the per-tenant-collection boundary (D1).
 //
 // FS-only operations return *ErrNotSupported. Summarize returns *ErrNotSupported.
 //
@@ -19,6 +20,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	pb "github.com/qdrant/go-client/qdrant"
@@ -34,8 +36,11 @@ type QdrantConfig struct {
 	// e.g. "qdrant-svc:6334".
 	Addr string
 
-	// Collection is the Qdrant collection name. All tenants share one
-	// collection; isolation is via payload filters.
+	// Collection is the BASE Qdrant collection name. Each tenant gets its OWN
+	// collection "<Collection>-<tenant>" (x9i.5): hard isolation so a direct
+	// Qdrant read can never cross tenants, above the payload-filter + read-guard
+	// defense-in-depth (D1). Per-tenant collections are created lazily on first
+	// Write.
 	Collection string
 
 	// EmbeddingDims is the vector dimensionality. Must match the Embedder.
@@ -62,6 +67,12 @@ type QdrantBackend struct {
 	conn   *grpc.ClientConn
 	points pb.PointsClient
 	colls  pb.CollectionsClient
+
+	// ensured caches the per-tenant collections this process has created (x9i.5),
+	// so a tenant's collection is created at most once per process (the Create is
+	// also idempotent against other processes via AlreadyExists).
+	mu      sync.Mutex
+	ensured map[string]struct{}
 }
 
 // NewQdrantBackend opens a gRPC connection to Qdrant and returns a
@@ -89,21 +100,43 @@ func NewQdrantBackend(ctx context.Context, cfg QdrantConfig) (*QdrantBackend, er
 		return nil, fmt.Errorf("qdrant: dial %s: %w", cfg.Addr, err)
 	}
 	return &QdrantBackend{
-		cfg:    cfg,
-		conn:   conn,
-		points: pb.NewPointsClient(conn),
-		colls:  pb.NewCollectionsClient(conn),
+		cfg:     cfg,
+		conn:    conn,
+		points:  pb.NewPointsClient(conn),
+		colls:   pb.NewCollectionsClient(conn),
+		ensured: map[string]struct{}{},
 	}, nil
 }
 
 // Close releases the underlying gRPC connection.
 func (b *QdrantBackend) Close() error { return b.conn.Close() }
 
-// EnsureCollection creates the collection if it does not exist. Safe to call
-// on every startup.
-func (b *QdrantBackend) EnsureCollection(ctx context.Context) error {
+// EnsureCollection is a no-op since x9i.5: per-tenant collections are created
+// lazily on first Write (a startup call can't enumerate tenants). Kept so the
+// worker's startup call compiles; connectivity is surfaced by the first real op.
+func (b *QdrantBackend) EnsureCollection(_ context.Context) error { return nil }
+
+// collectionFor returns the per-tenant collection name (x9i.5): "<base>-<tenant>".
+// Each tenant gets its OWN Qdrant collection so a direct Qdrant read can never
+// cross tenants even if a payload filter regressed — hard isolation above the
+// payload-filter + read-guard defense-in-depth (D1). tenant is a k8s namespace
+// (DNS-1123), already a valid Qdrant collection-name segment.
+func (b *QdrantBackend) collectionFor(tenant string) string {
+	return b.cfg.Collection + "-" + tenant
+}
+
+// ensureCollectionFor creates the tenant's collection if this process has not yet
+// (cached), idempotent against concurrent processes (ignores AlreadyExists).
+func (b *QdrantBackend) ensureCollectionFor(ctx context.Context, tenant string) error {
+	coll := b.collectionFor(tenant)
+	b.mu.Lock()
+	_, done := b.ensured[coll]
+	b.mu.Unlock()
+	if done {
+		return nil
+	}
 	_, err := b.colls.Create(ctx, &pb.CreateCollection{
-		CollectionName: b.cfg.Collection,
+		CollectionName: coll,
 		VectorsConfig: &pb.VectorsConfig{
 			Config: &pb.VectorsConfig_Params{
 				Params: &pb.VectorParams{
@@ -113,10 +146,12 @@ func (b *QdrantBackend) EnsureCollection(ctx context.Context) error {
 			},
 		},
 	})
-	// Ignore "already exists" errors.
 	if err != nil && !isQdrantAlreadyExists(err) {
-		return fmt.Errorf("qdrant: create collection: %w", err)
+		return fmt.Errorf("qdrant: create collection %s: %w", coll, err)
 	}
+	b.mu.Lock()
+	b.ensured[coll] = struct{}{}
+	b.mu.Unlock()
 	return nil
 }
 
@@ -169,8 +204,11 @@ func (b *QdrantBackend) Write(ctx context.Context, doc Document) (WriteResult, e
 		}
 	}
 
+	if err := b.ensureCollectionFor(ctx, doc.Tenant); err != nil {
+		return WriteResult{}, BackendUnavailable("qdrant write: " + err.Error())
+	}
 	_, err := b.points.Upsert(ctx, &pb.UpsertPoints{
-		CollectionName: b.cfg.Collection,
+		CollectionName: b.collectionFor(doc.Tenant),
 		Points: []*pb.PointStruct{
 			{
 				Id:      &pb.PointId{PointIdOptions: &pb.PointId_Uuid{Uuid: doc.ID}},
@@ -192,11 +230,16 @@ func (b *QdrantBackend) Get(ctx context.Context, id string, filter Filter) (Docu
 		return Document{}, Invalid("qdrant get: tenant is required")
 	}
 	resp, err := b.points.Get(ctx, &pb.GetPoints{
-		CollectionName: b.cfg.Collection,
+		CollectionName: b.collectionFor(filter.Tenant),
 		Ids:            []*pb.PointId{{PointIdOptions: &pb.PointId_Uuid{Uuid: id}}},
 		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
 	})
 	if err != nil {
+		// A tenant that has never written has no collection yet → the doc isn't
+		// there (not a backend failure).
+		if isQdrantCollectionNotFound(err) {
+			return Document{}, NotFound("qdrant: document not found: " + id)
+		}
 		return Document{}, BackendUnavailable("qdrant get: " + err.Error())
 	}
 	if len(resp.Result) == 0 {
@@ -222,7 +265,7 @@ func (b *QdrantBackend) Delete(ctx context.Context, id string, filter Filter) er
 		return err
 	}
 	_, err := b.points.Delete(ctx, &pb.DeletePoints{
-		CollectionName: b.cfg.Collection,
+		CollectionName: b.collectionFor(filter.Tenant),
 		Points: &pb.PointsSelector{
 			PointsSelectorOneOf: &pb.PointsSelector_Points{
 				Points: &pb.PointsIdsList{
@@ -278,12 +321,15 @@ func (b *QdrantBackend) Retrieve(ctx context.Context, query string, topK int, fi
 	qFilter := b.tenantFilter(filter)
 	limit := uint32(topK) //nolint:gosec
 	resp, err := b.points.Scroll(ctx, &pb.ScrollPoints{
-		CollectionName: b.cfg.Collection,
+		CollectionName: b.collectionFor(filter.Tenant),
 		Filter:         qFilter,
 		Limit:          &limit,
 		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
 	})
 	if err != nil {
+		if isQdrantCollectionNotFound(err) {
+			return RetrieveResult{}, nil // a tenant with no collection yet has no results
+		}
 		return RetrieveResult{}, BackendUnavailable("qdrant retrieve: " + err.Error())
 	}
 
@@ -317,13 +363,16 @@ func (b *QdrantBackend) RetrieveWithEmbedding(ctx context.Context, queryVec []fl
 
 	limit := uint64(topK) //nolint:gosec
 	resp, err := b.points.Search(ctx, &pb.SearchPoints{
-		CollectionName: b.cfg.Collection,
+		CollectionName: b.collectionFor(filter.Tenant),
 		Vector:         queryVec,
 		Limit:          limit,
 		Filter:         b.tenantFilter(filter),
 		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
 	})
 	if err != nil {
+		if isQdrantCollectionNotFound(err) {
+			return RetrieveResult{}, nil // a tenant with no collection yet has no results
+		}
 		return RetrieveResult{}, BackendUnavailable("qdrant retrieve-with-embedding: " + err.Error())
 	}
 
@@ -350,12 +399,15 @@ func (b *QdrantBackend) ListNamespaces(ctx context.Context, filter Filter) ([]st
 	}
 	limit := uint32(10000) //nolint:gosec // bounded collection scan
 	resp, err := b.points.Scroll(ctx, &pb.ScrollPoints{
-		CollectionName: b.cfg.Collection,
+		CollectionName: b.collectionFor(filter.Tenant),
 		Filter:         tenantFilter,
 		Limit:          &limit,
 		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
 	})
 	if err != nil {
+		if isQdrantCollectionNotFound(err) {
+			return nil, nil // a tenant with no collection yet has no namespaces
+		}
 		return nil, BackendUnavailable("qdrant list-namespaces: " + err.Error())
 	}
 	seen := map[string]struct{}{}
@@ -489,6 +541,21 @@ func isQdrantAlreadyExists(err error) bool {
 	return len(err.Error()) > 0 &&
 		(containsSubstring(err.Error(), "already exists") ||
 			containsSubstring(err.Error(), "AlreadyExists"))
+}
+
+// isQdrantCollectionNotFound reports whether a read failed because the tenant's
+// collection does not exist yet (x9i.5): a tenant that has never written has no
+// collection, which a read must treat as "no data" rather than a backend outage.
+// Qdrant reports this as "Collection `X` doesn't exist!".
+func isQdrantCollectionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return containsSubstring(e, "doesn't exist") ||
+		containsSubstring(e, "does not exist") ||
+		containsSubstring(e, "Not found") ||
+		containsSubstring(e, "NotFound")
 }
 
 // qdrantTransportCreds returns (mutual) TLS credentials when cfg.TLS is set —
