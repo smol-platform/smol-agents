@@ -201,6 +201,12 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Surface the egress posture for observability (M1.19).
 	session.Status.Networks = netPlan.Networks
 	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan, r.CNIEnforcesNetworkPolicy)
+	// Wire-or-gate the Tier-2 seam (c5r.20): a bound network needing the unwired
+	// proxy/eBPF datapath fails closed rather than scheduling a worker whose
+	// requested enforcement AttachAgentNetwork would silently drop.
+	if err := checkTier2Wired(netPlan); err != nil {
+		return r.writeStatus(ctx, session, pure.PhaseFailed, "NetworkDatapathUnwired", err.Error(), 0)
+	}
 	np := builders.BuildAgentSessionEgressPolicyWithPlan(synthetic.Name, session.Namespace,
 		map[string]string{"agents.smol-agents.ai/run": synthetic.Name}, netPlan)
 	// M1.18: allow the kube-apiserver endpoints (blocked by the default floor on

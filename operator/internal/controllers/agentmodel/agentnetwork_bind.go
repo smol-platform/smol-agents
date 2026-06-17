@@ -21,6 +21,35 @@ import (
 // wrapped with this, so it still surfaces as a normal requeue-able error.
 var ErrNetworkConflict = errors.New("network conflict")
 
+// ErrNetworkDatapathUnwired marks a bound NetworkPlan that needs the Tier-2
+// egress datapath — the TraT identity-proxy sidecar (ProxyNeeded) or an eBPF
+// enforcement tier (EbpfNeeded) — which builders.AttachAgentNetwork does NOT wire
+// into the run/session pod: that datapath is e2e-only (cmd/ebpf-probe drives the
+// cgroup.MapDriver; the operator seam is a no-op). The run/session is held
+// fail-closed (D3) rather than scheduled with the author's requested enforcement
+// silently dropped (c5r.20). The Tier-1 default-deny + allow-list NetworkPolicy is
+// unaffected — only the unwired proxy/eBPF seam is gated.
+var ErrNetworkDatapathUnwired = errors.New("network datapath not wired")
+
+// checkTier2Wired returns ErrNetworkDatapathUnwired (with a specific cause) when a
+// bound plan needs the unwired Tier-2 seam, else nil. It is the wire-or-gate guard
+// for builders.AttachAgentNetwork (run_sandbox.go): until that seam drives a real
+// proxy sidecar + eBPF redirect on policy-enforcing clusters, a plan that requires
+// them must fail closed so an author is never told an unenforced datapath is active.
+func checkTier2Wired(p plan.NetworkPlan) error {
+	switch {
+	case p.ProxyNeeded():
+		return fmt.Errorf("%w: a bound AgentNetwork declares identityProxy.resources "+
+			"(TraT proxy sidecar), which is e2e-only and not wired into the run/session datapath",
+			ErrNetworkDatapathUnwired)
+	case p.EbpfNeeded():
+		return fmt.Errorf("%w: a bound AgentNetwork requests eBPF egress enforcement (%s), "+
+			"which is e2e-only and not wired into the run/session datapath",
+			ErrNetworkDatapathUnwired, p.Enforcement)
+	}
+	return nil
+}
+
 // resolveBoundNetworks composes the NetworkPlan for an agent from every
 // AgentNetwork in its namespace whose agentSelector is a subset of the agent's
 // labels. An AgentNetwork with an empty selector binds nothing (it is available

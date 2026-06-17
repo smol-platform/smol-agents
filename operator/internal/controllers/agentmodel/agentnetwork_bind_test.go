@@ -11,7 +11,26 @@ import (
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/plan"
 )
+
+// c5r.20: checkTier2Wired fails closed when a plan needs the unwired proxy/eBPF
+// seam, but lets a Tier-1-only (allow-list) plan through — the NetworkPolicy floor
+// enforces that, so it is not silently unenforced.
+func TestCheckTier2Wired(t *testing.T) {
+	if err := checkTier2Wired(plan.NetworkPlan{ProxyResources: []pure.ResourceTarget{{Name: "x", Gateway: "https://g"}}}); !errors.Is(err, ErrNetworkDatapathUnwired) {
+		t.Errorf("a proxy-sidecar plan must fail closed, got %v", err)
+	}
+	if err := checkTier2Wired(plan.NetworkPlan{Enforcement: "ebpfAllowList"}); !errors.Is(err, ErrNetworkDatapathUnwired) {
+		t.Errorf("an eBPF-enforcement plan must fail closed, got %v", err)
+	}
+	if err := checkTier2Wired(plan.NetworkPlan{AllowRules: []pure.EgressRule{{CIDR: "203.0.113.0/24"}}}); err != nil {
+		t.Errorf("a Tier-1-only allow-list plan must NOT gate (NetworkPolicy enforces it), got %v", err)
+	}
+	if err := checkTier2Wired(plan.NetworkPlan{}); err != nil {
+		t.Errorf("an empty plan must not gate, got %v", err)
+	}
+}
 
 func bindScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()

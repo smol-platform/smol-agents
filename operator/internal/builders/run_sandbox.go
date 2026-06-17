@@ -126,6 +126,11 @@ func BuildAgentSessionEgressPolicyWithPlan(name, namespace string, podSelector m
 // secret-proxy + SPIRE injection work, so this is intentionally a no-op in
 // Phase 1. Kept as a named, called seam so the integration point is explicit
 // (and so an empty/Tier-1-only plan never silently expects a sidecar). M1.16.
+//
+// Because this is a no-op, callers MUST first gate on checkTier2Wired: a plan that
+// needs the proxy sidecar (ProxyNeeded) or an eBPF tier (EbpfNeeded) is held
+// fail-closed, so a run/session is never scheduled believing this unwired,
+// e2e-only datapath is enforcing its egress (c5r.20).
 func AttachAgentNetwork(pod *corev1.Pod, p plan.NetworkPlan) {
 	if pod == nil || (!p.ProxyNeeded() && !p.EbpfNeeded()) {
 		return

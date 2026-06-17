@@ -317,6 +317,60 @@ func TestAgentSessionReconcile_DangerFlagsFailClosed(t *testing.T) {
 	}
 }
 
+// c5r.20: a session whose agent binds an AgentNetwork that requests the unwired
+// Tier-2 datapath (eBPF enforcement here) fails closed — the operator must not
+// schedule a worker whose requested enforcement AttachAgentNetwork silently drops.
+func TestAgentSessionReconcile_Tier2UnwiredFailsClosed(t *testing.T) {
+	sch := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme, opv1.AddToScheme,
+	} {
+		if err := add(sch); err != nil {
+			t.Fatalf("scheme: %v", err)
+		}
+	}
+
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "na", Namespace: "t", Labels: map[string]string{"team": "x"}}}
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessGenericHTTP, HTTP: &pure.HarnessHTTPSpec{URL: "http://gw"}}
+	agent.Spec.Storage = &pure.StorageSpec{Kind: pure.StorageAgentFS, AgentFS: &pure.AgentFSSpec{SizeGiB: 1, MountPath: "/var/agentfs"}}
+
+	// A bound AgentNetwork requesting eBPF enforcement (the unwired Tier-2 seam).
+	an := &amv1.AgentNetwork{ObjectMeta: metav1.ObjectMeta{Name: "net", Namespace: "t"}}
+	an.Spec = pure.AgentNetworkSpec{
+		Kind:          "identityProxy",
+		AgentSelector: map[string]string{"team": "x"},
+		IdentityProxy: &pure.IdentityProxySpec{Egress: pure.EgressPolicy{Enforcement: "ebpfAllowList"}},
+	}
+
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s4", Namespace: "t", Generation: 1}}
+	session.Spec.AgentRef = "na"
+
+	kataRC := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+	kataPool := &opv1.AgentNodePool{ObjectMeta: metav1.ObjectMeta{Name: "kata-pool"}, Spec: opv1.AgentNodePoolSpec{Isolation: "kata-fc"}}
+
+	c := fake.NewClientBuilder().WithScheme(sch).
+		WithObjects(agent, an, session, kataRC, kataPool).
+		WithStatusSubresource(&amv1.AgentSession{}).
+		Build()
+	r := &AgentSessionReconciler{Client: c, Scheme: sch}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "t", Name: "s4"}}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	var got amv1.AgentSession
+	_ = c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s4"}, &got)
+	if got.Status.Phase != pure.PhaseFailed {
+		t.Errorf("Tier-2-unwired session phase = %s, want Failed", got.Status.Phase)
+	}
+	if got.Status.Reason != "NetworkDatapathUnwired" {
+		t.Errorf("reason = %q, want NetworkDatapathUnwired (the unenforced datapath must be visible)", got.Status.Reason)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s4-session"}, &appsv1.Deployment{}); err == nil {
+		t.Error("no worker Deployment should be created when the requested datapath is unwired")
+	}
+}
+
 // M1.11: a kata session whose RuntimeClass exists but has NO matching
 // AgentNodePool is held Pending (fail-closed) — no worker Deployment.
 func TestAgentSessionReconcile_NoKataPoolPending(t *testing.T) {
