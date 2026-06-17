@@ -96,6 +96,104 @@ func TestAgentSessionReconcile_LaunchesDurableWorker(t *testing.T) {
 	}
 }
 
+// n20: changing the bound ModelProvider (here: adding chatPath) must re-render
+// the live session worker's provider.json in place AND roll the worker (the
+// pod-template runspec-hash changes) so it re-reads the new config — create-only
+// previously pinned the stale ConfigMap for the session's lifetime.
+func TestAgentSessionReconcile_ModelProviderChangeRerendersAndRolls(t *testing.T) {
+	sch := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme, opv1.AddToScheme,
+	} {
+		if err := add(sch); err != nil {
+			t.Fatalf("scheme: %v", err)
+		}
+	}
+
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "zai", Namespace: "t"}}
+	provider.Spec.Kind = "openai"
+	provider.Spec.Endpoint = "https://api.z.ai" // chatPath initially unset
+
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "loop-a", Namespace: "t"}}
+	agent.Spec.Mode = pure.ModeLoop
+	agent.Spec.Model = pure.ModelRef{ProviderRef: "zai", Name: "glm-4.6"}
+	agent.Spec.Instructions = "do things"
+	agent.Spec.Budget = pure.Budget{MaxSteps: 5, MaxTokens: 1000, MaxWallClockSeconds: 60}
+	agent.Spec.Storage = &pure.StorageSpec{Kind: pure.StorageAgentFS, AgentFS: &pure.AgentFSSpec{SizeGiB: 1, MountPath: "/var/agentfs"}}
+
+	session := &amv1.AgentSession{ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "t", Generation: 1}}
+	session.Spec.AgentRef = "loop-a"
+
+	kataRC := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+	kataPool := &opv1.AgentNodePool{ObjectMeta: metav1.ObjectMeta{Name: "kata-pool"}, Spec: opv1.AgentNodePoolSpec{Isolation: "kata-fc"}}
+
+	c := fake.NewClientBuilder().WithScheme(sch).
+		WithObjects(provider, agent, session, kataRC, kataPool).
+		WithStatusSubresource(&amv1.AgentSession{}).
+		Build()
+	r := &AgentSessionReconciler{Client: c, Scheme: sch}
+
+	rec := func() {
+		t.Helper()
+		if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "t", Name: "s1"}}); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+	}
+	cmName := builders.RunSpecConfigMapName("s1-session")
+	getProviderJSON := func() string {
+		t.Helper()
+		var cm corev1.ConfigMap
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: cmName}, &cm); err != nil {
+			t.Fatalf("run-spec ConfigMap: %v", err)
+		}
+		return cm.Data["provider.json"]
+	}
+	getHash := func() string {
+		t.Helper()
+		var dep appsv1.Deployment
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s1-session"}, &dep); err != nil {
+			t.Fatalf("session Deployment: %v", err)
+		}
+		return dep.Spec.Template.Annotations[runSpecHashAnnotation]
+	}
+
+	rec()
+	before := getProviderJSON()
+	hash1 := getHash()
+	if strings.Contains(before, "chatPath") {
+		t.Fatalf("provider.json unexpectedly has chatPath before the change: %s", before)
+	}
+	if hash1 == "" {
+		t.Fatal("worker pod template missing the runspec-hash annotation")
+	}
+
+	// Operator-side change: the bound ModelProvider gains a chatPath.
+	var mp amv1.ModelProvider
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "zai"}, &mp); err != nil {
+		t.Fatal(err)
+	}
+	mp.Spec.ChatPath = "/api/coding/paas/v4/chat/completions"
+	if err := c.Update(context.Background(), &mp); err != nil {
+		t.Fatal(err)
+	}
+
+	rec()
+	after := getProviderJSON()
+	hash2 := getHash()
+	if !strings.Contains(after, "/api/coding/paas/v4/chat/completions") {
+		t.Errorf("provider.json was NOT re-rendered in place with the new chatPath: %s", after)
+	}
+	if hash1 == hash2 {
+		t.Errorf("runspec-hash did not change, so the worker would not roll: %s", hash2)
+	}
+
+	// Idempotent: a no-change reconcile keeps the same hash (no rollout churn).
+	rec()
+	if getHash() != hash2 {
+		t.Errorf("runspec-hash changed on a no-op reconcile (would churn the worker)")
+	}
+}
+
 // M2.18: when the AgentSession opts into turn scaling, the controller renders
 // the worker's --max-concurrent-turns / --history-limit flags from the spec
 // accessors; an unset session (above) renders neither (serial default).

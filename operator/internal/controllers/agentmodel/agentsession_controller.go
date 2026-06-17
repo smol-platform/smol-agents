@@ -2,11 +2,15 @@ package agentmodel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
+	"sort"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,6 +39,14 @@ import (
 )
 
 const sessionSuffix = "-session"
+
+// runSpecHashAnnotation stamps a content hash of the run-spec ConfigMap
+// (agent.json/provider.json/tools.json) onto the worker pod template. A changed
+// ModelProvider/Agent re-renders the ConfigMap (ensureOwned now updates it in
+// place), which changes this hash, which rolls the worker so it re-reads
+// provider.json at startup — without it the worker keeps the spec it booted with
+// for the session's lifetime (n20).
+const runSpecHashAnnotation = "agents.smol-agents.ai/runspec-hash"
 
 // AgentSessionReconciler turns an AgentSession into a long-running, durable
 // session worker: a 1-replica Deployment running `agent serve-session` over the
@@ -156,6 +168,9 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	// Roll the worker when the run-spec content drifts (n20): stamp the worker pod
+	// template with a hash of the ConfigMap the worker reads at startup.
+	runSpecHash := runSpecConfigHash(cm.Data)
 	if err := r.ensureOwned(ctx, session, cm); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session spec: %w", err)
 	}
@@ -246,7 +261,7 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	pod.Spec.RestartPolicy = corev1.RestartPolicyAlways // required for a Deployment template
 
-	deploy := sessionDeployment(session, synthetic.Name, pod)
+	deploy := sessionDeployment(session, synthetic.Name, pod, runSpecHash)
 	if err := r.ensureDeployment(ctx, session, deploy); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session deployment: %w", err)
 	}
@@ -323,8 +338,12 @@ func fetchSessionSummary(ctx context.Context, podIP string) (turnmodel.SessionSu
 	return sum, nil
 }
 
-// ensureOwned sets the session as controller-owner and creates obj if absent
-// (idempotent — the run-spec/broker/egress objects are stable for a session).
+// ensureOwned sets the session as controller-owner, creates obj if absent, and
+// updates the run-spec ConfigMap / broker Secret content in place when it drifts.
+// Create-only would otherwise pin a session's provider.json for its whole
+// lifetime, so a changed ModelProvider (e.g. a new chatPath) or Agent spec never
+// reached the worker (n20). The pod-template runspec-hash (see sessionDeployment)
+// then rolls the worker so it re-reads the refreshed config at startup.
 func (r *AgentSessionReconciler) ensureOwned(ctx context.Context, session *amv1.AgentSession, obj client.Object) error {
 	if err := ctrl.SetControllerReference(session, obj, r.Scheme); err != nil {
 		return err
@@ -334,7 +353,26 @@ func (r *AgentSessionReconciler) ensureOwned(ctx context.Context, session *amv1.
 	if apierrors.IsNotFound(err) {
 		return r.Create(ctx, obj)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	switch want := obj.(type) {
+	case *corev1.ConfigMap:
+		cur := existing.(*corev1.ConfigMap)
+		if reflect.DeepEqual(cur.Data, want.Data) && reflect.DeepEqual(cur.BinaryData, want.BinaryData) {
+			return nil
+		}
+		cur.Data, cur.BinaryData = want.Data, want.BinaryData
+		return r.Update(ctx, cur)
+	case *corev1.Secret:
+		cur := existing.(*corev1.Secret)
+		if reflect.DeepEqual(cur.Data, want.Data) && reflect.DeepEqual(cur.StringData, want.StringData) {
+			return nil
+		}
+		cur.Data, cur.StringData = want.Data, want.StringData
+		return r.Update(ctx, cur)
+	}
+	return nil
 }
 
 // ensureEgressPolicy creates or UPDATES the session worker's egress NetworkPolicy
@@ -398,7 +436,7 @@ func (r *AgentSessionReconciler) writeStatus(ctx context.Context, session *amv1.
 // sessionDeployment wraps the worker pod into a 1-replica Deployment so the
 // session survives node loss / crash (the new pod resumes from the AgentFS
 // checkpoint). Phase 4 swaps this for a Knative Service for scale-to-zero.
-func sessionDeployment(session *amv1.AgentSession, name string, pod *corev1.Pod) *appsv1.Deployment {
+func sessionDeployment(session *amv1.AgentSession, name string, pod *corev1.Pod, runSpecHash string) *appsv1.Deployment {
 	selector := map[string]string{"agents.smol-agents.ai/run": name}
 	return &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -407,11 +445,34 @@ func sessionDeployment(session *amv1.AgentSession, name string, pod *corev1.Pod)
 			Replicas: ptr.To(int32(1)),
 			Selector: &metav1.LabelSelector{MatchLabels: selector},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: pod.Labels},
-				Spec:       pod.Spec,
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      pod.Labels,
+					Annotations: map[string]string{runSpecHashAnnotation: runSpecHash},
+				},
+				Spec: pod.Spec,
 			},
 		},
 	}
+}
+
+// runSpecConfigHash is a deterministic content hash of the run-spec ConfigMap
+// data (agent.json/provider.json/tools.json). Stamped on the worker pod template
+// so a re-rendered run-spec rolls the worker, which reads provider.json once at
+// startup (n20). Keys are sorted so the hash is stable across map iteration order.
+func runSpecConfigHash(data map[string]string) string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+		h.Write([]byte(data[k]))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // sessionWorkerCommand renders the `agent serve-session` command line for a
