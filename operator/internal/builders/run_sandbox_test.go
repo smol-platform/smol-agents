@@ -115,10 +115,17 @@ func TestBuildAgentRunEgressPolicy(t *testing.T) {
 	if len(np.Spec.Egress[0].Ports) != 2 || np.Spec.Egress[0].Ports[0].Port.IntVal != 53 {
 		t.Errorf("rule0 must be DNS/53, got %+v", np.Spec.Egress[0].Ports)
 	}
-	// Rule 1: in-cluster RFC1918 peers, no port restriction (any port).
-	if len(np.Spec.Egress[1].To) != 3 || len(np.Spec.Egress[1].Ports) != 0 {
-		t.Errorf("rule1 must be 3 in-cluster CIDRs, all ports; got to=%d ports=%d",
-			len(np.Spec.Egress[1].To), len(np.Spec.Egress[1].Ports))
+	// Rule 1: in-cluster peers — an identity-based namespaceSelector (so the floor
+	// allows pod-to-pod on Cilium, where bare CIDRs only match outside-cluster
+	// entities) OR'd with the RFC1918 CIDRs — no port restriction (any port).
+	rule1 := np.Spec.Egress[1]
+	if len(rule1.To) != 4 || len(rule1.Ports) != 0 {
+		t.Errorf("rule1 must be 1 namespaceSelector + 3 in-cluster CIDRs, all ports; got to=%d ports=%d",
+			len(rule1.To), len(rule1.Ports))
+	}
+	if rule1.To[0].NamespaceSelector == nil {
+		t.Error("rule1 must lead with an identity-based namespaceSelector so the egress floor permits " +
+			"in-cluster pod-to-pod traffic on Cilium (CIDR-only peers are bypassed by cluster security identities)")
 	}
 	// Rule 2: public 0.0.0.0/0 on 443/80, with metadata + internal excepted.
 	pub := np.Spec.Egress[2]
