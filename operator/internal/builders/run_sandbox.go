@@ -202,7 +202,19 @@ func buildEgressPolicy(name, namespace, component string, podSelector map[string
 	p80 := intstr.FromInt32(80)
 	p443 := intstr.FromInt32(443)
 
-	internalPeers := make([]networkingv1.NetworkPolicyPeer, 0, len(clusterInternalCIDRs))
+	// In-cluster allow peers. The empty namespaceSelector is the IDENTITY-based
+	// peer (it selects every pod in every namespace) that makes this floor work on
+	// identity-aware CNIs like Cilium, where an ipBlock CIDR only ever matches
+	// entities OUTSIDE the cluster — in-cluster pods carry a security identity, so
+	// a bare CIDR rule never authorizes pod-to-pod traffic (the worker→gateway,
+	// →NATS, →AgentFS-S3 path would be silently denied). The RFC1918 ipBlock peers
+	// are kept alongside it for CIDR-based CNIs and for host-network / node-IP
+	// targets that have no pod identity. Peers in a To-list are OR'd, so this only
+	// ever widens reachability to in-cluster destinations — the floor's intent.
+	internalPeers := make([]networkingv1.NetworkPolicyPeer, 0, len(clusterInternalCIDRs)+1)
+	internalPeers = append(internalPeers, networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{},
+	})
 	for _, c := range clusterInternalCIDRs {
 		internalPeers = append(internalPeers, networkingv1.NetworkPolicyPeer{
 			IPBlock: &networkingv1.IPBlock{CIDR: c},
@@ -230,7 +242,9 @@ func buildEgressPolicy(name, namespace, component string, podSelector map[string
 					{Protocol: &udp, Port: &p53},
 					{Protocol: &tcp, Port: &p53},
 				}},
-				// In-cluster services (gateway, AgentFS S3, …) on any port.
+				// In-cluster services (gateway, AgentFS S3, NATS, …) on any port —
+				// an identity-based namespaceSelector (Cilium-safe) OR'd with the
+				// RFC1918 CIDRs (see internalPeers above).
 				{To: internalPeers},
 				// Public internet on HTTP(S) only; metadata/link-local blocked.
 				{
