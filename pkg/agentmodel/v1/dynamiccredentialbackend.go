@@ -107,6 +107,23 @@ func ValidateDynamicCredentialBackend(s DynamicCredentialBackendSpec) error {
 			errs = append(errs, fmt.Errorf("dynamicCredentialBackend.grants[%d]: %w", i, err))
 		}
 	}
+	// Four-string alignment (c5r.22): a grant must authorize a scope the backend
+	// actually maps to permissions. A grant.scope absent from
+	// githubApp.scopePermissions mints an empty/invalid token at runtime — the
+	// misalignment that crash-loops the broker sidecar. Reject it at admission,
+	// naming the offending scope, instead of failing on the mint path.
+	if s.Provider == "githubApp" && s.GitHubApp != nil {
+		for i, g := range s.Grants {
+			scope := strings.TrimSpace(g.Scope)
+			if scope == "" {
+				continue // already flagged by validateCredentialGrant
+			}
+			if _, ok := s.GitHubApp.ScopePermissions[scope]; !ok {
+				errs = append(errs, fmt.Errorf("dynamicCredentialBackend.grants[%d].scope %q "+
+					"is not a key of githubApp.scopePermissions (no permission mapping — the mint would fail)", i, scope))
+			}
+		}
+	}
 	return errors.Join(errs...)
 }
 
