@@ -204,25 +204,42 @@ func buildAttestor(cfg brokerConfig) (secrets.PeerAttestor, error) {
 	}
 }
 
+// backendBuilders maps a static-lease backend kind to its constructor. Seeded
+// with "static"; a Vault / cloud-SM / k8s-Secret backend registers itself
+// out-of-tree (RegisterBackend in an init) instead of editing a switch. An
+// unregistered kind (e.g. "vault" until it is wired) is an "unknown backend
+// kind" error — no hardcoded "not yet wired" stub. Mirrors the already
+// config-swappable buildAttestor.
+var backendBuilders = map[string]func(cfg brokerConfig) (secrets.Backend, error){
+	"static": buildStaticBackend,
+}
+
+// RegisterBackend registers a static-lease backend constructor under kind
+// (last registration wins).
+func RegisterBackend(kind string, build func(cfg brokerConfig) (secrets.Backend, error)) {
+	backendBuilders[kind] = build
+}
+
 func buildBackend(cfg brokerConfig) (secrets.Backend, error) {
-	switch cfg.Backend.Kind {
-	case "static":
-		b := secrets.NewStaticBackend()
-		for _, entry := range cfg.Backend.Static {
-			id, err := spiffeid.FromString(entry.SPIFFEID)
-			if err != nil {
-				return nil, err
-			}
-			for name, value := range entry.Items {
-				b.Set(id, name, []byte(value))
-			}
-		}
-		return b, nil
-	case "vault":
-		return nil, errors.New("vault backend not yet wired in this build")
-	default:
+	build, ok := backendBuilders[cfg.Backend.Kind]
+	if !ok {
 		return nil, errors.New("unknown backend kind: " + cfg.Backend.Kind)
 	}
+	return build(cfg)
+}
+
+func buildStaticBackend(cfg brokerConfig) (secrets.Backend, error) {
+	b := secrets.NewStaticBackend()
+	for _, entry := range cfg.Backend.Static {
+		id, err := spiffeid.FromString(entry.SPIFFEID)
+		if err != nil {
+			return nil, err
+		}
+		for name, value := range entry.Items {
+			b.Set(id, name, []byte(value))
+		}
+	}
+	return b, nil
 }
 
 func buildPolicy(cfg brokerConfig) (secrets.Policy, error) {
@@ -235,6 +252,35 @@ func buildPolicy(cfg brokerConfig) (secrets.Policy, error) {
 		p.Grant(id, e.Allow...)
 	}
 	return p, nil
+}
+
+// dynamicBackendBuilders maps a dynamic-mint provider to its DynamicBackend
+// constructor. Seeded with "githubApp"; a GitLab / Vault-dynamic minter registers
+// itself out-of-tree (RegisterDynamicBackend in an init) instead of editing a
+// switch. The peerAuth guard + TraT verifier + credential policy are common and
+// stay in buildDynamic.
+var dynamicBackendBuilders = map[string]func(cfg brokerConfig) (secrets.DynamicBackend, error){
+	"githubApp": buildGitHubAppBackend,
+}
+
+// RegisterDynamicBackend registers a dynamic-mint backend constructor under
+// provider (last registration wins).
+func RegisterDynamicBackend(provider string, build func(cfg brokerConfig) (secrets.DynamicBackend, error)) {
+	dynamicBackendBuilders[provider] = build
+}
+
+func buildGitHubAppBackend(cfg brokerConfig) (secrets.DynamicBackend, error) {
+	d := cfg.Backend.Dynamic
+	key, err := loadRSAKey(d.PrivateKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load github app private key: %w", err)
+	}
+	return &secrets.GitHubAppBackend{
+		AppID:            d.AppID,
+		PrivateKey:       key,
+		BaseURL:          d.BaseURL,
+		ScopePermissions: d.ScopePermissions,
+	}, nil
 }
 
 // buildDynamic wires the dynamic provider-credential mint path (D8) from the
@@ -254,21 +300,16 @@ func buildDynamic(cfg brokerConfig) (secrets.DynamicBackend, trat.Verifier, secr
 	if cfg.PeerAuth != "" && cfg.PeerAuth != "spire" {
 		return nil, nil, nil, fmt.Errorf("backend.dynamic requires peerAuth=spire (the TraT sender-constraint binds to the SVID); got %q", cfg.PeerAuth)
 	}
-	if d.Provider != "githubApp" {
-		return nil, nil, nil, fmt.Errorf("backend.dynamic.provider=%q is invalid (only githubApp)", d.Provider)
+	build, ok := dynamicBackendBuilders[d.Provider]
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("backend.dynamic.provider=%q is invalid (no registered minter)", d.Provider)
 	}
 	if cfg.TTS == nil || cfg.TTS.JWKSURL == "" {
 		return nil, nil, nil, errors.New("backend.dynamic requires a tts{} block with jwksURL (the TraT verifier)")
 	}
-	key, err := loadRSAKey(d.PrivateKeyPath)
+	dyn, err := build(cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("load github app private key: %w", err)
-	}
-	dyn := &secrets.GitHubAppBackend{
-		AppID:            d.AppID,
-		PrivateKey:       key,
-		BaseURL:          d.BaseURL,
-		ScopePermissions: d.ScopePermissions,
+		return nil, nil, nil, err
 	}
 	verifier := &trat.JWKSVerifier{Keys: &trat.HTTPKeySource{URL: cfg.TTS.JWKSURL}, Audience: cfg.TTS.Audience}
 	credPol, err := buildCredentialPolicy(cfg)
