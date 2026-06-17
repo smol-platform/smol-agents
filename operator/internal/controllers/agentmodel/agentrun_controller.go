@@ -363,6 +363,13 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				r.markPending(run, "NetworkConflict", err.Error())
 				return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
 			}
+			// A bound network needing the unwired Tier-2 (proxy/eBPF) datapath is a
+			// terminal spec error — fail closed (c5r.20) rather than running with the
+			// requested enforcement silently dropped.
+			if errors.Is(err, ErrNetworkDatapathUnwired) {
+				r.markTerminal(run, pure.PhaseFailed, "network:"+err.Error())
+				return r.updateRunStatus(ctx, run, ctrl.Result{})
+			}
 			return ctrl.Result{}, fmt.Errorf("ensure egress policy: %w", err)
 		}
 
@@ -761,6 +768,12 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 	// names + whether a tightened allow-list applies on top of the floor.
 	run.Status.Networks = netPlan.Networks
 	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan, r.CNIEnforcesNetworkPolicy)
+	// Wire-or-gate the Tier-2 seam (c5r.20): a bound network needing the unwired
+	// proxy/eBPF datapath fails closed (caller maps ErrNetworkDatapathUnwired to
+	// Failed) rather than caging the run with its requested enforcement dropped.
+	if err := checkTier2Wired(netPlan); err != nil {
+		return err
+	}
 	// Tier-2 datapath seam (no-op in Phase 1; Tier-1 is the NetworkPolicy below).
 	builders.AttachAgentNetwork(pod, netPlan)
 	np := builders.BuildAgentRunEgressPolicyWithPlan(run, netPlan)
