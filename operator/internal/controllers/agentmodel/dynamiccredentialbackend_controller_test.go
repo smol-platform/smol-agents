@@ -23,8 +23,9 @@ func newDCB(name string) *amv1.DynamicCredentialBackend {
 			CredentialName: "github",
 			Provider:       "githubApp",
 			GitHubApp: &pure.GitHubAppBackendSpec{
-				AppID:         "123456",
-				PrivateKeyRef: pure.AuthRef{SecretName: "github-app-key", Key: "private-key.pem"},
+				AppID:            "123456",
+				PrivateKeyRef:    pure.AuthRef{SecretName: "github-app-key", Key: "private-key.pem"},
+				ScopePermissions: map[string]map[string]string{"github:repo:read": {"contents": "read"}},
 			},
 			Grants: []pure.CredentialGrantSpec{
 				{Principal: "spiffe://smol-agents.ai/ns/t/sa/a", Scope: "github:repo:read"},
