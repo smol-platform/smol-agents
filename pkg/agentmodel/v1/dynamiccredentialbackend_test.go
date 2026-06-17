@@ -41,6 +41,9 @@ func TestValidateDynamicCredentialBackend(t *testing.T) {
 		{"missing privateKeyRef", func(s *DynamicCredentialBackendSpec) { s.GitHubApp.PrivateKeyRef.SecretName = "" }, "privateKeyRef.secretName is required"},
 		{"unparseable principal", func(s *DynamicCredentialBackendSpec) { s.Grants[0].Principal = "tenant-a/agent" }, "not a valid SPIFFE ID"},
 		{"empty scope", func(s *DynamicCredentialBackendSpec) { s.Grants[0].Scope = "" }, "scope is required"},
+		// c5r.22: a grant whose scope has no githubApp.scopePermissions entry is the
+		// four-string misalignment that would crash-loop the mint — rejected here.
+		{"grant scope absent from scopePermissions", func(s *DynamicCredentialBackendSpec) { s.Grants[0].Scope = "github:repo:write" }, "not a key of githubApp.scopePermissions"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
