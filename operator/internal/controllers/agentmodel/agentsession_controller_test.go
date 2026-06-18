@@ -216,6 +216,7 @@ func TestAgentSessionReconcile_RendersTurnScaling(t *testing.T) {
 	session.Spec.AgentRef = "sess-a"
 	session.Spec.MaxConcurrentTurns = 4
 	session.Spec.TurnHistoryLimit = 50
+	session.Spec.TurnPollIntervalMs = 250
 
 	kataRC := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
 	kataPool := &opv1.AgentNodePool{ObjectMeta: metav1.ObjectMeta{Name: "kata-pool"}, Spec: opv1.AgentNodePoolSpec{Isolation: "kata-fc"}}
@@ -239,6 +240,10 @@ func TestAgentSessionReconcile_RendersTurnScaling(t *testing.T) {
 	}
 	if !strings.Contains(got, "--history-limit=50") {
 		t.Errorf("command = %q, want --history-limit=50", got)
+	}
+	// c5r.24: the declared poll cadence is now passed to the worker (was a no-op).
+	if !strings.Contains(got, "--poll=250ms") {
+		t.Errorf("command = %q, want --poll=250ms (turnPollIntervalMs wired)", got)
 	}
 }
 
