@@ -502,5 +502,12 @@ func sessionWorkerCommand(session *amv1.AgentSession) []string {
 	if d := session.Spec.TurnDeliveryTimeoutSeconds; d > 0 {
 		cmd = append(cmd, fmt.Sprintf("--turn-timeout=%ds", d))
 	}
+	// Turn poll cadence (c5r.24): serve-session accepts --poll, but the declared
+	// spec.turnPollIntervalMs was never passed — a silent no-op (the worker just
+	// used its own 2s default). Render it when set so the knob is real; unset
+	// keeps the worker default (consistent with the other opt-in knobs above).
+	if session.Spec.TurnPollIntervalMs > 0 {
+		cmd = append(cmd, fmt.Sprintf("--poll=%dms", session.Spec.PollIntervalMs()))
+	}
 	return cmd
 }
