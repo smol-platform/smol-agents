@@ -201,6 +201,10 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Surface the egress posture for observability (M1.19).
 	session.Status.Networks = netPlan.Networks
 	session.Status.EgressEnforcement = egressEnforcementLabel(netPlan, r.CNIEnforcesNetworkPolicy)
+	// Surface the active turn-delivery transport (c5r.11): "on-disk" warns that
+	// the operator has no session NATS URL, so gateway /turns never reach the
+	// worker — a silent no-op made visible.
+	session.Status.Transport = sessionTransportLabel(r.NATSURL)
 	// Wire-or-gate the Tier-2 seam (c5r.20): a bound network needing the unwired
 	// proxy/eBPF datapath fails closed rather than scheduling a worker whose
 	// requested enforcement AttachAgentNetwork would silently drop.

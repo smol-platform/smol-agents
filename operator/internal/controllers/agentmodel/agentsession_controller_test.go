@@ -94,6 +94,11 @@ func TestAgentSessionReconcile_LaunchesDurableWorker(t *testing.T) {
 	if got.Status.Phase != pure.PhasePending || got.Status.ObservedGeneration != 1 {
 		t.Errorf("status = %+v, want Pending/observedGen=1", got.Status)
 	}
+	// c5r.11: this reconciler has no NATS URL, so the transport is the degraded
+	// on-disk fallback — surfaced in status, not silently dropped.
+	if got.Status.Transport != "on-disk" {
+		t.Errorf("transport = %q, want on-disk (reconciler has no NATS URL)", got.Status.Transport)
+	}
 }
 
 // n20: changing the bound ModelProvider (here: adding chatPath) must re-render

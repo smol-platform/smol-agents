@@ -151,3 +151,14 @@ func TestEgressEnforcementLabel(t *testing.T) {
 		t.Errorf("plan with allow rules (non-enforcing) = %q, want unenforced", got)
 	}
 }
+
+// c5r.11: a session with a NATS URL reports the gateway transport; without one it
+// reports the degraded on-disk fallback rather than silently pretending delivery.
+func TestSessionTransportLabel(t *testing.T) {
+	if got := sessionTransportLabel("nats://nats:4222"); got != "nats" {
+		t.Errorf("with NATS url = %q, want nats", got)
+	}
+	if got := sessionTransportLabel(""); got != "on-disk" {
+		t.Errorf("no NATS url = %q, want on-disk", got)
+	}
+}
