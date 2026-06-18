@@ -661,6 +661,13 @@ type AgentSessionStatus struct {
 	// +optional
 	EgressEnforcement string `json:"egressEnforcement,omitempty"`
 
+	// Transport summarizes the active turn-delivery path: "nats" when the
+	// operator routes turns through NATS (the gateway path), or "on-disk" when
+	// it does not — a DEGRADED state in which the worker falls back to an
+	// unreachable on-disk inbox, so gateway /turns never reach it. Surfacing it
+	// turns a silent no-op into a visible signal (c5r.11). +optional
+	Transport string `json:"transport,omitempty"`
+
 	// Reason is a short machine-readable cause for the current Phase (e.g.
 	// AgentMissing, SandboxNotReady, SecretMissing, NoKVMCapacity, Reconciled) —
 	// parity with AgentRun's status so a Pending/Failed session is not opaque.

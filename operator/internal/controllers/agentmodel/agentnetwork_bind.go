@@ -119,3 +119,14 @@ func egressEnforcementLabel(p plan.NetworkPlan, cniEnforces bool) string {
 	}
 	return "default-deny"
 }
+
+// sessionTransportLabel summarizes how a session's turns are delivered (c5r.11):
+// "nats" when the operator was given a session NATS URL (the gateway path), else
+// "on-disk" — a DEGRADED state where the worker falls back to an unreachable
+// on-disk inbox, so turns POSTed to the gateway never reach it.
+func sessionTransportLabel(natsURL string) string {
+	if natsURL != "" {
+		return "nats"
+	}
+	return "on-disk"
+}

@@ -70,6 +70,7 @@ spec:
                   items: { type: string }
                 networks: { type: array, items: { type: string }, description: 'AgentNetworks bound to this session (M1.19); empty = default-deny floor only.' }
                 egressEnforcement: { type: string, description: 'Egress posture: default-deny (floor only) or tiered (bound allow-list layered).' }
+                transport: { type: string, description: 'Active turn-delivery transport: nats (gateway path wired) or on-disk (DEGRADED — operator has no session NATS URL, so gateway /turns never reach the worker).' }
                 reason: { type: string, description: 'Short machine-readable cause for the current phase (AgentMissing, SandboxNotReady, SecretMissing, NoKVMCapacity, Reconciled, ...).' }
                 message: { type: string, description: 'Human-readable elaboration of reason.' }
                 usage:
