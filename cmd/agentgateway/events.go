@@ -50,6 +50,12 @@ func (g *Gateway) postTeamEvent(w http.ResponseWriter, r *http.Request) {
 // dispatches to each matched target. Addressable as a Knative Trigger subscriber
 // for a whole namespace (vs the per-team /v1/teams/.../events path).
 //
+// A namespace-wide Trigger delivers every event to this endpoint, so most events
+// match no binding. That is the normal case, not a failure: it returns 200 OK
+// no-op (c5r.11) so Knative acks the delivery instead of treating a 404 as a
+// failed delivery and retrying — a no-match 404 turns routine fan-out into a
+// retry storm.
+//
 //	POST /v1/events/{ns}   (CloudEvents binary or structured mode)
 func (g *Gateway) postEvent(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("ns")
@@ -84,7 +90,9 @@ func (g *Gateway) postEvent(w http.ResponseWriter, r *http.Request) {
 		dispatched = append(dispatched, entry)
 	}
 	if len(dispatched) == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no EventBinding in " + ns + " matches this event", "eventId": ev.ID})
+		// No-match is normal for a namespace-wide Trigger: ack with 200 no-op so
+		// Knative does not retry (c5r.11).
+		writeJSON(w, http.StatusOK, map[string]any{"namespace": ns, "eventId": ev.ID, "status": "no-op", "matched": 0})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"namespace": ns, "eventId": ev.ID, "dispatched": dispatched})
