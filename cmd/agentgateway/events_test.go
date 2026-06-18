@@ -271,15 +271,16 @@ func TestPostEvent_BindingRoutesToWorkflow(t *testing.T) {
 	}
 }
 
-// An event with no matching binding (filter mismatch) → 404, nothing created.
+// An event with no matching binding (filter mismatch) → 200 no-op so Knative
+// acks the delivery rather than retrying (c5r.11); nothing is created.
 func TestPostEvent_NoMatch(t *testing.T) {
 	srv, kc := eventsTestServer(t, makeTeam(),
 		makeBinding("only-incidents", "tenant-a", "com.acme.incident.opened", pure.EventTargetAgentTeam, "squad"))
 	defer srv.Close()
 	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-3", "com.other.thing", `{}`)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (no binding matches)", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (no-op, no binding matches)", resp.StatusCode)
 	}
 	var runs amv1.AgentRunList
 	_ = kc.List(t.Context(), &runs)
