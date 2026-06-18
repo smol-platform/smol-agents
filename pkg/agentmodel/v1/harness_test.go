@@ -64,6 +64,20 @@ func TestValidateHarness_HTTPRequiresURL(t *testing.T) {
 	}
 }
 
+// yxh.4: harness.http.auth has no consumer (HTTP harnesses auth via a
+// broker-leased HEADER_Authorization env var); setting it would silently yield
+// unauthenticated calls, so it must be rejected at admission, not ignored.
+func TestValidateHarness_HTTPAuthRejected(t *testing.T) {
+	err := ValidateHarness(HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "https://h", Auth: &AuthRef{SecretName: "tok"}}})
+	if err == nil || !strings.Contains(err.Error(), "harness.http.auth is not honored") {
+		t.Errorf("harness.http.auth must be rejected, got %v", err)
+	}
+	// Without auth the same harness validates.
+	if err := ValidateHarness(HarnessSpec{Kind: HarnessHermes, HTTP: &HarnessHTTPSpec{URL: "https://h"}}); err != nil {
+		t.Errorf("hermes harness without http.auth rejected: %v", err)
+	}
+}
+
 // c5r.2: a kind-specific config block set on a kind that does not read it is a
 // mis-author the runtime would silently ignore — reject it.
 func TestValidateHarness_ForeignBlockRejected(t *testing.T) {

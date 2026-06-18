@@ -328,6 +328,11 @@ type HarnessHTTPSpec struct {
 	// +optional
 	Headers map[string]string `json:"headers,omitempty"`
 
+	// Auth is NOT honored for HTTP harnesses and is rejected at admission
+	// (ValidateHarness). HTTP harnesses authenticate via a broker-leased env
+	// var — a harness.env entry named HEADER_Authorization carrying a secretRef
+	// (the executor resolves it into the request headers). The field is retained
+	// for API stability only. (Tool/MCP http.auth — a different struct — IS honored.)
 	// +optional
 	Auth *AuthRef `json:"auth,omitempty"`
 
@@ -502,6 +507,14 @@ func ValidateHarness(h HarnessSpec) error {
 			if r.MaxAttempts < 0 || r.BackoffBaseMs < 0 || r.MaxBackoffMs < 0 {
 				errs = append(errs, errors.New("harness.http.retry values must be ≥ 0"))
 			}
+		}
+		// harness.http.auth has no consumer — HTTP harnesses authenticate via a
+		// broker-leased env var (the HEADER_Authorization convention: a
+		// harness.env entry whose name is HEADER_<header> with a secretRef,
+		// resolved by the executor). Accepting auth here would silently produce
+		// unauthenticated calls, so reject it loudly instead of ignoring it.
+		if h.HTTP != nil && h.HTTP.Auth != nil {
+			errs = append(errs, errors.New("harness.http.auth is not honored — authenticate an HTTP harness with a broker-leased env var instead (a harness.env entry named HEADER_Authorization with a secretRef)"))
 		}
 	case HarnessPiMono:
 		// pi-mono talks to the in-pod pi-bridge: no URL is required (it defaults
