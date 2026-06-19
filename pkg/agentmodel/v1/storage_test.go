@@ -126,3 +126,14 @@ func TestValidateStorage_UnknownKind(t *testing.T) {
 		t.Error("expected unknown-kind error")
 	}
 }
+
+// u9k.5: an unset backend defaults to kopia; tar is honored when explicit.
+func TestAgentFSSpec_EffectiveBackend(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "kopia"}, {"kopia", "kopia"}, {"tar", "tar"},
+	} {
+		if got := (AgentFSSpec{Backend: tc.in}).EffectiveBackend(); got != tc.want {
+			t.Errorf("EffectiveBackend(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

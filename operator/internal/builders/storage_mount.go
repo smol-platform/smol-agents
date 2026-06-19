@@ -194,10 +194,11 @@ func agentFSBackupEnv(a *pure.AgentFSSpec) []corev1.EnvVar {
 	if a == nil {
 		return nil
 	}
-	// Ephemeral kopia: no S3 destination → the sidecar hosts the repo on local
-	// pod storage. Surface only the backend selector; there are no S3 env/creds.
+	// Ephemeral (no S3 destination) → the sidecar hosts the repo on local pod
+	// storage. Surface only the backend selector; there are no S3 env/creds.
+	// Default is kopia (u9k.5); tar ephemeral has no repo, so emit nothing.
 	if a.Backup == nil || a.Backup.S3 == nil {
-		if a.Backend == "kopia" {
+		if a.EffectiveBackend() == "kopia" {
 			return []corev1.EnvVar{{Name: "AGENTFS_BACKEND", Value: "kopia"}}
 		}
 		return nil
@@ -217,8 +218,9 @@ func agentFSBackupEnv(a *pure.AgentFSSpec) []corev1.EnvVar {
 	if b.Retention.MaxVersions > 0 {
 		env = append(env, corev1.EnvVar{Name: "AGENTFS_RETENTION_MAX_VERSIONS", Value: itoa(b.Retention.MaxVersions)})
 	}
-	// Durability backend: "" / tar (legacy) or kopia (content-addressed).
-	env = appendIf(env, "AGENTFS_BACKEND", a.Backend)
+	// Durability backend: kopia (default, content-addressed) or tar (legacy);
+	// always set explicitly so the sidecar default never diverges (u9k.5).
+	env = append(env, corev1.EnvVar{Name: "AGENTFS_BACKEND", Value: a.EffectiveBackend()})
 	// AWS credentials (+ the kopia repo password for backend=kopia) from the
 	// referenced k8s Secret (never inlined in the spec).
 	if s3.CredentialsRef != nil && s3.CredentialsRef.SecretName != "" {
