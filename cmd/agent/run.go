@@ -70,7 +70,7 @@ func runAgentRun(args []string) int {
 	stopBridge := maybeStartPiBridge(ctx, *dir)
 	defer stopBridge()
 
-	llm := buildLoopLLM(ctx, *dir, leaser)
+	llm := buildLoopLLM(ctx, *dir, leaser, "") // one-shot run: no durable provider session
 
 	// rv3.1 S5: a generator-verifier team coordinator (TEAM_NAME set, no
 	// TEAM_MEMBER) drives the convergence loop instead of a plain plan-act-observe
@@ -303,7 +303,13 @@ func waitForBrokerSocket(socket string, timeout time.Duration) bool {
 // API key is leased from the broker by name — never embedded in the spec.
 // Returns nil for harness agents (no provider.json); the executor uses the LLM
 // only in loop mode.
-func buildLoopLLM(ctx context.Context, dir string, leaser agentruntime.SecretLeaser) agentruntime.LLM {
+//
+// sessionID, when set, is sent as the X-Hermes-Session-Id header on every call
+// so a loop session backed by a Hermes gateway carries durable gateway-side
+// memory across turns (yxh.3); the gateway's /v1/chat/completions is not
+// stateless and otherwise falls back to a sha256(system+first-message) key.
+// One-shot runs pass "". Non-Hermes backends ignore the header.
+func buildLoopLLM(ctx context.Context, dir string, leaser agentruntime.SecretLeaser, sessionID string) agentruntime.LLM {
 	b, err := os.ReadFile(filepath.Join(dir, "provider.json")) // matches builders.runSpecProviderFile
 	if err != nil {
 		return nil
@@ -323,5 +329,9 @@ func buildLoopLLM(ctx context.Context, dir string, leaser agentruntime.SecretLea
 			key = string(v)
 		}
 	}
-	return openaillm.NewWithPath(p.Endpoint, key, p.ChatPath)
+	c := openaillm.NewWithPath(p.Endpoint, key, p.ChatPath)
+	if sessionID != "" {
+		c.Headers = map[string]string{"X-Hermes-Session-Id": sessionID}
+	}
+	return c
 }

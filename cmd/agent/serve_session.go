@@ -66,12 +66,20 @@ func runServeSession(args []string) int {
 		leaser = secretLeaser{c: secrets.NewClient(*socket)}
 	}
 
+	// A serve-session loop LLM carries a stable provider session id so a
+	// Hermes-gateway backend keeps memory across turns (yxh.3): prefer the
+	// session queue key (namespace.name), falling back to the agentRef.
+	providerSessionID := *sessionKey
+	if providerSessionID == "" {
+		providerSessionID = *agentRef
+	}
+
 	w := &turnmodel.SessionWorker{
 		Agent:              agent,
 		AgentRef:           *agentRef,
 		Workspace:          ws,
 		Leaser:             leaser,
-		LLM:                buildLoopLLM(ctx, *dir, leaser),
+		LLM:                buildLoopLLM(ctx, *dir, leaser, providerSessionID),
 		PollInterval:       *poll,
 		IdleTimeout:        *idle,
 		MaxConcurrentTurns: *maxConcurrent,

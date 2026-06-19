@@ -49,7 +49,7 @@ func runEval(args []string) int {
 		if waitForBrokerSocket(*socket, 5*time.Second) {
 			leaser = secretLeaser{c: secrets.NewClient(*socket)}
 		}
-		return agentruntime.RunOnce(ctx, dir, leaser, buildLoopLLM(ctx, dir, leaser))
+		return agentruntime.RunOnce(ctx, dir, leaser, buildLoopLLM(ctx, dir, leaser, "")) // eval sample: one-shot, no durable session
 	}
 
 	report, failed := evalSuite(ctx, *suite, *samples, runner)

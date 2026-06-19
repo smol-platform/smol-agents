@@ -35,7 +35,12 @@ type Client struct {
 	// differs (e.g. z.ai's coding plan at /api/coding/paas/v4/chat/completions)
 	// work without an out-of-band path-rewriting proxy.
 	ChatPath string
-	HTTP     Doer
+	// Headers are extra request headers sent on every chat call (e.g.
+	// X-Hermes-Session-Id for a durable Hermes-gateway session). They are applied
+	// after Content-Type/Authorization and do not override them. Backends that
+	// don't recognize a header ignore it.
+	Headers map[string]string
+	HTTP    Doer
 }
 
 // New builds a Client. endpoint is the provider base; the default
@@ -102,6 +107,9 @@ func (c *Client) Chat(ctx context.Context, req agentruntime.ChatRequest) (rt.LLM
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	for k, v := range c.Headers {
+		httpReq.Header.Set(k, v)
 	}
 
 	hc := c.HTTP
