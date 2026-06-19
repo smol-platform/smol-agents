@@ -37,6 +37,33 @@ func TestClient_FinalAnswer(t *testing.T) {
 	}
 }
 
+// yxh.3: Headers (e.g. X-Hermes-Session-Id) are sent on every chat call so a
+// Hermes-gateway session keeps memory across turns; they don't clobber the
+// standard Content-Type/Authorization headers.
+func TestClient_Headers(t *testing.T) {
+	var gotSession, gotAuth, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get("X-Hermes-Session-Id")
+		gotAuth = r.Header.Get("Authorization")
+		gotCT = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	c := &Client{Endpoint: srv.URL, APIKey: "k", Headers: map[string]string{"X-Hermes-Session-Id": "tenant-a.chat"}, HTTP: srv.Client()}
+	if _, err := c.Chat(context.Background(), agentruntime.ChatRequest{Model: v1.ModelRef{Name: "m"}, Input: json.RawMessage(`"hi"`)}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if gotSession != "tenant-a.chat" {
+		t.Errorf("X-Hermes-Session-Id = %q, want tenant-a.chat", gotSession)
+	}
+	if gotAuth != "Bearer k" {
+		t.Errorf("Authorization = %q, want Bearer k (extra headers must not clobber it)", gotAuth)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotCT)
+	}
+}
+
 // c5r.1: ChatPath overrides the appended chat-completions path so providers
 // whose path differs (e.g. z.ai's coding plan) work without a rewriting proxy.
 func TestClient_ChatPath(t *testing.T) {
