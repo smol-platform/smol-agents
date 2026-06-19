@@ -15,20 +15,31 @@
 # - Point the worker at this (collection "memory", dims via -backend-dims):
 #     -backend=qdrant
 #     -backend-endpoint=qdrant-mtls.smol-agents-system.svc:7443
-#     -backend-mtls-spiffe-id=spiffe://smol-agents.ai/ns/smol-agents-system/qdrant
+#     -backend-mtls-spiffe-id=spiffe://smol-agents.ai/ns/smol-agents-system/sa/qdrant
 #
 #   kubectl apply -f deploy/qdrant/qdrant-mtls-sidecar.yaml
 #
 # ── VERIFICATION STATUS ──────────────────────────────────────────────────────
-#   VERIFIED:  kubeconform-strict schema valid; the worker-side mTLS dial path
-#              (QdrantConfig.TLS + AuthorizeID, x9i.3) builds + unit-tested.
-#   GATED (x9i.6, needs a SPIRE cluster): the live mTLS handshake; the exact
-#              ghostunnel SPIFFE flag names (--use-workload-api-addr /
-#              --allow-uri-san) for the pinned image; that the kubelet httpGet
-#              probe survives the pod ingress policy on your CNI; the SVID path
-#              for the qdrant SA. Treat the ghostunnel args as the reference
-#              design until x9i.6 confirms them on a live SPIRE cluster.
+#   VERIFIED (x9i.6, live on gtr — real SPIRE + Cilium + Qdrant, 2026-06-19):
+#              the full mTLS handshake — an authorized memory-worker SVID reaches
+#              Qdrant /healthz (HTTP 200); a pod with the memory-worker LABEL but a
+#              different SVID (SA=default) is REJECTED at the mTLS layer (past the
+#              NetworkPolicy). The ghostunnel SPIFFE flags below are confirmed on
+#              the pinned image. Two corrections folded in from that run:
+#              (a) the SVID is /ns/<ns>/sa/<sa> (the SPIRE chart default CSID) — the
+#                  /sa/ segment is required in --allow-uri-san + -backend-mtls-spiffe-id;
+#              (b) the agent socket is spire-agent.sock; and Qdrant needs a writable
+#                  snapshots path (QDRANT__STORAGE__SNAPSHOTS_PATH, below).
 # ─────────────────────────────────────────────────────────────────────────────
+---
+# Dedicated SA so the pod's SVID is /ns/<ns>/sa/qdrant (the worker authorizes this
+# exact id). Without it the pod runs as "default" and the id never matches.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qdrant
+  namespace: smol-agents-system
+  labels: { app.kubernetes.io/name: qdrant }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -57,6 +68,7 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: qdrant }
     spec:
+      serviceAccountName: qdrant
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -65,6 +77,12 @@ spec:
       containers:
         - name: qdrant
           image: qdrant/qdrant:v1.12.4
+          env:
+            # Snapshots default to /qdrant/snapshots — outside the storage mount and
+            # not writable by the non-root user, so Qdrant crashes at startup
+            # ("Can't create Snapshots directory: PermissionDenied", exit 101).
+            # Redirect them under the storage PVC so they are writable + persist.
+            - { name: QDRANT__STORAGE__SNAPSHOTS_PATH, value: /qdrant/storage/snapshots }
           ports:
             - { name: rest, containerPort: 6333 } # pod-local: probes + ghostunnel only
             - { name: grpc, containerPort: 6334 } # pod-local: ghostunnel target only
@@ -92,8 +110,10 @@ spec:
             - server
             - --listen=0.0.0.0:7443
             - --target=127.0.0.1:6334
-            - --use-workload-api-addr=unix:///run/spire/agent-sockets/api.sock
-            - --allow-uri-san=spiffe://smol-agents.ai/ns/smol-agents-system/memory-worker
+            - --use-workload-api-addr=unix:///run/spire/agent-sockets/spire-agent.sock
+            # The SVID is /ns/<ns>/sa/<sa> (the SPIRE chart's default ClusterSPIFFEID);
+            # the /sa/ segment is required — .../memory-worker would never match.
+            - --allow-uri-san=spiffe://smol-agents.ai/ns/smol-agents-system/sa/memory-worker
           ports:
             - { name: mtls, containerPort: 7443 }
           resources:
