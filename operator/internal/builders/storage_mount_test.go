@@ -159,9 +159,9 @@ func TestBuildAgentRunPod_StorageAgentFS(t *testing.T) {
 	if s, key, ok := secretEnvRef(sc, "AWS_ACCESS_KEY_ID"); !ok || s != "aws-creds" || key != "access-key-id" {
 		t.Errorf("AWS_ACCESS_KEY_ID secretKeyRef = (%q,%q,%v), want (aws-creds,access-key-id,true)", s, key, ok)
 	}
-	// Default (unset) backend = legacy tar path: no AGENTFS_BACKEND env emitted.
-	if got := envVal(sc, "AGENTFS_BACKEND"); got != "" {
-		t.Errorf("default backend should emit no AGENTFS_BACKEND, got %q", got)
+	// Default (unset) backend now resolves to kopia (u9k.5): AGENTFS_BACKEND=kopia.
+	if got := envVal(sc, "AGENTFS_BACKEND"); got != "kopia" {
+		t.Errorf("default backend should resolve to kopia, got %q", got)
 	}
 
 	// Restore policy reaches only the init container.

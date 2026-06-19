@@ -52,11 +52,13 @@ type AgentFSSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
 
-	// Backend selects the durability engine. "" / "tar" = the legacy
-	// full-snapshot gzip-tar to one S3 key (back-compat default). "kopia" =
+	// Backend selects the durability engine. "" defaults to "kopia" (u9k.5):
 	// content-addressed snapshots (dedup, incremental/streaming, history, diff,
-	// rollback) — see docs/design/agentfs-fuse-plugin.md. kopia takes periodic
-	// snapshots automatically on the Backup schedule plus on shutdown.
+	// rollback) — see docs/design/agentfs-fuse-plugin.md; it takes periodic
+	// snapshots automatically on the Backup schedule plus on shutdown, and works
+	// ephemerally (in-pod repo) when no backup.s3 is set. "tar" is the legacy
+	// full-snapshot gzip-tar to one S3 key (opt-in, no history/diff/rollback).
+	// Resolve via EffectiveBackend(), not this field directly.
 	// +kubebuilder:validation:Enum="";tar;kopia
 	// +optional
 	Backend string `json:"backend,omitempty"`
@@ -199,6 +201,17 @@ func ValidateStorage(s *StorageSpec) error {
 	default:
 		return fmt.Errorf("storage.kind=%q is invalid", s.Kind)
 	}
+}
+
+// EffectiveBackend resolves the durability engine, defaulting an unset Backend to
+// "kopia" (u9k.5) — the content-addressed engine with history/diff/rollback,
+// which also works ephemerally (in-pod repo) when no backup.s3 is set. "tar" is
+// honored when set explicitly. Callers must use this rather than the raw field.
+func (a AgentFSSpec) EffectiveBackend() string {
+	if a.Backend == "tar" {
+		return "tar"
+	}
+	return "kopia"
 }
 
 func validateAgentFS(a AgentFSSpec) error {
