@@ -17,5 +17,6 @@ resources:
   - runtime.agents.smol-agents.ai_attachgrants.yaml
   - runtime.agents.smol-agents.ai_agentnetworks.yaml
   - runtime.agents.smol-agents.ai_dynamiccredentialbackends.yaml
+  - runtime.agents.smol-agents.ai_modelgateways.yaml
   - runtime.agents.smol-agents.ai_memorystores.yaml
   - runtime.agents.smol-agents.ai_memoryretrievers.yaml

@@ -225,6 +225,14 @@ func main() {
 		setupLog.Error(err, "unable to register DynamicCredentialBackend controller")
 		os.Exit(1)
 	}
+	if err := (&agentmodel.ModelGatewayReconciler{
+		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
+		DefaultRunRuntimeClass: defaultRunRuntimeClass,
+		AllowHostRuntime:       allowHostRuntime,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to register ModelGateway controller")
+		os.Exit(1)
+	}
 	if err := (&agentmodel.AgentTeamReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 		MaxConcurrentReconciles: maxConcurrentReconciles,

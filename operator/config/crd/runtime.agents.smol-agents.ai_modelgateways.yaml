@@ -1,0 +1,76 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: modelgateways.runtime.agents.smol-agents.ai
+spec:
+  group: runtime.agents.smol-agents.ai
+  scope: Namespaced
+  names:
+    kind: ModelGateway
+    plural: modelgateways
+    singular: modelgateway
+    shortNames: [mgw]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - { name: Provider, type: string, jsonPath: .spec.provider }
+        - { name: Endpoint, type: string, jsonPath: .status.endpoint }
+        - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: |-
+            ModelGateway is an operator-managed model/agent gateway (yxh.2): a thin
+            lifecycle+isolation wrapper that renders+hardens the gateway's Deployment,
+            Service, config, and egress/ingress NetworkPolicies, instead of deploying
+            it as a manual workload. provider=hermes is implementation #1
+            (nousresearch/hermes-agent). The gateway is host-level RCE, so it runs
+            under the same sandbox (kata-fc default) + egress floor as run pods. The
+            request surface (chat/responses/runs) stays in the harness + the gateway
+            config — only deployment + isolation are modeled here.
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [provider, image]
+              properties:
+                provider: { type: string, enum: [hermes], description: 'Gateway implementation (only hermes today).' }
+                image: { type: string, minLength: 1, description: 'Gateway container image (e.g. nousresearch/hermes-agent:latest).' }
+                port: { type: integer, format: int32, minimum: 0, description: 'Listen port; 0 defaults per provider (hermes: 8642).' }
+                config: { type: string, description: 'Gateway config-file content (hermes: config.yaml, the model source), seeded into the data dir.' }
+                replicas: { type: integer, format: int32, minimum: 0, description: 'Gateway Deployment replicas (default 1).' }
+                sandbox:
+                  type: object
+                  description: 'Pod RuntimeClass override; empty inherits the operator --default-run-runtime-class (kata-fc). The gateway is RCE; runc requires --allow-host-runtime.'
+                  properties:
+                    runtimeClass: { type: string }
+                env:
+                  type: array
+                  description: 'Extra gateway env — provider keys (secretRef), base URLs, model selectors. The operator adds the provider conventions.'
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: { type: string, minLength: 1 }
+                      value: { type: string, description: 'Literal value.' }
+                      secretRef:
+                        type: object
+                        description: 'Inject from a Secret (key defaults to the env var name).'
+                        required: [secretName]
+                        properties:
+                          secretName: { type: string, minLength: 1 }
+                          key: { type: string }
+            status:
+              type: object
+              description: Observed gateway state.
+              properties:
+                phase: { type: string, description: 'Pending | Ready | Failed.' }
+                observedGeneration: { type: integer }
+                endpoint: { type: string, description: 'In-cluster base URL agents point harness.http.url at (append the API path).' }
+                reason: { type: string }
+                message: { type: string }

@@ -1,0 +1,49 @@
+# ModelGateway — an operator-deployed Hermes gateway (yxh.2). The operator
+# renders + hardens the gateway Deployment+Service+ConfigMap+NetworkPolicies; you
+# declare it as a CR instead of hand-writing those (cf. .claude/hermes-e2e.yaml).
+#
+# Secrets are created imperatively so keys never touch disk:
+#   kubectl -n tenant-a create secret generic hermes-gw-key --from-literal=API_SERVER_KEY=$(openssl rand -hex 24)
+#   kubectl -n tenant-a create secret generic zai-key       --from-literal=ZAI_API_KEY=<leased key>
+#
+# The RCE gateway runs under the operator's --default-run-runtime-class (kata-fc).
+# On a kataless cluster the operator needs --allow-host-runtime (it then runs runc
+# with the egress floor + ingress NetworkPolicy + dropped caps as the controls).
+---
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: ModelGateway
+metadata:
+  name: hermes
+  namespace: tenant-a
+spec:
+  provider: hermes
+  image: nousresearch/hermes-agent:latest
+  port: 8642
+  config: |
+    model:
+      provider: zai
+      model: glm-4.6
+  env:
+    - { name: API_SERVER_KEY, secretRef: { secretName: hermes-gw-key, key: API_SERVER_KEY } }
+    - { name: HERMES_INFERENCE_MODEL, value: "glm-4.6" }
+    - { name: GLM_API_KEY, secretRef: { secretName: zai-key, key: ZAI_API_KEY } }
+    - { name: GLM_BASE_URL, value: "https://api.z.ai/api/coding/paas/v4" }
+---
+# An Agent that drives the operator-managed gateway. Point harness.http.url at the
+# gateway's Service — status.endpoint resolves to http://mgw-hermes.tenant-a.svc:8642.
+apiVersion: runtime.agents.smol-agents.ai/v1
+kind: Agent
+metadata:
+  name: hermes
+  namespace: tenant-a
+spec:
+  mode: harness
+  instructions: "You are Hermes — candid, resourceful, concise."
+  budget: { maxSteps: 1, maxTokens: 32768, maxToolCalls: 0, maxWallClockSeconds: 600 }
+  harness:
+    kind: hermes
+    sessionPolicy: ephemeral
+    http:
+      url: "http://mgw-hermes.tenant-a.svc.cluster.local:8642/v1/chat/completions"
+    env:
+      - { name: HEADER_Authorization, secretRef: { secretName: hermes-gw-auth } }
