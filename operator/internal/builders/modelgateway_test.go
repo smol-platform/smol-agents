@@ -3,6 +3,7 @@ package builders
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
@@ -77,6 +78,35 @@ func TestBuildModelGatewayDeployment(t *testing.T) {
 	}
 	if env["GLM_BASE_URL"] != "https://api.z.ai/api/coding/paas/v4" {
 		t.Errorf("GLM_BASE_URL = %q", env["GLM_BASE_URL"])
+	}
+
+	// The gateway container drops ALL caps but adds back the ones s6-overlay needs
+	// to drop root → hermes(10000) (proven on gtr: without these it crash-loops).
+	sc := c.SecurityContext
+	if sc == nil || sc.Capabilities == nil {
+		t.Fatalf("gateway container has no capability hardening")
+	}
+	if len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("gateway caps.drop = %v, want [ALL]", sc.Capabilities.Drop)
+	}
+	want := map[corev1.Capability]bool{"SETUID": false, "SETGID": false, "CHOWN": false}
+	for _, a := range sc.Capabilities.Add {
+		if _, ok := want[a]; ok {
+			want[a] = true
+		}
+	}
+	for cap, found := range want {
+		if !found {
+			t.Errorf("gateway caps.add missing %s (s6 privilege-drop)", cap)
+		}
+	}
+	if sc.AllowPrivilegeEscalation == nil || !*sc.AllowPrivilegeEscalation {
+		t.Errorf("gateway allowPrivilegeEscalation = %v, want true (s6 step-down)", sc.AllowPrivilegeEscalation)
+	}
+	// The busybox config-seed init stays fully locked (drop ALL, no add-back).
+	ic := dep.Spec.Template.Spec.InitContainers[0].SecurityContext
+	if ic == nil || ic.Capabilities == nil || len(ic.Capabilities.Add) != 0 {
+		t.Errorf("init container should add no caps, got %+v", ic)
 	}
 }
 

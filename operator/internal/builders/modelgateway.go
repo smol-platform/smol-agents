@@ -30,6 +30,12 @@ type gatewayProfile struct {
 	configIn string   // file the gateway reads (within dataDir)
 	fsGroup  int64    // group owning the data dir
 	stdEnv   func(port int32) []corev1.EnvVar
+	// initCaps are the capabilities the gateway image's own init system needs to
+	// step down from root to its unprivileged user (e.g. s6-overlay's
+	// s6-applyuidgid → setgroups/setgid/setuid + the data-dir chown). The container
+	// still drops ALL and adds back only these; nil = drop everything (Go services).
+	initCaps     []corev1.Capability
+	allowPrivEsc bool // the init's privilege-drop chain needs no_new_privs OFF
 }
 
 func hermesProfile() gatewayProfile {
@@ -38,6 +44,11 @@ func hermesProfile() gatewayProfile {
 		dataDir:  "/opt/data",
 		configIn: "config.yaml",
 		fsGroup:  10000, // the hermes user
+		// hermes-agent boots under s6-overlay as root and drops to uid 10000; that
+		// chain needs these caps (proven on gtr: dropping ALL → "s6-applyuidgid:
+		// unable to set supplementary group list: Operation not permitted" → crash).
+		initCaps:     []corev1.Capability{"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL", "SETPCAP"},
+		allowPrivEsc: true,
 		stdEnv: func(port int32) []corev1.EnvVar {
 			return []corev1.EnvVar{
 				{Name: "HERMES_HOME", Value: "/opt/data"},
@@ -150,7 +161,7 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 							Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("512Mi")},
 							Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("2Gi")},
 						},
-						SecurityContext: hardenedGatewaySecurityContext(),
+						SecurityContext: gatewayContainerSecurityContext(p),
 						VolumeMounts:    []corev1.VolumeMount{{Name: modelGatewayDataVolume, MountPath: p.dataDir}},
 					}},
 					Volumes: []corev1.Volume{
@@ -167,13 +178,28 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 	return dep
 }
 
-// hardenedGatewaySecurityContext is the cheap container hardening an RCE gateway
-// tolerates: no privilege escalation, all caps dropped. The root filesystem stays
-// writable (the agent's tools write files) and the uid is the image default.
+// hardenedGatewaySecurityContext is the cheap container hardening a helper (the
+// busybox config-seed init) tolerates: no privilege escalation, all caps dropped.
 func hardenedGatewaySecurityContext() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
 		AllowPrivilegeEscalation: ptr.To(false),
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// gatewayContainerSecurityContext hardens the RCE gateway container: drop ALL caps
+// and add back only the ones the image's init system needs to drop to its own
+// unprivileged user (profile.initCaps). The root filesystem stays writable (the
+// agent's tools write files) and the uid is the image default; the real isolation
+// is the RuntimeClass (kata) + egress floor + NetworkPolicies. With no initCaps it
+// is identical to the fully-dropped helper context.
+func gatewayContainerSecurityContext(p gatewayProfile) *corev1.SecurityContext {
+	if len(p.initCaps) == 0 {
+		return hardenedGatewaySecurityContext()
+	}
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(p.allowPrivEsc),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: p.initCaps},
 	}
 }
 
