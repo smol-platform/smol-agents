@@ -164,6 +164,10 @@ func TestBuildModelGatewayUI(t *testing.T) {
 	if !strings.Contains(conf, "auth_basic_user_file /etc/nginx/auth/.htpasswd;") {
 		t.Errorf("ui-nginx.conf should enforce basic-auth: %q", conf)
 	}
+	// The loopback dashboard's Host-header defense only accepts loopback hosts.
+	if !strings.Contains(conf, "proxy_set_header Host localhost;") {
+		t.Errorf("ui-nginx.conf must forward Host: localhost (dashboard host check): %q", conf)
+	}
 
 	// Deployment gains the hardened auth sidecar + its two volumes.
 	dep := BuildModelGatewayDeployment(gw, "kata-fc")
@@ -217,5 +221,67 @@ func TestBuildModelGatewayUI(t *testing.T) {
 	np := BuildModelGatewayIngress(gw)
 	if len(np.Spec.Ingress[0].Ports) != 2 {
 		t.Errorf("ingress should allow gateway + UI ports, got %d", len(np.Spec.Ingress[0].Ports))
+	}
+}
+
+func TestBuildModelGatewayUI_OIDCProxy(t *testing.T) {
+	gw := sampleGateway()
+	gw.Spec.UI = &pure.GatewayUISpec{
+		Expose: true,
+		Auth: pure.GatewayUIAuth{Mode: "oidcProxy", OIDC: &pure.GatewayUIOIDC{
+			Issuer: "https://dex.stigen.home", ClientID: "hermes-dashboard",
+			RedirectURL: "https://hermes.stigen.home/oauth2/callback",
+			SecretRef:   &pure.AuthRef{SecretName: "hermes-oauth2-proxy"},
+			LoginURL:    "https://dex.stigen.home/auth",
+			RedeemURL:   "http://dex.dex.svc.cluster.local:5556/token",
+			JWKSURL:     "http://dex.dex.svc.cluster.local:5556/keys",
+		}},
+	}
+
+	// No nginx conf for oidcProxy.
+	if _, ok := BuildModelGatewayConfigMap(gw).Data["ui-nginx.conf"]; ok {
+		t.Errorf("oidcProxy should not render an nginx conf")
+	}
+
+	dep := BuildModelGatewayDeployment(gw, "kata-fc")
+	var side *corev1.Container
+	for i := range dep.Spec.Template.Spec.Containers {
+		if dep.Spec.Template.Spec.Containers[i].Name == "ui-auth" {
+			side = &dep.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if side == nil {
+		t.Fatalf("expected a ui-auth (oauth2-proxy) sidecar")
+	}
+	if !strings.Contains(side.Image, "oauth2-proxy") {
+		t.Errorf("oidcProxy sidecar image = %q, want oauth2-proxy", side.Image)
+	}
+	args := strings.Join(side.Args, " ")
+	for _, want := range []string{
+		"--provider=oidc", "--oidc-issuer-url=https://dex.stigen.home",
+		"--client-id=hermes-dashboard", "--redirect-url=https://hermes.stigen.home/oauth2/callback",
+		"--upstream=http://127.0.0.1:9119", "--skip-oidc-discovery=true",
+		"--redeem-url=http://dex.dex.svc.cluster.local:5556/token",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("oauth2-proxy args missing %q; got %s", want, args)
+		}
+	}
+	// Secrets come from the referenced Secret (never inlined).
+	env := map[string]string{}
+	for _, e := range side.Env {
+		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
+			env[e.Name] = e.ValueFrom.SecretKeyRef.Name + "/" + e.ValueFrom.SecretKeyRef.Key
+		}
+	}
+	if env["OAUTH2_PROXY_CLIENT_SECRET"] != "hermes-oauth2-proxy/client-secret" ||
+		env["OAUTH2_PROXY_COOKIE_SECRET"] != "hermes-oauth2-proxy/cookie-secret" {
+		t.Errorf("oauth2-proxy secret env wrong: %v", env)
+	}
+	// No nginx volumes for oidcProxy.
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == "ui-config" || v.Name == "ui-auth" {
+			t.Errorf("oidcProxy should not mount nginx volumes, found %s", v.Name)
+		}
 	}
 }

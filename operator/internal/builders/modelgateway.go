@@ -30,11 +30,20 @@ const (
 	modelGatewayUIAuthVolume   = "ui-auth"
 	modelGatewayUINginxConf    = "ui-nginx.conf"
 	gatewayUIProxyImage        = "nginxinc/nginx-unprivileged:1.27-alpine"
+	gatewayUIOIDCProxyImage    = "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
 	gatewayUIAuthDefaultKey    = "htpasswd"
 )
 
 // uiEnabled reports whether the gateway opts its web UI into authenticated exposure.
 func uiEnabled(gw *amv1.ModelGateway) bool { return gw.Spec.UI != nil && gw.Spec.UI.Expose }
+
+// uiSharedSecret / uiOIDCProxy select the auth-front implementation.
+func uiSharedSecret(gw *amv1.ModelGateway) bool {
+	return uiEnabled(gw) && gw.Spec.UI.Auth.Mode == "sharedSecret"
+}
+func uiOIDCProxy(gw *amv1.ModelGateway) bool {
+	return uiEnabled(gw) && gw.Spec.UI.Auth.Mode == "oidcProxy"
+}
 
 // uiUpstreamPort resolves the in-pod port the auth-front proxies to: an explicit
 // spec.ui.upstreamPort, else the provider's UI/dashboard port, else the gateway
@@ -146,7 +155,7 @@ func ModelGatewayEndpoint(gw *amv1.ModelGateway) string {
 func BuildModelGatewayConfigMap(gw *amv1.ModelGateway) *corev1.ConfigMap {
 	p := profileFor(gw.Spec.Provider)
 	data := map[string]string{p.configIn: gw.Spec.Config}
-	if uiEnabled(gw) {
+	if uiSharedSecret(gw) {
 		data[modelGatewayUINginxConf] = renderUINginxConf(gw)
 	}
 	return &corev1.ConfigMap{
@@ -166,7 +175,9 @@ func renderUINginxConf(gw *amv1.ModelGateway) string {
         auth_basic "smol-agents gateway";
         auth_basic_user_file /etc/nginx/auth/.htpasswd;
         proxy_pass http://127.0.0.1:%d;
-        proxy_set_header Host $host;
+        # The dashboard's host_header_middleware (DNS-rebind defense) only accepts
+        # loopback Host values when bound to loopback — forward "localhost", not $host.
+        proxy_set_header Host localhost;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -267,11 +278,19 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 	return dep
 }
 
-// gatewayUISidecar is the nginx-unprivileged basic-auth front: it listens on the
-// UI port, authenticates humans against the mounted htpasswd, and proxies the
-// gateway on loopback. It runs fully hardened (drop ALL caps, no privesc, nonroot
-// uid 101 — it binds a >1024 port).
+// gatewayUISidecar renders the auth-front sidecar for the selected mode. Both
+// front the loopback dashboard on the UI port and run fully hardened (drop ALL
+// caps, no privesc, nonroot — they bind a >1024 port).
 func gatewayUISidecar(gw *amv1.ModelGateway) corev1.Container {
+	if uiOIDCProxy(gw) {
+		return gatewayOIDCProxySidecar(gw)
+	}
+	return gatewayNginxSidecar(gw)
+}
+
+// gatewayNginxSidecar is the sharedSecret (basic-auth) front: nginx authenticates
+// against the mounted htpasswd and proxies the dashboard on loopback.
+func gatewayNginxSidecar(gw *amv1.ModelGateway) corev1.Container {
 	uiPort := gw.Spec.EffectiveUIPort()
 	return corev1.Container{
 		Name:            "ui-auth",
@@ -294,9 +313,71 @@ func gatewayUISidecar(gw *amv1.ModelGateway) corev1.Container {
 	}
 }
 
-// uiVolumes mounts the rendered nginx server block (as conf.d/default.conf) and
-// the htpasswd Secret (as /etc/nginx/auth/.htpasswd) for the auth sidecar.
+// gatewayOIDCProxySidecar is the oidcProxy front: oauth2-proxy authenticates
+// humans against an OIDC IdP (cookie session) and proxies the dashboard on
+// loopback. The upstream is 127.0.0.1, so oauth2-proxy's default (rewrite the
+// upstream Host to the upstream URL's host = 127.0.0.1) satisfies the dashboard's
+// loopback Host check with no extra config.
+func gatewayOIDCProxySidecar(gw *amv1.ModelGateway) corev1.Container {
+	uiPort := gw.Spec.EffectiveUIPort()
+	o := gw.Spec.UI.Auth.OIDC
+	emailDomain := o.EmailDomain
+	if emailDomain == "" {
+		emailDomain = "*"
+	}
+	args := []string{
+		"--provider=oidc",
+		"--oidc-issuer-url=" + o.Issuer,
+		"--client-id=" + o.ClientID,
+		"--redirect-url=" + o.RedirectURL,
+		"--upstream=http://127.0.0.1:" + itoa(uiUpstreamPort(gw)),
+		"--http-address=0.0.0.0:" + itoa(uiPort),
+		"--email-domain=" + emailDomain,
+		"--cookie-secure=true",
+		"--reverse-proxy=true",
+		"--skip-provider-button=true",
+		"--scope=openid email profile",
+	}
+	// Pinned endpoints (all-or-nothing, validated): skip discovery so the
+	// back-channel can hit in-cluster HTTP URLs and never trust the issuer's TLS.
+	if o.LoginURL != "" && o.RedeemURL != "" && o.JWKSURL != "" {
+		args = append(args,
+			"--skip-oidc-discovery=true",
+			"--login-url="+o.LoginURL,
+			"--redeem-url="+o.RedeemURL,
+			"--oidc-jwks-url="+o.JWKSURL,
+		)
+	}
+	return corev1.Container{
+		Name:            "ui-auth",
+		Image:           gatewayUIOIDCProxyImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            args,
+		Env: []corev1.EnvVar{
+			{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: o.SecretRef.SecretName}, Key: "client-secret"}}},
+			{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: o.SecretRef.SecretName}, Key: "cookie-secret"}}},
+		},
+		Ports: []corev1.ContainerPort{{Name: "ui", ContainerPort: uiPort, Protocol: corev1.ProtocolTCP}},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler:  corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/ping", Port: intstr.FromInt(int(uiPort))}},
+			PeriodSeconds: 10,
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("25m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
+		},
+		SecurityContext: hardenedGatewaySecurityContext(),
+	}
+}
+
+// uiVolumes mounts the nginx server block + htpasswd for the sharedSecret front.
+// oidcProxy (oauth2-proxy) is configured purely by args/env — no volumes.
 func uiVolumes(gw *amv1.ModelGateway) []corev1.Volume {
+	if !uiSharedSecret(gw) {
+		return nil
+	}
 	return []corev1.Volume{
 		{Name: modelGatewayUIConfigVolume, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 			LocalObjectReference: corev1.LocalObjectReference{Name: ModelGatewayName(gw)},

@@ -22,7 +22,9 @@ func TestValidateModelGateway(t *testing.T) {
 		{"env without name", ModelGatewaySpec{Provider: "hermes", Image: "x", Env: []HarnessEnvVar{{Value: "v"}}}, "env[0].name is required"},
 		{"env secretRef without secretName", ModelGatewaySpec{Provider: "hermes", Image: "x", Env: []HarnessEnvVar{{Name: "K", SecretRef: &AuthRef{}}}}, "secretRef.secretName is required"},
 		{"ui sharedSecret without secretRef", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "sharedSecret"}}}, "ui.auth.secretRef.secretName is required"},
-		{"ui oidc reserved", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "oidc"}}}, "oidc is not yet implemented"},
+		{"ui oidcProxy without oidc", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "oidcProxy"}}}, "ui.auth.oidc is required"},
+		{"ui oidcProxy missing fields", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "oidcProxy", OIDC: &GatewayUIOIDC{Issuer: "https://i"}}}}, "clientID is required"},
+		{"ui oidcProxy partial pinned urls", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "oidcProxy", OIDC: &GatewayUIOIDC{Issuer: "https://i", ClientID: "c", RedirectURL: "https://r/cb", SecretRef: &AuthRef{SecretName: "s"}, LoginURL: "https://i/auth"}}}}, "must be set together"},
 		{"ui missing mode", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true}}, "ui.auth.mode is required"},
 		{"ui bad mode", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "basic"}}}, "is invalid"},
 		{"ui port clashes with gateway port", ModelGatewaySpec{Provider: "hermes", Image: "x", Port: 8643, UI: &GatewayUISpec{Expose: true, Port: 8643, Auth: GatewayUIAuth{Mode: "sharedSecret", SecretRef: &AuthRef{SecretName: "s"}}}}, "ui.port must differ"},
@@ -55,5 +57,13 @@ func TestModelGatewaySpec_EffectiveUIPort(t *testing.T) {
 	if err := ValidateModelGateway(ModelGatewaySpec{Provider: "hermes", Image: "x",
 		UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "sharedSecret", SecretRef: &AuthRef{SecretName: "ui-htpasswd"}}}}); err != nil {
 		t.Errorf("valid sharedSecret UI rejected: %v", err)
+	}
+	// A valid oidcProxy UI (with pinned back-channel) passes validation.
+	if err := ValidateModelGateway(ModelGatewaySpec{Provider: "hermes", Image: "x",
+		UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "oidcProxy", OIDC: &GatewayUIOIDC{
+			Issuer: "https://dex.example.com", ClientID: "hermes-dashboard", RedirectURL: "https://h.example.com/oauth2/callback",
+			SecretRef: &AuthRef{SecretName: "oidc"}, LoginURL: "https://dex.example.com/auth", RedeemURL: "http://dex.dex.svc:5556/token", JWKSURL: "http://dex.dex.svc:5556/keys",
+		}}}}); err != nil {
+		t.Errorf("valid oidcProxy UI rejected: %v", err)
 	}
 }

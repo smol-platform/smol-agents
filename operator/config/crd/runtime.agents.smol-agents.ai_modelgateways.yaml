@@ -78,7 +78,7 @@ spec:
                       required: [mode]
                       description: 'Human-auth front for the UI.'
                       properties:
-                        mode: { type: string, enum: [sharedSecret, oidc], description: 'sharedSecret = HTTP basic-auth from an htpasswd Secret (impl #1). oidc = bundled Dex/Keycloak (reserved, not yet implemented).' }
+                        mode: { type: string, enum: [sharedSecret, oidcProxy], description: 'sharedSecret = HTTP basic-auth from an htpasswd Secret. oidcProxy = an oauth2-proxy sidecar against an OIDC IdP (bundled Dex/Keycloak per D9), cookie-based.' }
                         secretRef:
                           type: object
                           description: 'Auth material. sharedSecret: a Secret whose key (default "htpasswd") holds htpasswd lines (user:bcrypt).'
@@ -86,6 +86,25 @@ spec:
                           properties:
                             secretName: { type: string, minLength: 1 }
                             key: { type: string }
+                        oidc:
+                          type: object
+                          description: 'mode=oidcProxy config (the oauth2-proxy sidecar).'
+                          required: [issuer, clientID, redirectURL, secretRef]
+                          properties:
+                            issuer: { type: string, minLength: 1, description: 'OIDC issuer URL (iss), e.g. https://dex.example.com.' }
+                            clientID: { type: string, minLength: 1, description: 'OIDC client id registered at the IdP.' }
+                            redirectURL: { type: string, minLength: 1, description: 'Public callback, e.g. https://hermes.example.com/oauth2/callback.' }
+                            loginURL: { type: string, description: 'Pin the IdP authorize URL (skips discovery; set with redeemURL+jwksURL).' }
+                            redeemURL: { type: string, description: 'Pin the token endpoint — use an in-cluster URL to avoid the issuer private-CA TLS.' }
+                            jwksURL: { type: string, description: 'Pin the JWKS endpoint — in-cluster URL.' }
+                            emailDomain: { type: string, description: 'Restrict which IdP emails may log in ("*" = any). Default "*".' }
+                            secretRef:
+                              type: object
+                              description: 'Secret holding client-secret + cookie-secret keys.'
+                              required: [secretName]
+                              properties:
+                                secretName: { type: string, minLength: 1 }
+                                key: { type: string }
             status:
               type: object
               description: Observed gateway state.

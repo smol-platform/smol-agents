@@ -84,14 +84,44 @@ type GatewayUISpec struct {
 // GatewayUIAuth is the human-auth front for the gateway UI.
 type GatewayUIAuth struct {
 	// Mode selects the auth front. "sharedSecret" = HTTP basic-auth from an
-	// htpasswd Secret (impl #1). "oidc" = platform-managed OIDC (bundled
-	// Dex/Keycloak per decision D9) — reserved, not yet implemented.
-	// +kubebuilder:validation:Enum=sharedSecret;oidc
+	// htpasswd Secret. "oidcProxy" = an oauth2-proxy sidecar that authenticates
+	// humans against an OIDC IdP (bundled Dex/Keycloak per decision D9) — the
+	// platform-managed human-identity front, cookie-based.
+	// +kubebuilder:validation:Enum=sharedSecret;oidcProxy
 	Mode string `json:"mode"`
 
 	// SecretRef points at the auth material. For sharedSecret: a Secret whose key
 	// (default "htpasswd") holds one or more htpasswd lines (user:bcrypt). +optional
 	SecretRef *AuthRef `json:"secretRef,omitempty"`
+
+	// OIDC configures mode=oidcProxy (the oauth2-proxy sidecar). +optional
+	OIDC *GatewayUIOIDC `json:"oidc,omitempty"`
+}
+
+// GatewayUIOIDC configures the oauth2-proxy sidecar (mode=oidcProxy). The proxy
+// fronts the loopback dashboard with a cookie session minted after an OIDC login.
+// Front-channel (login/redirect) uses the public issuer; the back-channel
+// (token/jwks) can be pinned to in-cluster URLs so the proxy never has to trust
+// the issuer's TLS — handy when the IdP sits behind a private-CA gateway.
+type GatewayUIOIDC struct {
+	// Issuer is the OIDC issuer URL (iss), e.g. https://dex.example.com.
+	Issuer string `json:"issuer"`
+	// ClientID is the OIDC client id registered at the IdP.
+	ClientID string `json:"clientID"`
+	// RedirectURL is the public callback the IdP redirects back to, e.g.
+	// https://hermes.example.com/oauth2/callback.
+	RedirectURL string `json:"redirectURL"`
+	// SecretRef is a Secret holding "client-secret" and "cookie-secret" keys.
+	SecretRef *AuthRef `json:"secretRef"`
+	// LoginURL/RedeemURL/JWKSURL pin the OIDC endpoints (skips discovery). Set the
+	// back-channel ones to in-cluster URLs (e.g. http://dex.dex.svc:5556/token) so
+	// the proxy avoids the issuer's private-CA TLS. All-or-nothing. +optional
+	LoginURL  string `json:"loginURL,omitempty"`
+	RedeemURL string `json:"redeemURL,omitempty"`
+	JWKSURL   string `json:"jwksURL,omitempty"`
+	// EmailDomain restricts which IdP emails may log in ("*" = any). Default "*".
+	// +optional
+	EmailDomain string `json:"emailDomain,omitempty"`
 }
 
 // GatewayUIDefaultPort is the default auth-proxy listen port.
@@ -171,12 +201,38 @@ func ValidateModelGateway(s ModelGatewaySpec) error {
 			if s.UI.Auth.SecretRef == nil || strings.TrimSpace(s.UI.Auth.SecretRef.SecretName) == "" {
 				errs = append(errs, errors.New("modelGateway.ui.auth.secretRef.secretName is required for mode=sharedSecret"))
 			}
-		case "oidc":
-			errs = append(errs, errors.New("modelGateway.ui.auth.mode=oidc is not yet implemented (use sharedSecret)"))
+		case "oidcProxy":
+			o := s.UI.Auth.OIDC
+			if o == nil {
+				errs = append(errs, errors.New("modelGateway.ui.auth.oidc is required for mode=oidcProxy"))
+			} else {
+				if strings.TrimSpace(o.Issuer) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.issuer is required"))
+				}
+				if strings.TrimSpace(o.ClientID) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.clientID is required"))
+				}
+				if strings.TrimSpace(o.RedirectURL) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.redirectURL is required"))
+				}
+				if o.SecretRef == nil || strings.TrimSpace(o.SecretRef.SecretName) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.secretRef.secretName is required (client-secret + cookie-secret)"))
+				}
+				// Pinned back-channel endpoints are all-or-nothing.
+				pinned := 0
+				for _, u := range []string{o.LoginURL, o.RedeemURL, o.JWKSURL} {
+					if strings.TrimSpace(u) != "" {
+						pinned++
+					}
+				}
+				if pinned != 0 && pinned != 3 {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc loginURL/redeemURL/jwksURL must be set together (or all empty for discovery)"))
+				}
+			}
 		case "":
 			errs = append(errs, errors.New("modelGateway.ui.auth.mode is required when ui.expose=true"))
 		default:
-			errs = append(errs, fmt.Errorf("modelGateway.ui.auth.mode=%q is invalid (sharedSecret|oidc)", s.UI.Auth.Mode))
+			errs = append(errs, fmt.Errorf("modelGateway.ui.auth.mode=%q is invalid (sharedSecret|oidcProxy)", s.UI.Auth.Mode))
 		}
 		if s.EffectiveUIPort() == s.EffectivePort() {
 			errs = append(errs, errors.New("modelGateway.ui.port must differ from the gateway port"))
