@@ -154,10 +154,11 @@ func sampleGatewayWithUI() *amv1.ModelGateway {
 func TestBuildModelGatewayUI(t *testing.T) {
 	gw := sampleGatewayWithUI()
 
-	// ConfigMap carries the rendered nginx server block.
+	// ConfigMap carries the rendered nginx server block — it proxies the hermes
+	// dashboard (9119), not the API port (8642).
 	cm := BuildModelGatewayConfigMap(gw)
 	conf := cm.Data["ui-nginx.conf"]
-	if conf == "" || !strings.Contains(conf, "listen 8643;") || !strings.Contains(conf, "proxy_pass http://127.0.0.1:8642;") {
+	if conf == "" || !strings.Contains(conf, "listen 8643;") || !strings.Contains(conf, "proxy_pass http://127.0.0.1:9119;") {
 		t.Errorf("ui-nginx.conf missing/incorrect: %q", conf)
 	}
 	if !strings.Contains(conf, "auth_basic_user_file /etc/nginx/auth/.htpasswd;") {
@@ -177,6 +178,19 @@ func TestBuildModelGatewayUI(t *testing.T) {
 	}
 	if side.Ports[0].ContainerPort != 8643 {
 		t.Errorf("ui sidecar port = %d, want 8643", side.Ports[0].ContainerPort)
+	}
+
+	// The gateway container gets the dashboard-enable env (loopback-bound).
+	genv := map[string]string{}
+	for _, c := range dep.Spec.Template.Spec.Containers {
+		if c.Name == "gateway" {
+			for _, e := range c.Env {
+				genv[e.Name] = e.Value
+			}
+		}
+	}
+	if genv["HERMES_DASHBOARD"] != "1" || genv["HERMES_DASHBOARD_HOST"] != "127.0.0.1" || genv["HERMES_DASHBOARD_PORT"] != "9119" {
+		t.Errorf("gateway should enable the loopback dashboard, env=%v", genv)
 	}
 	if sc := side.SecurityContext; sc == nil || sc.Capabilities == nil || len(sc.Capabilities.Add) != 0 ||
 		sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {

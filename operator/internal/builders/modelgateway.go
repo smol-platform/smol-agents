@@ -36,6 +36,19 @@ const (
 // uiEnabled reports whether the gateway opts its web UI into authenticated exposure.
 func uiEnabled(gw *amv1.ModelGateway) bool { return gw.Spec.UI != nil && gw.Spec.UI.Expose }
 
+// uiUpstreamPort resolves the in-pod port the auth-front proxies to: an explicit
+// spec.ui.upstreamPort, else the provider's UI/dashboard port, else the gateway
+// port.
+func uiUpstreamPort(gw *amv1.ModelGateway) int32 {
+	if gw.Spec.UI != nil && gw.Spec.UI.UpstreamPort > 0 {
+		return gw.Spec.UI.UpstreamPort
+	}
+	if p := profileFor(gw.Spec.Provider); p.uiUpstreamPort > 0 {
+		return p.uiUpstreamPort
+	}
+	return gw.Spec.EffectivePort()
+}
+
 // uiAuthKey is the htpasswd key within the auth Secret (default "htpasswd").
 func uiAuthKey(gw *amv1.ModelGateway) string {
 	if k := gw.Spec.UI.Auth.SecretRef.Key; k != "" {
@@ -57,6 +70,15 @@ type gatewayProfile struct {
 	// still drops ALL and adds back only these; nil = drop everything (Go services).
 	initCaps     []corev1.Capability
 	allowPrivEsc bool // the init's privilege-drop chain needs no_new_privs OFF
+	// uiUpstreamPort is the in-pod port the auth-front proxies to when spec.ui is
+	// enabled — the gateway's UI/dashboard, which may differ from the API port
+	// (hermes serves its dashboard on a separate 9119). 0 = use the gateway port.
+	uiUpstreamPort int32
+	// uiEnableEnv is the env the gateway container needs to actually serve its UI
+	// when spec.ui is enabled (hermes: turn the dashboard service on, loopback-
+	// bound so the operator's auth-front is the sole human gate). Empty = the UI is
+	// already served on the gateway port (no extra wiring).
+	uiEnableEnv []corev1.EnvVar
 }
 
 func hermesProfile() gatewayProfile {
@@ -70,6 +92,19 @@ func hermesProfile() gatewayProfile {
 		// unable to set supplementary group list: Operation not permitted" → crash).
 		initCaps:     []corev1.Capability{"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL", "SETPCAP"},
 		allowPrivEsc: true,
+		// The hermes dashboard is a separate s6 service on 9119, gated off by
+		// default. When spec.ui is exposed we turn it on and bind it to loopback —
+		// the dashboard's own OAuth gate disengages on loopback binds, so the
+		// operator's nginx basic-auth sidecar (proxying 127.0.0.1:9119) is the sole
+		// human gate. --insecure guarantees it starts without a registered OAuth
+		// provider (safe: it is only reachable through the authenticated sidecar).
+		uiUpstreamPort: 9119,
+		uiEnableEnv: []corev1.EnvVar{
+			{Name: "HERMES_DASHBOARD", Value: "1"},
+			{Name: "HERMES_DASHBOARD_HOST", Value: "127.0.0.1"},
+			{Name: "HERMES_DASHBOARD_PORT", Value: "9119"},
+			{Name: "HERMES_DASHBOARD_INSECURE", Value: "1"},
+		},
 		stdEnv: func(port int32) []corev1.EnvVar {
 			return []corev1.EnvVar{
 				{Name: "HERMES_HOME", Value: "/opt/data"},
@@ -139,7 +174,7 @@ func renderUINginxConf(gw *amv1.ModelGateway) string {
         proxy_read_timeout 3600s;
     }
 }
-`, gw.Spec.EffectiveUIPort(), gw.Spec.EffectivePort())
+`, gw.Spec.EffectiveUIPort(), uiUpstreamPort(gw))
 }
 
 // BuildModelGatewayDeployment renders the hardened gateway Deployment. class is
@@ -154,7 +189,11 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 		replicas = *gw.Spec.Replicas
 	}
 
-	env := append(p.stdEnv(port), modelGatewayUserEnv(gw)...)
+	env := p.stdEnv(port)
+	if uiEnabled(gw) {
+		env = append(env, p.uiEnableEnv...) // turn the provider's UI/dashboard on
+	}
+	env = append(env, modelGatewayUserEnv(gw)...) // user env wins (last)
 
 	dep := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},

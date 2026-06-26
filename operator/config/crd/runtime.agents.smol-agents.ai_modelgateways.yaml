@@ -72,6 +72,7 @@ spec:
                   properties:
                     expose: { type: boolean, description: 'Turn on the authenticated UI surface.' }
                     port: { type: integer, format: int32, minimum: 0, description: 'Auth-proxy listen / UI Service port (default 8643); must differ from the gateway port.' }
+                    upstreamPort: { type: integer, format: int32, minimum: 0, description: 'In-pod port the auth-front proxies to (the UI/dashboard). 0 = provider default (hermes: 9119), else the gateway port.' }
                     auth:
                       type: object
                       required: [mode]

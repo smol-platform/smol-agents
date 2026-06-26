@@ -70,6 +70,13 @@ type GatewayUISpec struct {
 	// Must differ from the gateway port. +kubebuilder:validation:Minimum=0 +optional
 	Port int32 `json:"port,omitempty"`
 
+	// UpstreamPort is the in-pod port the auth-front proxies to — the gateway's
+	// UI/dashboard, which may differ from the API port. 0 uses the provider default
+	// (hermes: the 9119 dashboard, which the operator also enables loopback-bound),
+	// falling back to the gateway port if the provider has none.
+	// +kubebuilder:validation:Minimum=0 +optional
+	UpstreamPort int32 `json:"upstreamPort,omitempty"`
+
 	// Auth selects how humans authenticate to the UI.
 	Auth GatewayUIAuth `json:"auth"`
 }
