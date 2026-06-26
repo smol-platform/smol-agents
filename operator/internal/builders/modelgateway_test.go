@@ -1,6 +1,7 @@
 package builders
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -129,7 +130,78 @@ func TestBuildModelGatewayServiceAndIngress(t *testing.T) {
 	if np.Spec.Ingress[0].From[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "tenant-a" {
 		t.Errorf("ingress should be confined to the gateway namespace: %+v", np.Spec.Ingress)
 	}
+	// Without UI exposure: only the gateway port, no UI service/endpoint.
+	if len(np.Spec.Ingress[0].Ports) != 1 {
+		t.Errorf("ingress should allow only the gateway port when UI off, got %d", len(np.Spec.Ingress[0].Ports))
+	}
+	if got := ModelGatewayUIEndpoint(gw); got != "" {
+		t.Errorf("UI endpoint should be empty when UI off, got %q", got)
+	}
 	if got := ModelGatewayEndpoint(gw); got != "http://mgw-hermes.tenant-a.svc:8642" {
 		t.Errorf("endpoint = %q", got)
+	}
+}
+
+func sampleGatewayWithUI() *amv1.ModelGateway {
+	gw := sampleGateway()
+	gw.Spec.UI = &pure.GatewayUISpec{
+		Expose: true,
+		Auth:   pure.GatewayUIAuth{Mode: "sharedSecret", SecretRef: &pure.AuthRef{SecretName: "hermes-ui-htpasswd"}},
+	}
+	return gw
+}
+
+func TestBuildModelGatewayUI(t *testing.T) {
+	gw := sampleGatewayWithUI()
+
+	// ConfigMap carries the rendered nginx server block.
+	cm := BuildModelGatewayConfigMap(gw)
+	conf := cm.Data["ui-nginx.conf"]
+	if conf == "" || !strings.Contains(conf, "listen 8643;") || !strings.Contains(conf, "proxy_pass http://127.0.0.1:8642;") {
+		t.Errorf("ui-nginx.conf missing/incorrect: %q", conf)
+	}
+	if !strings.Contains(conf, "auth_basic_user_file /etc/nginx/auth/.htpasswd;") {
+		t.Errorf("ui-nginx.conf should enforce basic-auth: %q", conf)
+	}
+
+	// Deployment gains the hardened auth sidecar + its two volumes.
+	dep := BuildModelGatewayDeployment(gw, "kata-fc")
+	var side *corev1.Container
+	for i := range dep.Spec.Template.Spec.Containers {
+		if dep.Spec.Template.Spec.Containers[i].Name == "ui-auth" {
+			side = &dep.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if side == nil {
+		t.Fatalf("expected a ui-auth sidecar, containers=%+v", dep.Spec.Template.Spec.Containers)
+	}
+	if side.Ports[0].ContainerPort != 8643 {
+		t.Errorf("ui sidecar port = %d, want 8643", side.Ports[0].ContainerPort)
+	}
+	if sc := side.SecurityContext; sc == nil || sc.Capabilities == nil || len(sc.Capabilities.Add) != 0 ||
+		sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Errorf("ui sidecar should be fully hardened (drop ALL, no add, no privesc): %+v", side.SecurityContext)
+	}
+	vols := map[string]bool{}
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		vols[v.Name] = true
+	}
+	if !vols["ui-config"] || !vols["ui-auth"] {
+		t.Errorf("ui volumes missing: %v", vols)
+	}
+
+	// Dedicated UI Service + endpoint.
+	uisvc := BuildModelGatewayUIService(gw)
+	if uisvc.Name != "mgw-hermes-ui" || uisvc.Spec.Ports[0].Port != 8643 {
+		t.Errorf("ui service name/port = %s/%d", uisvc.Name, uisvc.Spec.Ports[0].Port)
+	}
+	if got := ModelGatewayUIEndpoint(gw); got != "http://mgw-hermes-ui.tenant-a.svc:8643" {
+		t.Errorf("ui endpoint = %q", got)
+	}
+
+	// Ingress now allows the UI port too.
+	np := BuildModelGatewayIngress(gw)
+	if len(np.Spec.Ingress[0].Ports) != 2 {
+		t.Errorf("ingress should allow gateway + UI ports, got %d", len(np.Spec.Ingress[0].Ports))
 	}
 }

@@ -65,6 +65,26 @@ spec:
                         properties:
                           secretName: { type: string, minLength: 1 }
                           key: { type: string }
+                ui:
+                  type: object
+                  description: 'Expose the gateway web UI (e.g. the Hermes dashboard) to humans behind a platform-managed auth front. Off by default (the gateway port is machine-only).'
+                  required: [auth]
+                  properties:
+                    expose: { type: boolean, description: 'Turn on the authenticated UI surface.' }
+                    port: { type: integer, format: int32, minimum: 0, description: 'Auth-proxy listen / UI Service port (default 8643); must differ from the gateway port.' }
+                    auth:
+                      type: object
+                      required: [mode]
+                      description: 'Human-auth front for the UI.'
+                      properties:
+                        mode: { type: string, enum: [sharedSecret, oidc], description: 'sharedSecret = HTTP basic-auth from an htpasswd Secret (impl #1). oidc = bundled Dex/Keycloak (reserved, not yet implemented).' }
+                        secretRef:
+                          type: object
+                          description: 'Auth material. sharedSecret: a Secret whose key (default "htpasswd") holds htpasswd lines (user:bcrypt).'
+                          required: [secretName]
+                          properties:
+                            secretName: { type: string, minLength: 1 }
+                            key: { type: string }
             status:
               type: object
               description: Observed gateway state.
@@ -72,5 +92,6 @@ spec:
                 phase: { type: string, description: 'Pending | Ready | Failed.' }
                 observedGeneration: { type: integer }
                 endpoint: { type: string, description: 'In-cluster base URL agents point harness.http.url at (append the API path).' }
+                uiEndpoint: { type: string, description: 'In-cluster base URL of the authenticated UI Service (set only when ui.expose=true). Port-forward this to reach the dashboard.' }
                 reason: { type: string }
                 message: { type: string }

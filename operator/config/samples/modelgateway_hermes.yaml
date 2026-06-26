@@ -9,6 +9,12 @@
 # The RCE gateway runs under the operator's --default-run-runtime-class (kata-fc).
 # On a kataless cluster the operator needs --allow-host-runtime (it then runs runc
 # with the egress floor + ingress NetworkPolicy + dropped caps as the controls).
+#
+# spec.ui (h92.1) exposes the gateway's web UI (Hermes dashboard) to a human behind
+# an auth front. mode=sharedSecret reads an htpasswd Secret — create it with:
+#   htpasswd -nbB admin '<password>' > /tmp/htp && \
+#   kubectl -n tenant-a create secret generic hermes-ui-htpasswd --from-file=htpasswd=/tmp/htp; rm /tmp/htp
+# then reach it via: kubectl -n tenant-a port-forward svc/mgw-hermes-ui 8643:8643
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
 kind: ModelGateway
@@ -28,6 +34,12 @@ spec:
     - { name: HERMES_INFERENCE_MODEL, value: "glm-4.6" }
     - { name: GLM_API_KEY, secretRef: { secretName: zai-key, key: ZAI_API_KEY } }
     - { name: GLM_BASE_URL, value: "https://api.z.ai/api/coding/paas/v4" }
+  ui:
+    expose: true
+    port: 8643
+    auth:
+      mode: sharedSecret
+      secretRef: { secretName: hermes-ui-htpasswd, key: htpasswd }
 ---
 # An Agent that drives the operator-managed gateway. Point harness.http.url at the
 # gateway's Service — status.endpoint resolves to http://mgw-hermes.tenant-a.svc:8642.

@@ -80,6 +80,9 @@ func (r *ModelGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		builders.BuildEgressPolicyWithPlan(builders.ModelGatewayName(gw)+"-egress", gw.Namespace, "modelgateway", sel, plan.NetworkPlan{}),
 		builders.BuildModelGatewayIngress(gw),
 	}
+	if gw.Spec.UI != nil && gw.Spec.UI.Expose {
+		objs = append(objs, builders.BuildModelGatewayUIService(gw))
+	}
 	for _, o := range objs {
 		if err := r.ownAndApply(ctx, gw, o); err != nil {
 			return ctrl.Result{}, err
@@ -87,6 +90,7 @@ func (r *ModelGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	gw.Status.Endpoint = builders.ModelGatewayEndpoint(gw)
+	gw.Status.UIEndpoint = builders.ModelGatewayUIEndpoint(gw)
 
 	// Ready once the Deployment reports an available replica; otherwise Pending
 	// (the Owns(Deployment) watch re-reconciles on availability change).
