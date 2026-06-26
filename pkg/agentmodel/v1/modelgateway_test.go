@@ -21,6 +21,11 @@ func TestValidateModelGateway(t *testing.T) {
 		{"missing image", ModelGatewaySpec{Provider: "hermes"}, "image is required"},
 		{"env without name", ModelGatewaySpec{Provider: "hermes", Image: "x", Env: []HarnessEnvVar{{Value: "v"}}}, "env[0].name is required"},
 		{"env secretRef without secretName", ModelGatewaySpec{Provider: "hermes", Image: "x", Env: []HarnessEnvVar{{Name: "K", SecretRef: &AuthRef{}}}}, "secretRef.secretName is required"},
+		{"ui sharedSecret without secretRef", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "sharedSecret"}}}, "ui.auth.secretRef.secretName is required"},
+		{"ui oidc reserved", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "oidc"}}}, "oidc is not yet implemented"},
+		{"ui missing mode", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true}}, "ui.auth.mode is required"},
+		{"ui bad mode", ModelGatewaySpec{Provider: "hermes", Image: "x", UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "basic"}}}, "is invalid"},
+		{"ui port clashes with gateway port", ModelGatewaySpec{Provider: "hermes", Image: "x", Port: 8643, UI: &GatewayUISpec{Expose: true, Port: 8643, Auth: GatewayUIAuth{Mode: "sharedSecret", SecretRef: &AuthRef{SecretName: "s"}}}}, "ui.port must differ"},
 	}
 	for _, tc := range cases {
 		err := ValidateModelGateway(tc.s)
@@ -36,5 +41,19 @@ func TestModelGatewaySpec_EffectivePort(t *testing.T) {
 	}
 	if got := (ModelGatewaySpec{Provider: "hermes", Port: 9000}).EffectivePort(); got != 9000 {
 		t.Errorf("explicit port = %d, want 9000", got)
+	}
+}
+
+func TestModelGatewaySpec_EffectiveUIPort(t *testing.T) {
+	if got := (ModelGatewaySpec{}).EffectiveUIPort(); got != GatewayUIDefaultPort {
+		t.Errorf("default UI port = %d, want %d", got, GatewayUIDefaultPort)
+	}
+	if got := (ModelGatewaySpec{UI: &GatewayUISpec{Port: 9100}}).EffectiveUIPort(); got != 9100 {
+		t.Errorf("explicit UI port = %d, want 9100", got)
+	}
+	// A valid sharedSecret UI passes validation.
+	if err := ValidateModelGateway(ModelGatewaySpec{Provider: "hermes", Image: "x",
+		UI: &GatewayUISpec{Expose: true, Auth: GatewayUIAuth{Mode: "sharedSecret", SecretRef: &AuthRef{SecretName: "ui-htpasswd"}}}}); err != nil {
+		t.Errorf("valid sharedSecret UI rejected: %v", err)
 	}
 }

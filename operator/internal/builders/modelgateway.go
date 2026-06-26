@@ -1,6 +1,8 @@
 package builders
 
 import (
+	"fmt"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -21,7 +23,26 @@ const (
 	modelGatewayConfigVolume = "config"
 	modelGatewayDataVolume   = "data"
 	modelGatewayConfigPath   = "/config"
+
+	// UI auth-front (spec.ui): an nginx-unprivileged sidecar enforces basic-auth
+	// from an htpasswd Secret and proxies the gateway port on loopback (h92.1).
+	modelGatewayUIConfigVolume = "ui-config"
+	modelGatewayUIAuthVolume   = "ui-auth"
+	modelGatewayUINginxConf    = "ui-nginx.conf"
+	gatewayUIProxyImage        = "nginxinc/nginx-unprivileged:1.27-alpine"
+	gatewayUIAuthDefaultKey    = "htpasswd"
 )
+
+// uiEnabled reports whether the gateway opts its web UI into authenticated exposure.
+func uiEnabled(gw *amv1.ModelGateway) bool { return gw.Spec.UI != nil && gw.Spec.UI.Expose }
+
+// uiAuthKey is the htpasswd key within the auth Secret (default "htpasswd").
+func uiAuthKey(gw *amv1.ModelGateway) string {
+	if k := gw.Spec.UI.Auth.SecretRef.Key; k != "" {
+		return k
+	}
+	return gatewayUIAuthDefaultKey
+}
 
 // gatewayProfile carries the per-provider deployment conventions.
 type gatewayProfile struct {
@@ -89,11 +110,36 @@ func ModelGatewayEndpoint(gw *amv1.ModelGateway) string {
 // BuildModelGatewayConfigMap renders the gateway's config file into a ConfigMap.
 func BuildModelGatewayConfigMap(gw *amv1.ModelGateway) *corev1.ConfigMap {
 	p := profileFor(gw.Spec.Provider)
+	data := map[string]string{p.configIn: gw.Spec.Config}
+	if uiEnabled(gw) {
+		data[modelGatewayUINginxConf] = renderUINginxConf(gw)
+	}
 	return &corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: ModelGatewayName(gw), Namespace: gw.Namespace, Labels: modelGatewayLabels(gw)},
-		Data:       map[string]string{p.configIn: gw.Spec.Config},
+		Data:       data,
 	}
+}
+
+// renderUINginxConf is the auth-proxy server block: basic-auth (htpasswd) in
+// front of a loopback proxy to the gateway port. WebSocket upgrade is preserved
+// for dashboards that stream.
+func renderUINginxConf(gw *amv1.ModelGateway) string {
+	return fmt.Sprintf(`server {
+    listen %d;
+    location / {
+        auth_basic "smol-agents gateway";
+        auth_basic_user_file /etc/nginx/auth/.htpasswd;
+        proxy_pass http://127.0.0.1:%d;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+}
+`, gw.Spec.EffectiveUIPort(), gw.Spec.EffectivePort())
 }
 
 // BuildModelGatewayDeployment renders the hardened gateway Deployment. class is
@@ -175,7 +221,53 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 	if class != "" && class != "runc" {
 		dep.Spec.Template.Spec.RuntimeClassName = ptr.To(class)
 	}
+	if uiEnabled(gw) {
+		dep.Spec.Template.Spec.Containers = append(dep.Spec.Template.Spec.Containers, gatewayUISidecar(gw))
+		dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, uiVolumes(gw)...)
+	}
 	return dep
+}
+
+// gatewayUISidecar is the nginx-unprivileged basic-auth front: it listens on the
+// UI port, authenticates humans against the mounted htpasswd, and proxies the
+// gateway on loopback. It runs fully hardened (drop ALL caps, no privesc, nonroot
+// uid 101 — it binds a >1024 port).
+func gatewayUISidecar(gw *amv1.ModelGateway) corev1.Container {
+	uiPort := gw.Spec.EffectiveUIPort()
+	return corev1.Container{
+		Name:            "ui-auth",
+		Image:           gatewayUIProxyImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Ports:           []corev1.ContainerPort{{Name: "ui", ContainerPort: uiPort, Protocol: corev1.ProtocolTCP}},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler:  corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(int(uiPort))}},
+			PeriodSeconds: 10,
+		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("25m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("250m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
+		},
+		SecurityContext: hardenedGatewaySecurityContext(),
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: modelGatewayUIConfigVolume, MountPath: "/etc/nginx/conf.d"},
+			{Name: modelGatewayUIAuthVolume, MountPath: "/etc/nginx/auth", ReadOnly: true},
+		},
+	}
+}
+
+// uiVolumes mounts the rendered nginx server block (as conf.d/default.conf) and
+// the htpasswd Secret (as /etc/nginx/auth/.htpasswd) for the auth sidecar.
+func uiVolumes(gw *amv1.ModelGateway) []corev1.Volume {
+	return []corev1.Volume{
+		{Name: modelGatewayUIConfigVolume, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: ModelGatewayName(gw)},
+			Items:                []corev1.KeyToPath{{Key: modelGatewayUINginxConf, Path: "default.conf"}},
+		}}},
+		{Name: modelGatewayUIAuthVolume, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName: gw.Spec.UI.Auth.SecretRef.SecretName,
+			Items:      []corev1.KeyToPath{{Key: uiAuthKey(gw), Path: ".htpasswd"}},
+		}}},
+	}
 }
 
 // hardenedGatewaySecurityContext is the cheap container hardening a helper (the
@@ -216,11 +308,44 @@ func BuildModelGatewayService(gw *amv1.ModelGateway) *corev1.Service {
 	}
 }
 
+// BuildModelGatewayUIService renders the dedicated human-facing UI Service that
+// fronts the auth-proxy sidecar (rendered only when spec.ui.expose=true). It is a
+// surface distinct from the machine API Service — port-forward this to reach the
+// authenticated dashboard.
+func BuildModelGatewayUIService(gw *amv1.ModelGateway) *corev1.Service {
+	uiPort := gw.Spec.EffectiveUIPort()
+	return &corev1.Service{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{Name: ModelGatewayName(gw) + "-ui", Namespace: gw.Namespace, Labels: modelGatewayLabels(gw)},
+		Spec: corev1.ServiceSpec{
+			Selector: modelGatewaySelector(gw),
+			Ports:    []corev1.ServicePort{{Name: "ui", Port: uiPort, TargetPort: intstr.FromInt(int(uiPort)), Protocol: corev1.ProtocolTCP}},
+		},
+	}
+}
+
+// ModelGatewayUIEndpoint is the in-cluster base URL of the UI Service (empty
+// unless the UI is exposed).
+func ModelGatewayUIEndpoint(gw *amv1.ModelGateway) string {
+	if !uiEnabled(gw) {
+		return ""
+	}
+	return "http://" + ModelGatewayName(gw) + "-ui." + gw.Namespace + ".svc:" + itoa(gw.Spec.EffectiveUIPort())
+}
+
 // BuildModelGatewayIngress restricts ingress to the gateway port to pods in the
-// gateway's own namespace — the RCE gateway is not reachable cross-namespace.
+// gateway's own namespace — the RCE gateway is not reachable cross-namespace. When
+// the UI is exposed, the auth-proxy port is allowed on the same in-namespace terms
+// (a future ingress controller / oauth2-proxy lives in-namespace; port-forward
+// bypasses NetworkPolicy regardless).
 func BuildModelGatewayIngress(gw *amv1.ModelGateway) *networkingv1.NetworkPolicy {
 	tcp := corev1.ProtocolTCP
 	port := intstr.FromInt(int(gw.Spec.EffectivePort()))
+	ports := []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}}
+	if uiEnabled(gw) {
+		uiPort := intstr.FromInt(int(gw.Spec.EffectiveUIPort()))
+		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &uiPort})
+	}
 	return &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: ModelGatewayName(gw) + "-ingress", Namespace: gw.Namespace, Labels: modelGatewayLabels(gw)},
@@ -231,7 +356,7 @@ func BuildModelGatewayIngress(gw *amv1.ModelGateway) *networkingv1.NetworkPolicy
 				From: []networkingv1.NetworkPolicyPeer{{
 					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": gw.Namespace}},
 				}},
-				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
+				Ports: ports,
 			}},
 		},
 	}

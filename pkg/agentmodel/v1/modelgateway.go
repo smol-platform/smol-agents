@@ -50,6 +50,52 @@ type ModelGatewaySpec struct {
 	// Replicas is the gateway Deployment replica count (default 1). +optional
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// UI opts the gateway's web UI (e.g. the Hermes dashboard) into a human-facing,
+	// authenticated exposure. Off by default — the gateway port is machine-only
+	// (agents dial it cross-pod with a bearer token). +optional
+	UI *GatewayUISpec `json:"ui,omitempty"`
+}
+
+// GatewayUISpec exposes the gateway's web UI to humans behind a platform-managed
+// auth front. The operator renders an auth-proxy sidecar in front of the gateway
+// port plus a dedicated "<name>-ui" Service; a human reaches it via port-forward
+// (today) or a real ingress (later). Generic across providers (Hermes dashboard,
+// pi HTTP, …) — the gateway is unchanged; only the front is added.
+type GatewayUISpec struct {
+	// Expose turns on the authenticated UI surface. +optional
+	Expose bool `json:"expose,omitempty"`
+
+	// Port is the auth-proxy listen port (the UI Service port). 0 defaults to 8643.
+	// Must differ from the gateway port. +kubebuilder:validation:Minimum=0 +optional
+	Port int32 `json:"port,omitempty"`
+
+	// Auth selects how humans authenticate to the UI.
+	Auth GatewayUIAuth `json:"auth"`
+}
+
+// GatewayUIAuth is the human-auth front for the gateway UI.
+type GatewayUIAuth struct {
+	// Mode selects the auth front. "sharedSecret" = HTTP basic-auth from an
+	// htpasswd Secret (impl #1). "oidc" = platform-managed OIDC (bundled
+	// Dex/Keycloak per decision D9) — reserved, not yet implemented.
+	// +kubebuilder:validation:Enum=sharedSecret;oidc
+	Mode string `json:"mode"`
+
+	// SecretRef points at the auth material. For sharedSecret: a Secret whose key
+	// (default "htpasswd") holds one or more htpasswd lines (user:bcrypt). +optional
+	SecretRef *AuthRef `json:"secretRef,omitempty"`
+}
+
+// GatewayUIDefaultPort is the default auth-proxy listen port.
+const GatewayUIDefaultPort int32 = 8643
+
+// EffectiveUIPort resolves the UI auth-proxy listen port, defaulting to 8643.
+func (s ModelGatewaySpec) EffectiveUIPort() int32 {
+	if s.UI != nil && s.UI.Port > 0 {
+		return s.UI.Port
+	}
+	return GatewayUIDefaultPort
 }
 
 // ModelGatewayStatus is the observed gateway state.
@@ -63,6 +109,10 @@ type ModelGatewayStatus struct {
 	// (append the API path, e.g. /v1/chat/completions). Empty until the gateway
 	// Service is rendered. +optional
 	Endpoint string `json:"endpoint,omitempty"`
+	// UIEndpoint is the in-cluster base URL of the authenticated UI Service (set
+	// only when spec.ui.expose=true). Port-forward this to reach the dashboard.
+	// +optional
+	UIEndpoint string `json:"uiEndpoint,omitempty"`
 	// +optional
 	Reason string `json:"reason,omitempty"`
 	// +optional
@@ -106,6 +156,23 @@ func ValidateModelGateway(s ModelGatewaySpec) error {
 		}
 		if e.SecretRef != nil && strings.TrimSpace(e.SecretRef.SecretName) == "" {
 			errs = append(errs, fmt.Errorf("modelGateway.env[%d].secretRef.secretName is required", i))
+		}
+	}
+	if s.UI != nil && s.UI.Expose {
+		switch s.UI.Auth.Mode {
+		case "sharedSecret":
+			if s.UI.Auth.SecretRef == nil || strings.TrimSpace(s.UI.Auth.SecretRef.SecretName) == "" {
+				errs = append(errs, errors.New("modelGateway.ui.auth.secretRef.secretName is required for mode=sharedSecret"))
+			}
+		case "oidc":
+			errs = append(errs, errors.New("modelGateway.ui.auth.mode=oidc is not yet implemented (use sharedSecret)"))
+		case "":
+			errs = append(errs, errors.New("modelGateway.ui.auth.mode is required when ui.expose=true"))
+		default:
+			errs = append(errs, fmt.Errorf("modelGateway.ui.auth.mode=%q is invalid (sharedSecret|oidc)", s.UI.Auth.Mode))
+		}
+		if s.EffectiveUIPort() == s.EffectivePort() {
+			errs = append(errs, errors.New("modelGateway.ui.port must differ from the gateway port"))
 		}
 	}
 	return errors.Join(errs...)
