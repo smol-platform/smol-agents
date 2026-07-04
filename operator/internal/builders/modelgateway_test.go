@@ -262,6 +262,9 @@ func TestBuildModelGatewayUI_OIDCProxy(t *testing.T) {
 		"--client-id=hermes-dashboard", "--redirect-url=https://hermes.stigen.home/oauth2/callback",
 		"--upstream=http://127.0.0.1:9119", "--skip-oidc-discovery=true",
 		"--redeem-url=http://dex.dex.svc.cluster.local:5556/token",
+		// The loopback dashboard's DNS-rebind check rejects the browser Host;
+		// oauth2-proxy must rewrite it to the upstream (127.0.0.1) host.
+		"--pass-host-header=false",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("oauth2-proxy args missing %q; got %s", want, args)

@@ -315,9 +315,11 @@ func gatewayNginxSidecar(gw *amv1.ModelGateway) corev1.Container {
 
 // gatewayOIDCProxySidecar is the oidcProxy front: oauth2-proxy authenticates
 // humans against an OIDC IdP (cookie session) and proxies the dashboard on
-// loopback. The upstream is 127.0.0.1, so oauth2-proxy's default (rewrite the
-// upstream Host to the upstream URL's host = 127.0.0.1) satisfies the dashboard's
-// loopback Host check with no extra config.
+// loopback. oauth2-proxy defaults to --pass-host-header=true, which forwards the
+// browser's Host (e.g. hermes.example.com) to the upstream — the Hermes dashboard's
+// DNS-rebind defence rejects that with 400 ("Invalid Host header"). We set
+// --pass-host-header=false so the upstream Host becomes the upstream URL's host
+// (127.0.0.1:<port>, port-stripped to 127.0.0.1), satisfying the loopback check.
 func gatewayOIDCProxySidecar(gw *amv1.ModelGateway) corev1.Container {
 	uiPort := gw.Spec.EffectiveUIPort()
 	o := gw.Spec.UI.Auth.OIDC
@@ -335,6 +337,9 @@ func gatewayOIDCProxySidecar(gw *amv1.ModelGateway) corev1.Container {
 		"--email-domain=" + emailDomain,
 		"--cookie-secure=true",
 		"--reverse-proxy=true",
+		// Rewrite the upstream Host to 127.0.0.1 so the loopback-bound dashboard's
+		// DNS-rebind Host check accepts it (default true would pass the browser Host).
+		"--pass-host-header=false",
 		"--skip-provider-button=true",
 		"--scope=openid email profile",
 	}
