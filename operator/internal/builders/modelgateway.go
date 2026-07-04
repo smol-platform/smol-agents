@@ -2,6 +2,7 @@ package builders
 
 import (
 	"fmt"
+	"net/url"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +44,35 @@ func uiSharedSecret(gw *amv1.ModelGateway) bool {
 }
 func uiOIDCProxy(gw *amv1.ModelGateway) bool {
 	return uiEnabled(gw) && gw.Spec.UI.Auth.Mode == "oidcProxy"
+}
+
+// uiOIDCNative is the sidecar-less front: the gateway's own dashboard is the OIDC
+// RP (Hermes self_hosted PKCE). No auth-front container; the dashboard binds all
+// interfaces and gates itself.
+func uiOIDCNative(gw *amv1.ModelGateway) bool {
+	return uiEnabled(gw) && gw.Spec.UI.Auth.Mode == "oidcNative"
+}
+
+// uiHasSidecar reports whether the mode renders an auth-front sidecar (and thus a
+// dedicated UI port + UI Service targeting it). oidcNative has none — the UI
+// Service targets the dashboard port directly.
+func uiHasSidecar(gw *amv1.ModelGateway) bool {
+	return uiSharedSecret(gw) || uiOIDCProxy(gw)
+}
+
+// uiPublicURL is the dashboard's external base URL (scheme://host[:port]) — the
+// origin of the OIDC redirect URL. In native mode the dashboard advertises it as
+// HERMES_DASHBOARD_PUBLIC_URL so the IdP callback + cookie domain are correct.
+// Returns "" if the redirect URL is absent or malformed (validation rejects that).
+func uiPublicURL(gw *amv1.ModelGateway) string {
+	if gw.Spec.UI == nil || gw.Spec.UI.Auth.OIDC == nil {
+		return ""
+	}
+	u, err := url.Parse(gw.Spec.UI.Auth.OIDC.RedirectURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // uiUpstreamPort resolves the in-pod port the auth-front proxies to: an explicit
@@ -88,6 +118,12 @@ type gatewayProfile struct {
 	// bound so the operator's auth-front is the sole human gate). Empty = the UI is
 	// already served on the gateway port (no extra wiring).
 	uiEnableEnv []corev1.EnvVar
+	// uiNativeEnv is the env for mode=oidcNative: the dashboard serves on all
+	// interfaces and authenticates itself against the OIDC IdP (no auth-front
+	// sidecar). nil = the provider doesn't support native OIDC. issuer/clientID come
+	// from the CR; publicURL is the dashboard's external base URL (origin of the
+	// redirect URL) the IdP redirects back to.
+	uiNativeEnv func(dashPort int32, issuer, clientID, publicURL string) []corev1.EnvVar
 }
 
 func hermesProfile() gatewayProfile {
@@ -113,6 +149,22 @@ func hermesProfile() gatewayProfile {
 			{Name: "HERMES_DASHBOARD_HOST", Value: "127.0.0.1"},
 			{Name: "HERMES_DASHBOARD_PORT", Value: "9119"},
 			{Name: "HERMES_DASHBOARD_INSECURE", Value: "1"},
+		},
+		// oidcNative: the dashboard binds all interfaces and authenticates itself via
+		// Hermes' bundled self_hosted OIDC provider (auth-code + PKCE, public client).
+		// No --insecure: a registered OIDC provider engages the gate, so cookie +
+		// WS-ticket auth works for the real-time transport (chat/PTY/events). The
+		// plugin discovers endpoints from the issuer, so the issuer's OIDC endpoints
+		// must be reachable from the pod (not gated) — see the ModelGateway sample.
+		uiNativeEnv: func(dashPort int32, issuer, clientID, publicURL string) []corev1.EnvVar {
+			return []corev1.EnvVar{
+				{Name: "HERMES_DASHBOARD", Value: "1"},
+				{Name: "HERMES_DASHBOARD_HOST", Value: "0.0.0.0"},
+				{Name: "HERMES_DASHBOARD_PORT", Value: itoa(dashPort)},
+				{Name: "HERMES_DASHBOARD_PUBLIC_URL", Value: publicURL},
+				{Name: "HERMES_DASHBOARD_OIDC_ISSUER", Value: issuer},
+				{Name: "HERMES_DASHBOARD_OIDC_CLIENT_ID", Value: clientID},
+			}
 		},
 		stdEnv: func(port int32) []corev1.EnvVar {
 			return []corev1.EnvVar{
@@ -201,8 +253,12 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 	}
 
 	env := p.stdEnv(port)
-	if uiEnabled(gw) {
-		env = append(env, p.uiEnableEnv...) // turn the provider's UI/dashboard on
+	if uiOIDCNative(gw) && p.uiNativeEnv != nil {
+		// Native mode: the dashboard is its own OIDC RP (no auth-front sidecar).
+		o := gw.Spec.UI.Auth.OIDC
+		env = append(env, p.uiNativeEnv(uiUpstreamPort(gw), o.Issuer, o.ClientID, uiPublicURL(gw))...)
+	} else if uiEnabled(gw) {
+		env = append(env, p.uiEnableEnv...) // turn the provider's UI/dashboard on (proxied)
 	}
 	env = append(env, modelGatewayUserEnv(gw)...) // user env wins (last)
 
@@ -271,7 +327,7 @@ func BuildModelGatewayDeployment(gw *amv1.ModelGateway, class string) *appsv1.De
 	if class != "" && class != "runc" {
 		dep.Spec.Template.Spec.RuntimeClassName = ptr.To(class)
 	}
-	if uiEnabled(gw) {
+	if uiHasSidecar(gw) {
 		dep.Spec.Template.Spec.Containers = append(dep.Spec.Template.Spec.Containers, gatewayUISidecar(gw))
 		dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, uiVolumes(gw)...)
 	}
@@ -433,18 +489,24 @@ func BuildModelGatewayService(gw *amv1.ModelGateway) *corev1.Service {
 	}
 }
 
-// BuildModelGatewayUIService renders the dedicated human-facing UI Service that
-// fronts the auth-proxy sidecar (rendered only when spec.ui.expose=true). It is a
-// surface distinct from the machine API Service — port-forward this to reach the
-// authenticated dashboard.
+// BuildModelGatewayUIService renders the dedicated human-facing UI Service
+// (rendered only when spec.ui.expose=true), distinct from the machine API Service.
+// The advertised Port is stable (spec.ui.port, e.g. 8643) so upstreams (a CF tunnel
+// route) don't move between modes; only the TargetPort changes: the auth-front
+// sidecar for sharedSecret/oidcProxy, or the dashboard port directly for oidcNative
+// (no sidecar).
 func BuildModelGatewayUIService(gw *amv1.ModelGateway) *corev1.Service {
 	uiPort := gw.Spec.EffectiveUIPort()
+	targetPort := uiPort
+	if uiOIDCNative(gw) {
+		targetPort = uiUpstreamPort(gw) // the dashboard binds this directly (no sidecar)
+	}
 	return &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{Name: ModelGatewayName(gw) + "-ui", Namespace: gw.Namespace, Labels: modelGatewayLabels(gw)},
 		Spec: corev1.ServiceSpec{
 			Selector: modelGatewaySelector(gw),
-			Ports:    []corev1.ServicePort{{Name: "ui", Port: uiPort, TargetPort: intstr.FromInt(int(uiPort)), Protocol: corev1.ProtocolTCP}},
+			Ports:    []corev1.ServicePort{{Name: "ui", Port: uiPort, TargetPort: intstr.FromInt(int(targetPort)), Protocol: corev1.ProtocolTCP}},
 		},
 	}
 }
@@ -468,8 +530,14 @@ func BuildModelGatewayIngress(gw *amv1.ModelGateway) *networkingv1.NetworkPolicy
 	port := intstr.FromInt(int(gw.Spec.EffectivePort()))
 	ports := []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}}
 	if uiEnabled(gw) {
-		uiPort := intstr.FromInt(int(gw.Spec.EffectiveUIPort()))
-		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &uiPort})
+		// The pod receives UI traffic on the auth-front sidecar's port (sharedSecret/
+		// oidcProxy) or, in native mode, directly on the dashboard port (no sidecar).
+		uiPodPort := gw.Spec.EffectiveUIPort()
+		if uiOIDCNative(gw) {
+			uiPodPort = uiUpstreamPort(gw)
+		}
+		p := intstr.FromInt(int(uiPodPort))
+		ports = append(ports, networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &p})
 	}
 	return &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},

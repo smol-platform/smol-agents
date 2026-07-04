@@ -85,16 +85,19 @@ type GatewayUISpec struct {
 type GatewayUIAuth struct {
 	// Mode selects the auth front. "sharedSecret" = HTTP basic-auth from an
 	// htpasswd Secret. "oidcProxy" = an oauth2-proxy sidecar that authenticates
-	// humans against an OIDC IdP (bundled Dex/Keycloak per decision D9) — the
-	// platform-managed human-identity front, cookie-based.
-	// +kubebuilder:validation:Enum=sharedSecret;oidcProxy
+	// humans against an OIDC IdP (bundled Dex/Keycloak per decision D9), cookie-based.
+	// "oidcNative" = no sidecar; the gateway's own dashboard authenticates directly
+	// against the OIDC IdP (Hermes' bundled self_hosted PKCE provider). Native mode
+	// is required for dashboards whose real-time transport (WebSocket/SSE) only works
+	// under the gateway's own gated cookie session — a fronting proxy can't carry it.
+	// +kubebuilder:validation:Enum=sharedSecret;oidcProxy;oidcNative
 	Mode string `json:"mode"`
 
 	// SecretRef points at the auth material. For sharedSecret: a Secret whose key
 	// (default "htpasswd") holds one or more htpasswd lines (user:bcrypt). +optional
 	SecretRef *AuthRef `json:"secretRef,omitempty"`
 
-	// OIDC configures mode=oidcProxy (the oauth2-proxy sidecar). +optional
+	// OIDC configures mode=oidcProxy and mode=oidcNative. +optional
 	OIDC *GatewayUIOIDC `json:"oidc,omitempty"`
 }
 
@@ -108,11 +111,14 @@ type GatewayUIOIDC struct {
 	Issuer string `json:"issuer"`
 	// ClientID is the OIDC client id registered at the IdP.
 	ClientID string `json:"clientID"`
-	// RedirectURL is the public callback the IdP redirects back to, e.g.
-	// https://hermes.example.com/oauth2/callback.
+	// RedirectURL is the public callback the IdP redirects back to. oidcProxy:
+	// https://hermes.example.com/oauth2/callback. oidcNative: the dashboard's own
+	// callback https://hermes.example.com/auth/callback — the operator derives the
+	// dashboard's public base URL (HERMES_DASHBOARD_PUBLIC_URL) from its origin.
 	RedirectURL string `json:"redirectURL"`
 	// SecretRef is a Secret holding "client-secret" and "cookie-secret" keys.
-	SecretRef *AuthRef `json:"secretRef"`
+	// Required for oidcProxy; unused for oidcNative (a public PKCE client). +optional
+	SecretRef *AuthRef `json:"secretRef,omitempty"`
 	// LoginURL/RedeemURL/JWKSURL pin the OIDC endpoints (skips discovery). Set the
 	// back-channel ones to in-cluster URLs (e.g. http://dex.dex.svc:5556/token) so
 	// the proxy avoids the issuer's private-CA TLS. All-or-nothing. +optional
@@ -229,10 +235,29 @@ func ValidateModelGateway(s ModelGatewaySpec) error {
 					errs = append(errs, errors.New("modelGateway.ui.auth.oidc loginURL/redeemURL/jwksURL must be set together (or all empty for discovery)"))
 				}
 			}
+		case "oidcNative":
+			// The dashboard is its own OIDC RP (Hermes self_hosted PKCE, public
+			// client): needs issuer + clientID + a redirect URL (whose origin becomes
+			// HERMES_DASHBOARD_PUBLIC_URL). No client secret (public PKCE); no pinned
+			// back-channel (the plugin discovers endpoints from the issuer).
+			o := s.UI.Auth.OIDC
+			if o == nil {
+				errs = append(errs, errors.New("modelGateway.ui.auth.oidc is required for mode=oidcNative"))
+			} else {
+				if strings.TrimSpace(o.Issuer) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.issuer is required"))
+				}
+				if strings.TrimSpace(o.ClientID) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.clientID is required"))
+				}
+				if strings.TrimSpace(o.RedirectURL) == "" {
+					errs = append(errs, errors.New("modelGateway.ui.auth.oidc.redirectURL is required"))
+				}
+			}
 		case "":
 			errs = append(errs, errors.New("modelGateway.ui.auth.mode is required when ui.expose=true"))
 		default:
-			errs = append(errs, fmt.Errorf("modelGateway.ui.auth.mode=%q is invalid (sharedSecret|oidcProxy)", s.UI.Auth.Mode))
+			errs = append(errs, fmt.Errorf("modelGateway.ui.auth.mode=%q is invalid (sharedSecret|oidcProxy|oidcNative)", s.UI.Auth.Mode))
 		}
 		if s.EffectiveUIPort() == s.EffectivePort() {
 			errs = append(errs, errors.New("modelGateway.ui.port must differ from the gateway port"))

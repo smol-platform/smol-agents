@@ -78,7 +78,7 @@ spec:
                       required: [mode]
                       description: 'Human-auth front for the UI.'
                       properties:
-                        mode: { type: string, enum: [sharedSecret, oidcProxy], description: 'sharedSecret = HTTP basic-auth from an htpasswd Secret. oidcProxy = an oauth2-proxy sidecar against an OIDC IdP (bundled Dex/Keycloak per D9), cookie-based.' }
+                        mode: { type: string, enum: [sharedSecret, oidcProxy, oidcNative], description: 'sharedSecret = HTTP basic-auth from an htpasswd Secret. oidcProxy = an oauth2-proxy sidecar against an OIDC IdP (bundled Dex/Keycloak per D9), cookie-based. oidcNative = no sidecar; the gateway dashboard is its own OIDC RP (Hermes self_hosted PKCE) — required for dashboards whose real-time WebSocket/SSE transport needs the gateway''s own gated cookie session.' }
                         secretRef:
                           type: object
                           description: 'Auth material. sharedSecret: a Secret whose key (default "htpasswd") holds htpasswd lines (user:bcrypt).'
@@ -88,8 +88,8 @@ spec:
                             key: { type: string }
                         oidc:
                           type: object
-                          description: 'mode=oidcProxy config (the oauth2-proxy sidecar).'
-                          required: [issuer, clientID, redirectURL, secretRef]
+                          description: 'OIDC config for oidcProxy (oauth2-proxy sidecar) and oidcNative (dashboard self_hosted PKCE). secretRef is required for oidcProxy only — the operator enforces per-mode.'
+                          required: [issuer, clientID, redirectURL]
                           properties:
                             issuer: { type: string, minLength: 1, description: 'OIDC issuer URL (iss), e.g. https://dex.example.com.' }
                             clientID: { type: string, minLength: 1, description: 'OIDC client id registered at the IdP.' }
