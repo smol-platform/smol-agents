@@ -262,6 +262,9 @@ func TestBuildModelGatewayUI_OIDCProxy(t *testing.T) {
 		"--client-id=hermes-dashboard", "--redirect-url=https://hermes.stigen.home/oauth2/callback",
 		"--upstream=http://127.0.0.1:9119", "--skip-oidc-discovery=true",
 		"--redeem-url=http://dex.dex.svc.cluster.local:5556/token",
+		// The loopback dashboard's DNS-rebind check rejects the browser Host;
+		// oauth2-proxy must rewrite it to the upstream (127.0.0.1) host.
+		"--pass-host-header=false",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("oauth2-proxy args missing %q; got %s", want, args)
@@ -283,5 +286,79 @@ func TestBuildModelGatewayUI_OIDCProxy(t *testing.T) {
 		if v.Name == "ui-config" || v.Name == "ui-auth" {
 			t.Errorf("oidcProxy should not mount nginx volumes, found %s", v.Name)
 		}
+	}
+}
+
+func TestBuildModelGatewayUI_OIDCNative(t *testing.T) {
+	gw := sampleGateway()
+	gw.Spec.UI = &pure.GatewayUISpec{
+		Expose: true,
+		Auth: pure.GatewayUIAuth{Mode: "oidcNative", OIDC: &pure.GatewayUIOIDC{
+			Issuer: "https://dex.nixfleet.private.stigen.ai", ClientID: "hermes-dashboard",
+			RedirectURL: "https://hermes.nixfleet.private.stigen.ai/auth/callback",
+		}},
+	}
+
+	dep := BuildModelGatewayDeployment(gw, "kata-fc")
+
+	// Native mode renders NO auth-front sidecar — the dashboard gates itself.
+	for _, c := range dep.Spec.Template.Spec.Containers {
+		if c.Name == "ui-auth" {
+			t.Fatalf("oidcNative must not render a ui-auth sidecar")
+		}
+	}
+	// The gateway container serves the dashboard on all interfaces with the OIDC
+	// provider configured (gated mode) — and NOT --insecure/loopback.
+	var gwc *corev1.Container
+	for i := range dep.Spec.Template.Spec.Containers {
+		if dep.Spec.Template.Spec.Containers[i].Name == "gateway" {
+			gwc = &dep.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if gwc == nil {
+		t.Fatalf("no gateway container")
+	}
+	env := map[string]string{}
+	for _, e := range gwc.Env {
+		env[e.Name] = e.Value
+	}
+	want := map[string]string{
+		"HERMES_DASHBOARD":                "1",
+		"HERMES_DASHBOARD_HOST":           "0.0.0.0",
+		"HERMES_DASHBOARD_PORT":           "9119",
+		"HERMES_DASHBOARD_PUBLIC_URL":     "https://hermes.nixfleet.private.stigen.ai",
+		"HERMES_DASHBOARD_OIDC_ISSUER":    "https://dex.nixfleet.private.stigen.ai",
+		"HERMES_DASHBOARD_OIDC_CLIENT_ID": "hermes-dashboard",
+	}
+	for k, v := range want {
+		if env[k] != v {
+			t.Errorf("gateway env %s = %q, want %q", k, env[k], v)
+		}
+	}
+	if _, ok := env["HERMES_DASHBOARD_INSECURE"]; ok {
+		t.Errorf("oidcNative must not set HERMES_DASHBOARD_INSECURE (gated mode)")
+	}
+
+	// The UI Service keeps a stable advertised port but targets the dashboard
+	// directly (no sidecar to front it).
+	svc := BuildModelGatewayUIService(gw)
+	pt := svc.Spec.Ports[0]
+	if pt.Port != gw.Spec.EffectiveUIPort() {
+		t.Errorf("UI service Port = %d, want %d", pt.Port, gw.Spec.EffectiveUIPort())
+	}
+	if pt.TargetPort.IntValue() != 9119 {
+		t.Errorf("UI service TargetPort = %d, want 9119 (dashboard)", pt.TargetPort.IntValue())
+	}
+
+	// The ingress NP must admit the dashboard port (the pod's real UI listener).
+	np := BuildModelGatewayIngress(gw)
+	found := false
+	for _, p := range np.Spec.Ingress[0].Ports {
+		if p.Port != nil && p.Port.IntValue() == 9119 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("ingress NP must allow the dashboard port 9119; got %+v", np.Spec.Ingress[0].Ports)
 	}
 }

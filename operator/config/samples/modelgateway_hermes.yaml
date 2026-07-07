@@ -11,10 +11,31 @@
 # with the egress floor + ingress NetworkPolicy + dropped caps as the controls).
 #
 # spec.ui (h92.1) exposes the gateway's web UI (Hermes dashboard) to a human behind
-# an auth front. mode=sharedSecret reads an htpasswd Secret — create it with:
-#   htpasswd -nbB admin '<password>' > /tmp/htp && \
-#   kubectl -n tenant-a create secret generic hermes-ui-htpasswd --from-file=htpasswd=/tmp/htp; rm /tmp/htp
-# then reach it via: kubectl -n tenant-a port-forward svc/mgw-hermes-ui 8643:8643
+# an auth front. Three auth modes:
+#
+#   mode=sharedSecret — HTTP basic-auth from an htpasswd Secret (shown below).
+#     htpasswd -nbB admin '<password>' > /tmp/htp && \
+#     kubectl -n tenant-a create secret generic hermes-ui-htpasswd --from-file=htpasswd=/tmp/htp; rm /tmp/htp
+#     Reach it via: kubectl -n tenant-a port-forward svc/mgw-hermes-ui 8643:8643
+#
+#   mode=oidcProxy — an oauth2-proxy sidecar in front of the dashboard, cookie
+#     session against an OIDC IdP (bundled Dex/Keycloak). Needs oidc + a Secret
+#     with client-secret + cookie-secret keys.
+#
+#   mode=oidcNative (h92.5, live-proven on nixfleet) — NO sidecar; the Hermes
+#     dashboard is its own OIDC RP (bundled self_hosted PKCE, public client, no
+#     secret). REQUIRED when the dashboard's real-time transport (chat/PTY/events
+#     WebSockets) must work — the loopback+proxy shape 403s those routes. The IdP
+#     must be reachable from the pod (the plugin discovers endpoints from the
+#     issuer). Example ui block:
+#       ui:
+#         expose: true
+#         auth:
+#           mode: oidcNative
+#           oidc:
+#             issuer: https://dex.nixfleet.private.stigen.ai
+#             clientID: hermes-dashboard
+#             redirectURL: https://hermes.nixfleet.private.stigen.ai/auth/callback
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
 kind: ModelGateway
