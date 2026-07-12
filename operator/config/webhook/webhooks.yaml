@@ -1,4 +1,7 @@
 ---
+# CA bundle is filled in by cert-manager (or a custom issuer) at install
+# time via the cert-manager.io/inject-ca-from annotation. For self-managed
+# installs replace ${CA_BUNDLE} with your CA before applying.
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,67 +19,6 @@ spec:
       port: 443
       targetPort: 9443
       protocol: TCP
----
-# CA bundle is filled in by cert-manager (or a custom issuer) at install
-# time via the cert-manager.io/inject-ca-from annotation. For self-managed
-# installs replace ${CA_BUNDLE} with your CA before applying.
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: smol-agents-operator-validating
-  annotations:
-    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
-webhooks:
-  - name: validate.smolagent.agents.smol-agents.ai
-    sideEffects: None
-    admissionReviewVersions: [v1]
-    failurePolicy: Fail
-    clientConfig:
-      service:
-        name: smol-agents-operator-webhook
-        namespace: smol-agents-system
-        path: /validate-agents-smol-agents-ai-v1-smolagent
-    rules:
-      - apiGroups: [agents.smol-agents.ai]
-        apiVersions: [v1]
-        resources: [smolagents]
-        operations: [CREATE, UPDATE]
-  - name: validate.smolagentplatform.agents.smol-agents.ai
-    sideEffects: None
-    admissionReviewVersions: [v1]
-    failurePolicy: Fail
-    clientConfig:
-      service:
-        name: smol-agents-operator-webhook
-        namespace: smol-agents-system
-        path: /validate-agents-smol-agents-ai-v1-smolagentplatform
-    rules:
-      - apiGroups: [agents.smol-agents.ai]
-        apiVersions: [v1]
-        resources: [smolagentplatforms]
-        operations: [CREATE, UPDATE]
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: smol-agents-operator-mutating
-  annotations:
-    cert-manager.io/inject-ca-from: smol-agents-system/smol-agents-operator-serving-cert
-webhooks:
-  - name: default.smolagent.agents.smol-agents.ai
-    sideEffects: None
-    admissionReviewVersions: [v1]
-    failurePolicy: Fail
-    clientConfig:
-      service:
-        name: smol-agents-operator-webhook
-        namespace: smol-agents-system
-        path: /mutate-agents-smol-agents-ai-v1-smolagent
-    rules:
-      - apiGroups: [agents.smol-agents.ai]
-        apiVersions: [v1]
-        resources: [smolagents]
-        operations: [CREATE, UPDATE]
 ---
 # AgentNetwork validating webhook — enforces the transport-mutex
 # at admission time. Same rules as ValidateAgentNetwork() in

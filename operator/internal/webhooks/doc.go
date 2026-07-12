@@ -1,7 +1,6 @@
-// Package webhooks holds the operator's admission webhooks.
-//
-//   - smolagent_webhook.go    — validating + defaulting for tenant CRs.
-//   - smolagentplatform.go    — validating for platform singleton.
+// Package webhooks holds the operator's admission webhooks for the
+// agent-model CRD family (AgentNetwork, AgentPolicy, AgentSession,
+// AgentTeam, AgentWorkflow, Tool, ...).
 //
 // Implementations are pure functions with no client dependency, plus
 // thin sigs.k8s.io/controller-runtime adapters that call them. This
