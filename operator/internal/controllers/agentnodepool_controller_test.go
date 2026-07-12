@@ -1,13 +1,9 @@
 package controllers
 
 import (
-	"context"
 	"testing"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
 )
@@ -53,53 +49,30 @@ func TestAgentNodePool_setCondition_UpsertStableTimestamp(t *testing.T) {
 	}
 }
 
-// stubPlatformClient is a minimal client.Client that answers Get for the
-// singleton platform — enough to test resolveDefaults without envtest.
-type stubPlatformClient struct {
-	client.Client
-	platform *v1.SmolAgentPlatform
-}
+func TestAgentNodePool_resolveDefaults_FromSpec(t *testing.T) {
+	anp := &v1.AgentNodePool{}
+	anp.Spec.AMIFamily = "Custom"
+	anp.Spec.Role = "KarpenterNodeRole-k0s"
+	anp.Spec.SubnetSelectorTags = map[string]string{"karpenter.sh/discovery": "k0s"}
+	anp.Spec.JoinUserData = "#!/bin/bash\nk0s install worker\n"
+	anp.Spec.BaseAMISelector = []v1.AMISelectorTerm{{Tags: map[string]string{"k0s-join": "true"}}}
 
-func (s stubPlatformClient) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
-	if s.platform == nil {
-		return apierrors.NewNotFound(schema.GroupResource{
-			Group: "agents.smol-agents.ai", Resource: "smolagentplatforms",
-		}, key.Name)
-	}
-	if p, ok := obj.(*v1.SmolAgentPlatform); ok {
-		s.platform.DeepCopyInto(p)
-	}
-	return nil
-}
-
-func TestAgentNodePool_resolveDefaults_FromPlatform(t *testing.T) {
-	plat := &v1.SmolAgentPlatform{}
-	plat.Name = "default"
-	plat.Spec.NodeProvisioning = v1.NodeProvisioningSpec{
-		AMIFamily:          "Custom",
-		Role:               "KarpenterNodeRole-k0s",
-		SubnetSelectorTags: map[string]string{"karpenter.sh/discovery": "k0s"},
-		JoinUserData:       "#!/bin/bash\nk0s install worker\n",
-		BaseAMISelector:    []v1.AMISelectorTerm{{Tags: map[string]string{"k0s-join": "true"}}},
-	}
-	r := &AgentNodePoolReconciler{Client: stubPlatformClient{platform: plat}, PlatformName: "default"}
-
-	d := r.resolveDefaults(context.Background())
+	d := resolveDefaults(anp)
 	if d.Role != "KarpenterNodeRole-k0s" || d.JoinUserData == "" || len(d.BaseAMISelector) != 1 {
-		t.Errorf("defaults not sourced from platform: %+v", d)
+		t.Errorf("defaults not sourced from spec: %+v", d)
 	}
 	if d.SubnetSelectorTags["karpenter.sh/discovery"] != "k0s" {
 		t.Errorf("subnet tags = %v", d.SubnetSelectorTags)
 	}
 }
 
-func TestAgentNodePool_resolveDefaults_PlatformAbsent(t *testing.T) {
-	r := &AgentNodePoolReconciler{Client: stubPlatformClient{}, PlatformName: "default"}
-	d := r.resolveDefaults(context.Background())
+func TestAgentNodePool_resolveDefaults_SpecEmpty(t *testing.T) {
+	anp := &v1.AgentNodePool{}
+	d := resolveDefaults(anp)
 	if d.AMIFamily != "Custom" {
-		t.Errorf("absent platform should still default amiFamily=Custom, got %q", d.AMIFamily)
+		t.Errorf("empty spec should still default amiFamily=Custom, got %q", d.AMIFamily)
 	}
 	if d.Role != "" {
-		t.Errorf("absent platform should yield empty role, got %q", d.Role)
+		t.Errorf("empty spec should yield empty role, got %q", d.Role)
 	}
 }
