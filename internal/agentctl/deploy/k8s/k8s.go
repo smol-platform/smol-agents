@@ -36,8 +36,7 @@ func (*Target) Validate(o *deploy.Options) error {
 }
 
 // Deploy: connect → detect autoscalers → render manifests → apply CRDs +
-// wait Established → apply rest + wait operator → apply SmolAgentPlatform
-// (+ optional sample).
+// wait Established → apply rest + wait operator (+ optional sample).
 func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	out := o.Common.Out
 	c, disc, cfg, err := connect(o)
@@ -117,15 +116,10 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 		return fmt.Errorf("operator not Ready: %w", err)
 	}
 
-	fmt.Fprintf(out, "==> Applying SmolAgentPlatform (so SmolAgents don't stay PlatformAbsent)\n")
-	if err := applySampleFile(ctx, c, out, o, "smolagentplatform.yaml"); err != nil {
-		return fmt.Errorf("apply platform: %w", err)
-	}
-
 	if o.Common.Sample != "" {
 		f, ok := sampleFileFor(o.Common.Sample)
 		if !ok {
-			return fmt.Errorf("unknown --sample %q (one of: minimal, full, claude-code, codex, pi, hermes)", o.Common.Sample)
+			return fmt.Errorf("unknown --sample %q (one of: claude-code, codex, pi, hermes)", o.Common.Sample)
 		}
 		fmt.Fprintf(out, "==> Applying sample agent (%s)\n", f)
 		if err := applySampleFile(ctx, c, out, o, f); err != nil {
@@ -134,13 +128,13 @@ func (*Target) Deploy(ctx context.Context, o *deploy.Options) error {
 	}
 
 	fmt.Fprintf(out, "==> Deployment complete\n")
-	fmt.Fprintf(out, "    next:  kubectl --context=%q get smolagentplatform,smolagent -A\n", contextName(o))
+	fmt.Fprintf(out, "    next:  kubectl --context=%q get agents -A\n", contextName(o))
 	return nil
 }
 
-// Teardown deletes whatever the manifests describe, plus the platform CR (and
-// any sample CR if --sample was given on this invocation). CRDs go last so
-// dependent CRs vanish first.
+// Teardown deletes whatever the manifests describe, plus any sample CR if
+// --sample was given on this invocation. CRDs go last so dependent CRs
+// vanish first.
 func (*Target) Teardown(ctx context.Context, o *deploy.Options) error {
 	out := o.Common.Out
 	c, _, _, err := connect(o)
@@ -156,9 +150,9 @@ func (*Target) Teardown(ctx context.Context, o *deploy.Options) error {
 		return err
 	}
 
-	// Also remove the platform CR (and any sample) we may have applied. We
-	// best-effort delete via name lookups — if they don't exist, ignore.
-	extra := []string{"smolagentplatform.yaml"}
+	// Also remove any sample we may have applied. We best-effort delete via
+	// name lookups — if it doesn't exist, ignore.
+	var extra []string
 	if o.Common.Sample != "" {
 		if f, ok := sampleFileFor(o.Common.Sample); ok {
 			extra = append(extra, f)
@@ -235,10 +229,6 @@ func findRepoRoot() (string, error) {
 // operator/config/samples/.
 func sampleFileFor(name string) (string, bool) {
 	switch name {
-	case "minimal":
-		return "smolagent_minimal.yaml", true
-	case "full":
-		return "smolagent_full.yaml", true
 	case "claude-code":
 		return "agent_claude_code.yaml", true
 	case "codex":

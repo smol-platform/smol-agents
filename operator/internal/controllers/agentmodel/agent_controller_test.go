@@ -346,8 +346,7 @@ func TestReconcile_LoopAgent_ProviderRefMissing_StaysPending(t *testing.T) {
 }
 
 // Reconciling an Agent must create the ServiceAccount that AgentRun pods run
-// as (the platform SmolAgent controller used to be the only creator, leaving
-// runtime-only flows broken at pod-create time).
+// as, so pod-create doesn't fail with "service account not found".
 func TestReconcile_CreatesServiceAccount_WithOwnerRef(t *testing.T) {
 	a := harnessAgent("alice", "tenant-a")
 	r := newAgentReconcilerForTest(t, a)

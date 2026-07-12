@@ -1,9 +1,0 @@
-# Minimal tenant agent — every feature on its default state.
-apiVersion: agents.smol-agents.ai/v1
-kind: SmolAgent
-metadata:
-  name: hello
-  namespace: tenant-a
-spec:
-  trustDomain: smol-agents.ai
-  mode: strict

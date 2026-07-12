@@ -18,7 +18,7 @@ import (
 )
 
 // GroupVersion is `runtime.agents.smol-agents.ai/v1`. We use a different
-// group from the operator's `agents.smol-agents.ai/v1` (SmolAgent) so
+// group from the operator's `agents.smol-agents.ai/v1` (AgentNodePool) so
 // the two specs evolve independently.
 var GroupVersion = schema.GroupVersion{Group: "runtime.agents.smol-agents.ai", Version: "v1"}
 

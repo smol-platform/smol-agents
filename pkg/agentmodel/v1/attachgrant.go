@@ -28,7 +28,7 @@ const (
 )
 
 type AttachGrantSpec struct {
-	// AgentRef is the Agent (or SmolAgent) in THIS namespace the grant authorizes
+	// AgentRef is the Agent in THIS namespace the grant authorizes
 	// attach to. Cross-namespace references are rejected (no cross-tenant grant).
 	AgentRef string `json:"agentRef"`
 	// Subject is the human identity (OIDC subject / email) the grant is for.

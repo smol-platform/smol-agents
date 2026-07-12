@@ -77,6 +77,12 @@ spec:
 
               Implements R-PROV-1, R-PROV-3, R-PROV-4.
             properties:
+              amiFamily:
+                default: Custom
+                description: |-
+                  AMIFamily for the generated EC2NodeClass. "Custom" on k0s (we own all
+                  userData).
+                type: string
               arch:
                 default: arm64
                 description: Arch constrains the node architecture.
@@ -84,6 +90,24 @@ spec:
                 - arm64
                 - amd64
                 type: string
+              baseAMISelector:
+                description: |-
+                  BaseAMISelector is the existing join-capable image, used for the
+                  UserData bootstrap mode (kata appended at boot).
+                items:
+                  description: AMISelectorTerm mirrors a Karpenter EC2NodeClass
+                    amiSelectorTerm.
+                  properties:
+                    alias:
+                      type: string
+                    id:
+                      type: string
+                    tags:
+                      additionalProperties:
+                        type: string
+                      type: object
+                  type: object
+                type: array
               bootstrap:
                 description: Bootstrap selects how the kata layer is delivered to
                   the node.
@@ -165,6 +189,11 @@ spec:
                 - gvisor
                 - runc
                 type: string
+              joinUserData:
+                description: |-
+                  JoinUserData is the existing deployment's node-join snippet (k0s
+                  worker-join + providerID) the kata layer is appended to.
+                type: string
               provider:
                 default: Karpenter
                 description: |-
@@ -193,6 +222,21 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              role:
+                description: Role is the node IAM role name set on the generated
+                  EC2NodeClass.
+                type: string
+              securityGroupSelectorTags:
+                additionalProperties:
+                  type: string
+                description: |-
+                  SubnetSelectorTags / SecurityGroupSelectorTags drive Karpenter's
+                  subnet + security-group discovery.
+                type: object
+              subnetSelectorTags:
+                additionalProperties:
+                  type: string
+                type: object
               thinPool:
                 description: ThinPool configures the devmapper thin-pool kata-fc needs.
                 properties:

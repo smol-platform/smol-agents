@@ -192,8 +192,7 @@ type AgentNodePoolList struct {
 	Items           []AgentNodePool `json:"items"`
 }
 
-// Hand-rolled DeepCopy — follows the SmolAgentPlatform precedent in
-// this package (these cluster-scoped types are not in zz_generated).
+// Hand-rolled DeepCopy — this cluster-scoped type is not in zz_generated.
 
 func (in *AgentNodePool) DeepCopyInto(out *AgentNodePool) {
 	*out = *in
