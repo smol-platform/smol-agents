@@ -2,6 +2,7 @@ package agentmodel
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/pkg/agentnet/plan"
 )
@@ -112,6 +114,41 @@ func TestEnsureRunEgressPolicy(t *testing.T) {
 	}
 }
 
+// knative-agents-1c5: ensureRunEgressPolicy must correct an already-stored
+// NetworkPolicy whose Spec has drifted from the freshly-recomputed desired
+// Spec (e.g. a since-tightened AgentNetwork), not silently keep the stale
+// object the way the prior create-only behavior did.
+func TestEnsureRunEgressPolicy_UpdatesDrift(t *testing.T) {
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a1", Namespace: "tenant-a"}}
+	// Pre-create the egress NetworkPolicy with a stale Spec: an extra allow-CIDR
+	// the current (bound-network-less) desired policy does not grant.
+	stale := builders.BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+	stale.Spec.Egress = append(stale.Spec.Egress, networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "198.51.100.0/24"}}},
+	})
+	r := sandboxReconciler(t, nil, run, stale)
+
+	if err := r.ensureRunEgressPolicy(context.Background(), run, agent, &corev1.Pod{}); err != nil {
+		t.Fatalf("ensureRunEgressPolicy: %v", err)
+	}
+	var np networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: "r1-egress"}, &np); err != nil {
+		t.Fatalf("egress NetworkPolicy: %v", err)
+	}
+	want := builders.BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+	if !reflect.DeepEqual(np.Spec, want.Spec) {
+		t.Errorf("stored Spec not corrected to desired:\ngot  %+v\nwant %+v", np.Spec, want.Spec)
+	}
+	for _, rule := range np.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil && peer.IPBlock.CIDR == "198.51.100.0/24" {
+				t.Errorf("stale allow-CIDR 198.51.100.0/24 survived the update")
+			}
+		}
+	}
+}
+
 // rv1.2: on a non-enforcing CNI (the operator default) the run still creates
 // the egress NetworkPolicy but reports "unenforced" — not pretending containment.
 func TestEnsureRunEgressPolicy_UnenforcedCNI(t *testing.T) {
@@ -149,6 +186,58 @@ func TestEgressEnforcementLabel(t *testing.T) {
 	}
 	if got := egressEnforcementLabel(withAllow, false); got != "unenforced" {
 		t.Errorf("plan with allow rules (non-enforcing) = %q, want unenforced", got)
+	}
+}
+
+// knative-agents-8s1: ensureRunIngressPolicy creates the run's same-namespace
+// ingress floor alongside (not instead of) the egress cage, owned by the run.
+func TestEnsureRunIngressPolicy(t *testing.T) {
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	r := sandboxReconciler(t, nil, run)
+
+	if err := r.ensureRunIngressPolicy(context.Background(), run); err != nil {
+		t.Fatalf("ensureRunIngressPolicy: %v", err)
+	}
+	var np networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: "r1-ingress"}, &np); err != nil {
+		t.Fatalf("ingress NetworkPolicy not created: %v", err)
+	}
+	if len(np.OwnerReferences) == 0 || np.OwnerReferences[0].Name != "r1" {
+		t.Errorf("ingress NP not owned by the run: %+v", np.OwnerReferences)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("policyTypes = %v, want [Ingress]", np.Spec.PolicyTypes)
+	}
+	// Idempotent (update-in-place, like ensureRunEgressPolicy — knative-agents-1c5).
+	if err := r.ensureRunIngressPolicy(context.Background(), run); err != nil {
+		t.Fatalf("second ensureRunIngressPolicy: %v", err)
+	}
+}
+
+// knative-agents-1c5: ensureRunIngressPolicy must correct an already-stored
+// NetworkPolicy whose Spec has drifted from the desired same-namespace-only
+// floor, not silently keep the stale object.
+func TestEnsureRunIngressPolicy_UpdatesDrift(t *testing.T) {
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	// Pre-create the ingress NetworkPolicy with a stale/wrong Spec: no
+	// PolicyTypes set, as if from a broken prior write — the update must fix it.
+	stale := builders.BuildAgentRunIngressPolicy(run)
+	stale.Spec.PolicyTypes = nil
+	r := sandboxReconciler(t, nil, run, stale)
+
+	if err := r.ensureRunIngressPolicy(context.Background(), run); err != nil {
+		t.Fatalf("ensureRunIngressPolicy: %v", err)
+	}
+	var np networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: "r1-ingress"}, &np); err != nil {
+		t.Fatalf("ingress NetworkPolicy: %v", err)
+	}
+	want := builders.BuildAgentRunIngressPolicy(run)
+	if !reflect.DeepEqual(np.Spec, want.Spec) {
+		t.Errorf("stored Spec not corrected to desired:\ngot  %+v\nwant %+v", np.Spec, want.Spec)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("policyTypes = %v, want [Ingress] (drift not corrected)", np.Spec.PolicyTypes)
 	}
 }
 

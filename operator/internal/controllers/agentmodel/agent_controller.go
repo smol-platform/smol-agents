@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -35,6 +36,13 @@ type AgentReconciler struct {
 	// admission-refused unless its URL is in this set — arbitrary tenant stdio is
 	// denied fail-closed. http(s) MCP is unaffected. Empty = no stdio permitted.
 	AllowedStdioMCP map[string]bool
+	// PlatformAgentPolicy names an existing AgentPolicy (any namespace) that
+	// serves as the platform-wide governance floor (knative-agents-7dm, D1): a
+	// namespace with no AgentPolicy of its own — or only policies that
+	// constrain nothing — is checked against this baseline instead of falling
+	// open. Zero value (empty Name) disables the fallback: today's behavior,
+	// unchanged. Set from --platform-agent-policy.
+	PlatformAgentPolicy types.NamespacedName
 }
 
 // SetupWithManager wires the controller. We Own ServiceAccount so the
@@ -166,9 +174,18 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// Enforce namespace AgentPolicy allow-lists at reconcile time (the
 	// belt-and-suspenders backstop to the admission webhook): a disallowed
 	// resolved provider or tool flips the Agent to Failed/PolicyViolation. A
-	// transient list error fails open (we don't strand a valid Agent on an
-	// apiserver hiccup); a tightened policy re-enqueues dependents via Watches.
-	if eff, err := effectivePolicyFor(ctx, r.Client, agent.Namespace); err == nil && !eff.Empty {
+	// transient list error now fails CLOSED (knative-agents-2mi): we hold the
+	// Agent Pending/PolicyUnavailable and requeue rather than let it reach
+	// Ready without having been checked against the namespace policy — an
+	// apiserver hiccup must not silently bypass governance. A tightened policy
+	// re-enqueues dependents via Watches.
+	eff, err := effectivePolicyFor(ctx, r.Client, agent.Namespace, r.PlatformAgentPolicy)
+	if err != nil {
+		r.setStatus(agent, "Pending", "PolicyUnavailable",
+			fmt.Sprintf("could not read namespace AgentPolicy: %v", err))
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.Status().Update(ctx, agent)
+	}
+	if !eff.Empty {
 		if providerName != "" && !eff.AllowsProvider(agent.Spec.Model.ProviderRef) {
 			r.setStatus(agent, "Failed", "PolicyViolation",
 				fmt.Sprintf("provider %q is not in the AgentPolicy allow-list", agent.Spec.Model.ProviderRef))

@@ -3,7 +3,9 @@ package agentmodel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -13,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
@@ -85,6 +88,78 @@ func TestAgentReconciler_PolicyGate_DeniesDisallowedProvider(t *testing.T) {
 	got := reconcileAgent(t, r, "tenant-a", "alice")
 	if got.Status.Phase != "Failed" || got.Status.Reason != "PolicyViolation" {
 		t.Fatalf("want Failed/PolicyViolation, got %q/%q (%s)", got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
+// knative-agents-2mi: a transient AgentPolicy List error at reconcile must
+// fail CLOSED — the Agent is held Pending/PolicyUnavailable and requeued,
+// never allowed to reach Ready without having been checked against the
+// namespace policy (a prior bug fell through to Ready on the err!=nil path).
+func TestAgentReconciler_PolicyGate_ListErrorHoldsPendingNotReady(t *testing.T) {
+	agent := loopAgent("carol", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+
+	sch := runtime.NewScheme()
+	if err := corev1.AddToScheme(sch); err != nil {
+		t.Fatalf("corev1 scheme: %v", err)
+	}
+	if err := amv1.AddToScheme(sch); err != nil {
+		t.Fatalf("amv1 scheme: %v", err)
+	}
+	if err := rbacv1.AddToScheme(sch); err != nil {
+		t.Fatalf("rbacv1 scheme: %v", err)
+	}
+	base := fake.NewClientBuilder().
+		WithScheme(sch).
+		WithObjects(agent, provider).
+		WithStatusSubresource(&amv1.Agent{}).
+		Build()
+	// Only AgentPolicyList reads fail — everything else (ServiceAccount lookups
+	// etc.) goes through untouched, so this isolates the policy-gate path.
+	ic := interceptor.NewClient(base, interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*amv1.AgentPolicyList); ok {
+				return fmt.Errorf("simulated apiserver hiccup")
+			}
+			return c.List(ctx, list, opts...)
+		},
+	})
+	r := &AgentReconciler{Client: ic, Scheme: sch}
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "tenant-a", Name: "carol"}})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.RequeueAfter != 30*time.Second {
+		t.Errorf("want RequeueAfter=30s on a transient policy-list error, got %v", res.RequeueAfter)
+	}
+	got := &amv1.Agent{}
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: "carol"}, got); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status.Phase != "Pending" || got.Status.Reason != "PolicyUnavailable" {
+		t.Fatalf("want Pending/PolicyUnavailable on AgentPolicy list error (fail closed), got %q/%q (%s)",
+			got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
+// knative-agents-7dm: with a platform baseline configured, the reconcile
+// backstop marks Failed/PolicyViolation against the baseline even though the
+// Agent's own namespace has no AgentPolicy at all — closing the same hole as
+// the admission-side TestAgentPolicyGate_BaselineDeniesOutsideAllowList.
+func TestAgentReconciler_PolicyGate_BaselineDeniesInPolicyLessNamespace(t *testing.T) {
+	agent := loopAgent("dave", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	baseline := &amv1.AgentPolicy{ObjectMeta: metav1.ObjectMeta{Name: "floor", Namespace: "platform"},
+		Spec: pure.AgentPolicySpec{AllowedProviders: []string{"openai"}}}
+
+	// tenant-a has NO AgentPolicy of its own.
+	r := newAgentReconcilerForTest(t, agent, provider, baseline)
+	r.PlatformAgentPolicy = types.NamespacedName{Namespace: "platform", Name: "floor"}
+	got := reconcileAgent(t, r, "tenant-a", "dave")
+	if got.Status.Phase != "Failed" || got.Status.Reason != "PolicyViolation" {
+		t.Fatalf("want Failed/PolicyViolation against the baseline, got %q/%q (%s)",
+			got.Status.Phase, got.Status.Reason, got.Status.Message)
 	}
 }
 

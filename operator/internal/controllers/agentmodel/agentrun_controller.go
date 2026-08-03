@@ -106,6 +106,17 @@ type AgentRunReconciler struct {
 	// "unenforced" on status (rv1.2) since CNIs like kindnet silently no-op it.
 	// Set true (--cni-enforces-networkpolicy) on Cilium/Calico/eBPF clusters.
 	CNIEnforcesNetworkPolicy bool
+	// RequireEgressEnforcement fails closed (D3, knative-agents-7p3) instead of
+	// only reporting: when true, a run with a BOUND AgentNetwork on a CNI that
+	// cannot enforce NetworkPolicy (CNIEnforcesNetworkPolicy false) is held
+	// Pending/EgressUnenforced rather than scheduled uncaged. The bare default
+	// egress floor with no bound AgentNetwork is never gated — see the
+	// Reconcile gate's comment. Default false (strictly opt-in) so existing
+	// kind/CI clusters keep working unchanged. Set from
+	// --require-egress-enforcement. Admission-time only: it does not
+	// retroactively stall an already-running pod — see Reconcile's post-phase-
+	// switch comment (knative-agents-1c5) for why.
+	RequireEgressEnforcement bool
 	// MaxConcurrentReconciles bounds parallel run reconciles (default 1).
 	MaxConcurrentReconciles int
 	// RunDeadlineMultiplier scales the run's wall-clock budget into the pod's
@@ -132,6 +143,12 @@ type AgentRunReconciler struct {
 	// ResultSinkClient POSTs result CloudEvents to an Agent's spec.resultSink (wbb).
 	// nil → a default 5s-timeout client (so a slow sink never stalls reconcile).
 	ResultSinkClient *http.Client
+	// PlatformAgentPolicy names the platform-wide baseline AgentPolicy
+	// (knative-agents-7dm, D1), threaded into compileNamespaceRedaction so a
+	// policy-less namespace's status redaction also honors the baseline's
+	// patterns. See AgentReconciler.PlatformAgentPolicy for the full semantics.
+	// Zero value disables the fallback. Set from --platform-agent-policy.
+	PlatformAgentPolicy types.NamespacedName
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -146,10 +163,14 @@ func (r *AgentRunReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&amv1.AgentRun{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Pod{}).
 		Owns(&networkingv1.NetworkPolicy{}).
-		// Re-reconcile bound runs when their AgentNetwork changes (M1.16) so a
-		// not-yet-scheduled run picks up the new egress cage. A run whose pod is
-		// already created keeps its NetworkPolicy (ensureRunEgressPolicy is
-		// create-only) — a running run is not re-caged mid-flight.
+		// Re-reconcile every non-terminal bound run when its AgentNetwork changes
+		// (M1.16) so it picks up the new egress cage — whether still pre-Pod
+		// (RunPrepPending / SandboxNotReady / … retries) or already Running.
+		// knative-agents-1c5: the ensure helpers are update-in-place (not
+		// create-only) and Reconcile calls them on BOTH paths, so a tightened
+		// AgentNetwork re-cages a live pod, not just a still-queued run. A
+		// currently-broken AgentNetwork does not fail a live run — see the
+		// post-switch call site.
 		Watches(&amv1.AgentNetwork{}, handler.EnqueueRequestsFromMapFunc(r.runsForNetwork)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: mc}).
 		Complete(r)
@@ -262,6 +283,32 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if reason := dangerFlagViolation(agent, sbClass); reason != "" {
 			r.markTerminal(run, pure.PhaseFailed, "sandbox:"+reason)
 			return r.updateRunStatus(ctx, run, ctrl.Result{})
+		}
+
+		// Fail-closed egress-enforcement gate (knative-agents-7p3, D3), opt-in via
+		// --require-egress-enforcement. Without it, a run bound to an
+		// AgentNetwork on a non-enforcing CNI (CNIEnforcesNetworkPolicy false)
+		// still gets scheduled — the egress NetworkPolicy is created but the CNI
+		// silently no-ops it, so the run executes uncaged with the gap visible
+		// only as status.EgressEnforcement="unenforced". With the flag on, hold
+		// the run Pending instead. The trigger is "a bound AgentNetwork exists"
+		// (netPlan.Networks, the same field resolveBoundNetworks/
+		// egressEnforcementLabel already populate for status) — NOT the presence
+		// of allow rules: a wireguardMesh (or nil-proxy) bound network
+		// contributes no AllowRules to the plan (see plan.BuildNetworkPlan) but
+		// is still a real binding the author intended to restrict egress with,
+		// so gating only on AllowRules would silently miss it. The bare default
+		// floor with NO bound AgentNetwork is deliberately NOT gated — it is
+		// defense-in-depth applied to every run, and blocking every run on every
+		// non-enforcing cluster would make the flag unusable. A NetworkPlan
+		// compose error is left for ensureRunEgressPolicy below to classify
+		// (NetworkConflict/NetworkDatapathUnwired) rather than duplicated here.
+		if r.RequireEgressEnforcement && !r.CNIEnforcesNetworkPolicy {
+			if netPlan, nerr := resolveBoundNetworks(ctx, r.Client, agent); nerr == nil && len(netPlan.Networks) > 0 {
+				r.markPending(run, "EgressUnenforced",
+					fmt.Sprintf("bound AgentNetwork(s) %v need egress enforcement the CNI cannot provide (--require-egress-enforcement)", netPlan.Networks))
+				return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
+			}
 		}
 
 		// Resolve node placement for the sandbox class. A KVM class with no
@@ -384,6 +431,12 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, fmt.Errorf("ensure egress policy: %w", err)
 		}
 
+		// Cage ingress: same-namespace-only floor closes the cross-namespace
+		// tenant-boundary hole (knative-agents-8s1, D1) before the pod schedules.
+		if err := r.ensureRunIngressPolicy(ctx, run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure ingress policy: %w", err)
+		}
+
 		if err := ctrl.SetControllerReference(run, desired, r.Scheme); err != nil {
 			return ctrl.Result{}, fmt.Errorf("set controller ref: %w", err)
 		}
@@ -422,6 +475,61 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.markTerminal(run, pure.PhaseFailed, terminationReason(pod))
 		r.foldRunResult(ctx, run, agent, pod)
 		r.foldArtifacts(run, pod)
+	}
+
+	// Re-cage the live pod in place (knative-agents-1c5). The AgentNetwork Watch
+	// re-enqueues every non-terminal bound run, so recompute + reapply the cage
+	// here too — otherwise a tightened AgentNetwork never reaches a pod that
+	// already exists. Gated AFTER the phase switch so a run whose terminal
+	// transition is folded on THIS reconcile is already excluded.
+	if !run.Status.State.Terminal() {
+		if err := r.ensureRunEgressPolicy(ctx, run, agent, pod); err != nil {
+			// A broken bound AgentNetwork is fatal pre-Pod (nothing spent yet)
+			// but NOT here: the pod is already running and billing, so flipping
+			// it Pending/Failed stops nothing and just lets an unrelated
+			// AgentNetwork typo collaterally kill a live agent. Not fail-open —
+			// both sentinels return before the Spec is touched, so the pod stays
+			// caged by the (at-least-as-tight) policy it was admitted under.
+			if errors.Is(err, ErrNetworkConflict) || errors.Is(err, ErrNetworkDatapathUnwired) {
+				reason := "NetworkConflict"
+				if errors.Is(err, ErrNetworkDatapathUnwired) {
+					reason = "NetworkDatapathUnwired"
+				}
+				logger.Info("bound AgentNetwork unappliable to a live run; keeping its existing cage",
+					"reason", reason, "error", err)
+				run.Status.Reason = reason
+			} else {
+				return ctrl.Result{}, fmt.Errorf("re-cage egress policy: %w", err)
+			}
+		} else {
+			if run.Status.Reason == "NetworkConflict" || run.Status.Reason == "NetworkDatapathUnwired" {
+				// Resolves cleanly again — clear the marker, which markRunning only
+				// does on a Pending→Running edge, not on a steady-state reconcile.
+				run.Status.Reason = ""
+			}
+			// RequireEgressEnforcement (knative-agents-7p3) is an ADMISSION-time
+			// control only — see the pre-Pod gate above. It never retroactively
+			// stalls or kills an already-running pod: the pod is already running
+			// and billing, so flipping it Pending/Failed here would stop nothing,
+			// exactly the ErrNetworkConflict carve-out's reasoning above. Instead
+			// this mirrors that carve-out's shape: when a live run's bound-network
+			// egress is (still, or newly) unenforceable, surface it on Reason,
+			// observability-only, never on State — set/cleared each reconcile as
+			// the condition comes and goes, without disturbing any more specific
+			// Reason (e.g. "PodPending") already occupying the field.
+			egressUnenforced := r.RequireEgressEnforcement && !r.CNIEnforcesNetworkPolicy && len(run.Status.Networks) > 0
+			switch {
+			case egressUnenforced && run.Status.Reason == "":
+				run.Status.Reason = "EgressUnenforced"
+			case !egressUnenforced && run.Status.Reason == "EgressUnenforced":
+				run.Status.Reason = ""
+			}
+		}
+		// The ingress floor has no AgentNetwork dependency, so it re-applies
+		// regardless of the egress sentinel handling above.
+		if err := r.ensureRunIngressPolicy(ctx, run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("re-cage ingress policy: %w", err)
+		}
 	}
 
 	// poll Pod state every 5s until terminal
@@ -768,20 +876,36 @@ func (r *AgentRunReconciler) resolveRunSandbox(ctx context.Context, agent *amv1.
 	return resolveSandbox(ctx, r.Client, agent.Spec.Sandbox.RuntimeClass, r.DefaultRunRuntimeClass, r.AllowHostRuntime)
 }
 
-// ensureRunEgressPolicy creates the run pod's default-deny egress NetworkPolicy
-// (idempotent), owned by the run so it is GC'd with it.
+// ensureRunEgressPolicy creates or UPDATES the run pod's default-deny egress
+// NetworkPolicy (idempotent), owned by the run so it is GC'd with it.
+// knative-agents-1c5: update-in-place (not create-only) so a recomputed cage
+// — e.g. a tightened AgentNetwork allow-list, or a newly-added M1.18
+// apiserver rule — actually lands instead of being silently discarded
+// against a stale stored Spec. Security direction: this can only make an
+// in-flight run's egress cage MORE restrictive on a given reconcile than
+// what it had before, never less, since the desired Spec is always freshly
+// recomputed from the bound AgentNetwork (fail-closed governance, D3). See
+// SetupWithManager's Watch comment for the scope of when this actually fires
+// during a run's lifecycle: called both before the run's Pod exists (in the
+// create path below) AND on every reconcile of an already-Pod'd, non-terminal
+// run (after the "map Pod phase" switch) — so a bound AgentNetwork is now
+// re-applied for the run's whole live span, not just once at admission.
 func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent, pod *corev1.Pod) error {
 	netPlan, err := resolveBoundNetworks(ctx, r.Client, agent)
 	if err != nil {
-		return err // may wrap ErrNetworkConflict; the caller maps it to Pending
+		// May wrap ErrNetworkConflict. The pre-Pod caller maps that to
+		// Pending; the post-Pod (live-run) caller does NOT — see its comment
+		// — it keeps the run Running and its existing NetworkPolicy as-is.
+		return err
 	}
 	// Surface the egress posture for observability (M1.19): the bound network
 	// names + whether a tightened allow-list applies on top of the floor.
 	run.Status.Networks = netPlan.Networks
 	run.Status.EgressEnforcement = egressEnforcementLabel(netPlan, r.CNIEnforcesNetworkPolicy)
 	// Wire-or-gate the Tier-2 seam (c5r.20): a bound network needing the unwired
-	// proxy/eBPF datapath fails closed (caller maps ErrNetworkDatapathUnwired to
-	// Failed) rather than caging the run with its requested enforcement dropped.
+	// proxy/eBPF datapath fails closed. The pre-Pod caller maps
+	// ErrNetworkDatapathUnwired to Failed; the post-Pod (live-run) caller does
+	// not (same carve-out as ErrNetworkConflict above).
 	if err := checkTier2Wired(netPlan); err != nil {
 		return err
 	}
@@ -793,15 +917,40 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 	if rule := apiserverEgressRule(ctx, r.Client); rule != nil {
 		np.Spec.Egress = append(np.Spec.Egress, *rule)
 	}
+	return r.ensureNetworkPolicy(ctx, run, np)
+}
+
+// ensureRunIngressPolicy creates or UPDATES the run pod's same-namespace-only
+// ingress NetworkPolicy (idempotent; a separate function from
+// ensureRunEgressPolicy purely because the two seams — egress plan
+// resolution vs. a fixed same-namespace floor — differ, not because of any
+// create-vs-update split; both now share ensureNetworkPolicy), owned by the
+// run so it is GC'd with it (knative-agents-8s1: without this, a run pod is
+// reachable from any pod in any namespace, a tenant-boundary hole under D1).
+func (r *AgentRunReconciler) ensureRunIngressPolicy(ctx context.Context, run *amv1.AgentRun) error {
+	np := builders.BuildAgentRunIngressPolicy(run)
+	return r.ensureNetworkPolicy(ctx, run, np)
+}
+
+// ensureNetworkPolicy creates or UPDATES a run's owned NetworkPolicy (egress
+// or ingress) in place, mirroring AgentSessionReconciler.ensureNetworkPolicy.
+// knative-agents-1c5: update-in-place replaces the prior create-only
+// behavior, under which a recomputed desired Spec (from a mutated
+// AgentNetwork) was thrown away once the object already existed.
+func (r *AgentRunReconciler) ensureNetworkPolicy(ctx context.Context, run *amv1.AgentRun, np *networkingv1.NetworkPolicy) error {
 	if err := ctrl.SetControllerReference(run, np, r.Scheme); err != nil {
 		return err
 	}
-	var existing networkingv1.NetworkPolicy
-	err = r.Get(ctx, types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, &existing)
+	existing := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(np), existing)
 	if apierrors.IsNotFound(err) {
 		return r.Create(ctx, np)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	existing.Spec = np.Spec
+	return r.Update(ctx, existing)
 }
 
 // readSecret fetches one key from a k8s Secret (the sole key when key is empty).
@@ -928,7 +1077,7 @@ func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentR
 	// unredacted; rr.Error is the harness's own error text and is redacted when
 	// the harness kind is CLI (subprocess env holds the provider credential —
 	// not agent-blind — so an auth failure can echo it verbatim).
-	pats := compileNamespaceRedaction(ctx, r.Client, run.Namespace)
+	pats := compileNamespaceRedaction(ctx, r.Client, run.Namespace, r.PlatformAgentPolicy)
 	run.Status.Output = pure.RedactJSON(rr.Output, pats)
 	run.Status.Steps = pure.RedactSteps(rr.Steps, pats)
 	run.Status.Usage = rr.Usage
