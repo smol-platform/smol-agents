@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	v1 "github.com/smol-platform/smol-agents/operator/api/v1"
@@ -58,6 +60,7 @@ func main() {
 	var allowedStdioMCP string
 	var embeddedNATS bool
 	var embeddedNATSStore string
+	var platformAgentPolicy string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8443", "metrics endpoint")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "health/readiness probe address")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true, "enable leader election")
@@ -92,6 +95,10 @@ func main() {
 		"run an in-process NATS+JetStream server in the operator pod (requires a -tags=embeddednats build) so a self-host needs no separate NATS; used for session/team delivery when -session-nats-url is empty (7fr.7)")
 	flag.StringVar(&embeddedNATSStore, "embedded-nats-store", os.Getenv("EMBEDDED_NATS_STORE"),
 		"JetStream file-store dir for the embedded NATS (a PVC mount); empty = in-memory (non-durable)")
+	flag.StringVar(&platformAgentPolicy, "platform-agent-policy", "",
+		"<namespace>/<name> of an existing AgentPolicy to use as the platform-wide governance floor (knative-agents-7dm, D1); "+
+			"applied only to a namespace whose own AgentPolicies constrain nothing (a namespace with its own policy owns it outright, "+
+			"never blended with the baseline). Empty = no baseline (today's behavior, unchanged).")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -99,6 +106,24 @@ func main() {
 	// The A2A recursion ceiling reaches the run-pod builder via env (M3.5).
 	if a2aMaxDepth > 0 {
 		_ = os.Setenv("SMOL_AGENTS_A2A_MAX_DEPTH", strconv.Itoa(a2aMaxDepth))
+	}
+
+	// --platform-agent-policy names the governance-floor AgentPolicy
+	// (knative-agents-7dm, D1) as "<namespace>/<name>", parsed once into the
+	// NamespacedName threaded through the webhook + reconcilers below. A
+	// malformed non-empty value is a startup fatal, not a silent no-baseline
+	// fallback: an operator who set this flag believes the platform has a
+	// governance floor, so a typo must not silently leave every policy-less
+	// namespace ungoverned.
+	var platformBaseline types.NamespacedName
+	if platformAgentPolicy != "" {
+		ns, name, ok := strings.Cut(platformAgentPolicy, "/")
+		if !ok || ns == "" || name == "" {
+			setupLog.Error(fmt.Errorf("want <namespace>/<name>, got %q", platformAgentPolicy),
+				"invalid --platform-agent-policy")
+			os.Exit(1)
+		}
+		platformBaseline = types.NamespacedName{Namespace: ns, Name: name}
 	}
 
 	// Optional in-process NATS+JetStream (7fr.7): a lighter self-host then needs
@@ -165,7 +190,8 @@ func main() {
 	// runtime.agents.smol-agents.ai/v1 — agent-model CRDs.
 	if err := (&agentmodel.AgentReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
-		AllowedStdioMCP: parseAllowList(allowedStdioMCP),
+		AllowedStdioMCP:     parseAllowList(allowedStdioMCP),
+		PlatformAgentPolicy: platformBaseline,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register Agent controller")
 		os.Exit(1)
@@ -181,6 +207,7 @@ func main() {
 		DefaultNamespaceRunConcurrency: int32(defaultNamespaceRunConcurrency),
 		EnableAdmissionQueue:           enableAdmissionQueue,
 		MaxPriority:                    int32(maxRunPriority),
+		PlatformAgentPolicy:            platformBaseline,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to register AgentRun controller")
 		os.Exit(1)
@@ -252,7 +279,7 @@ func main() {
 			setupLog.Error(err, "unable to register AgentNetwork webhook")
 			os.Exit(1)
 		}
-		if err := webhooks.SetupAgentPolicyGateWebhook(mgr, defaultRunRuntimeClass); err != nil {
+		if err := webhooks.SetupAgentPolicyGateWebhook(mgr, defaultRunRuntimeClass, platformBaseline); err != nil {
 			setupLog.Error(err, "unable to register AgentPolicy gate webhook")
 			os.Exit(1)
 		}

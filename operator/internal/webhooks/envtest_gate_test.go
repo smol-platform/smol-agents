@@ -14,6 +14,7 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -130,7 +131,8 @@ func TestEnvtest_ClaudeWriteRuntimeWarning(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 	// runc default mirrors a kataless dev cluster — the posture the warning exists for.
-	if err := SetupAgentPolicyGateWebhook(mgr, "runc"); err != nil {
+	// No platform baseline configured (zero value) — pre-7dm behavior.
+	if err := SetupAgentPolicyGateWebhook(mgr, "runc", types.NamespacedName{}); err != nil {
 		t.Fatalf("SetupAgentPolicyGateWebhook: %v", err)
 	}
 

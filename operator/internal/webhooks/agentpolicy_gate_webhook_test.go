@@ -8,6 +8,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -100,6 +101,35 @@ func TestAgentPolicyGate_FailOpenNoPolicies(t *testing.T) {
 	a.Spec.Model = pure.ModelRef{ProviderRef: "anything", Name: "m"}
 	if err := g.checkAgent(context.Background(), a); err != nil {
 		t.Fatalf("no policies must fail open, got %v", err)
+	}
+}
+
+// knative-agents-7dm: the hole TestAgentPolicyGate_FailOpenNoPolicies proves
+// is now closed when a platform baseline is configured — a namespace with no
+// AgentPolicy of its own is checked against the baseline instead of falling
+// open.
+func TestAgentPolicyGate_BaselineDeniesOutsideAllowList(t *testing.T) {
+	baseline := &amv1.AgentPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "floor", Namespace: "platform"},
+		Spec:       pure.AgentPolicySpec{AllowedProviders: []string{"openai"}},
+	}
+	sch := runtime.NewScheme()
+	if err := amv1.AddToScheme(sch); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	c := fake.NewClientBuilder().WithScheme(sch).WithObjects(baseline).Build()
+	g := &agentPolicyGate{client: c, baseline: types.NamespacedName{Namespace: "platform", Name: "floor"}}
+
+	// "t" has no AgentPolicy of its own — pre-7dm this admitted anything.
+	bad := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	bad.Spec.Model = pure.ModelRef{ProviderRef: "anthropic", Name: "m"}
+	if err := g.checkAgent(context.Background(), bad); err == nil || !apierrors.IsInvalid(err) {
+		t.Fatalf("provider outside the baseline allow-list must be Invalid, got %v", err)
+	}
+	good := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	good.Spec.Model = pure.ModelRef{ProviderRef: "openai", Name: "m"}
+	if err := g.checkAgent(context.Background(), good); err != nil {
+		t.Fatalf("provider inside the baseline allow-list must pass: %v", err)
 	}
 }
 

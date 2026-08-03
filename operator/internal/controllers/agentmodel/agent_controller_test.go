@@ -143,6 +143,26 @@ func TestAgentReconciler_PolicyGate_ListErrorHoldsPendingNotReady(t *testing.T) 
 	}
 }
 
+// knative-agents-7dm: with a platform baseline configured, the reconcile
+// backstop marks Failed/PolicyViolation against the baseline even though the
+// Agent's own namespace has no AgentPolicy at all — closing the same hole as
+// the admission-side TestAgentPolicyGate_BaselineDeniesOutsideAllowList.
+func TestAgentReconciler_PolicyGate_BaselineDeniesInPolicyLessNamespace(t *testing.T) {
+	agent := loopAgent("dave", "tenant-a", "anthropic")
+	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}
+	baseline := &amv1.AgentPolicy{ObjectMeta: metav1.ObjectMeta{Name: "floor", Namespace: "platform"},
+		Spec: pure.AgentPolicySpec{AllowedProviders: []string{"openai"}}}
+
+	// tenant-a has NO AgentPolicy of its own.
+	r := newAgentReconcilerForTest(t, agent, provider, baseline)
+	r.PlatformAgentPolicy = types.NamespacedName{Namespace: "platform", Name: "floor"}
+	got := reconcileAgent(t, r, "tenant-a", "dave")
+	if got.Status.Phase != "Failed" || got.Status.Reason != "PolicyViolation" {
+		t.Fatalf("want Failed/PolicyViolation against the baseline, got %q/%q (%s)",
+			got.Status.Phase, got.Status.Reason, got.Status.Message)
+	}
+}
+
 func TestAgentReconciler_PolicyGate_AllowsConformingProvider(t *testing.T) {
 	agent := loopAgent("bob", "tenant-a", "anthropic")
 	provider := &amv1.ModelProvider{ObjectMeta: metav1.ObjectMeta{Name: "anthropic", Namespace: "tenant-a"}}

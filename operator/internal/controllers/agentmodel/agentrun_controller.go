@@ -132,6 +132,12 @@ type AgentRunReconciler struct {
 	// ResultSinkClient POSTs result CloudEvents to an Agent's spec.resultSink (wbb).
 	// nil → a default 5s-timeout client (so a slow sink never stalls reconcile).
 	ResultSinkClient *http.Client
+	// PlatformAgentPolicy names the platform-wide baseline AgentPolicy
+	// (knative-agents-7dm, D1), threaded into compileNamespaceRedaction so a
+	// policy-less namespace's status redaction also honors the baseline's
+	// patterns. See AgentReconciler.PlatformAgentPolicy for the full semantics.
+	// Zero value disables the fallback. Set from --platform-agent-policy.
+	PlatformAgentPolicy types.NamespacedName
 }
 
 // SetupWithManager wires the controller; Owns(Pod) so we react to Pod
@@ -928,7 +934,7 @@ func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentR
 	// unredacted; rr.Error is the harness's own error text and is redacted when
 	// the harness kind is CLI (subprocess env holds the provider credential —
 	// not agent-blind — so an auth failure can echo it verbatim).
-	pats := compileNamespaceRedaction(ctx, r.Client, run.Namespace)
+	pats := compileNamespaceRedaction(ctx, r.Client, run.Namespace, r.PlatformAgentPolicy)
 	run.Status.Output = pure.RedactJSON(rr.Output, pats)
 	run.Status.Steps = pure.RedactSteps(rr.Steps, pats)
 	run.Status.Usage = rr.Usage
