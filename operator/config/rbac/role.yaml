@@ -57,11 +57,18 @@ rules:
     resources: [pods]
     verbs: [get, list, watch, create, update, patch, delete]
 
-  # AgentNetwork resolves broker secrets to fail fast; AgentRun generates a
-  # per-run broker config Secret (static backend + policy).
+  # AgentNetwork/DynamicCredentialBackend resolve referenced secrets by NAME
+  # ONLY to fail fast (there is no SecretList anywhere in the operator);
+  # AgentRun generates a per-run broker config Secret (static backend +
+  # policy). knative-agents-5jy: `list`/`watch` were dropped — the manager
+  # deliberately does NOT cache/watch Secrets cluster-wide (see
+  # client.Options.Cache.DisableFor in operator/cmd/manager/main.go), so do
+  # not add list/watch back "to make Get() fast" — that would silently
+  # re-open a cluster-wide Secret informer that reads every Secret in the
+  # cluster into operator memory.
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, list, watch, create]
+    verbs: [get, create]
 
   # Identity feature
   - apiGroups: [""]
@@ -99,12 +106,24 @@ rules:
     resources: [services]
     verbs: [get, list, watch, create, update, patch, delete]
 
-  # eBPF loader RBAC subjects (cluster-scoped) + per-Agent A2A Role/RoleBinding
-  # (namespaced, M3.6). The manager already holds agentruns verbs (above), so
-  # granting an A2A Role that carries the same verbs is not privilege escalation.
+  # The operator creates only NAMESPACED RBAC: the per-Agent A2A Role +
+  # RoleBinding (M3.6, ensureA2ARBAC in agent_controller.go). The manager
+  # already holds agentruns verbs (above), so granting an A2A Role that
+  # carries the same verbs is not privilege escalation.
   - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterroles, clusterrolebindings, roles, rolebindings]
+    resources: [roles, rolebindings]
     verbs: [get, list, watch, create, update, patch, delete]
+  # knative-agents-5jy: cluster-scoped RBAC is READ-ONLY. `create`/`update`/
+  # `patch`/`delete` on clusterrolebindings is a privilege-escalation
+  # primitive — it would let a compromised operator bind any ClusterRole
+  # (including cluster-admin) to any subject. Nothing in the operator
+  # constructs a ClusterRole/ClusterRoleBinding (the only prior source, the
+  # eBPF loader's RBAC builder, was deleted); any cluster-scoped RBAC an
+  # installation needs is provisioned statically at install time from
+  # operator/config/rbac, not created at runtime.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
 
   # Events
   - apiGroups: [""]

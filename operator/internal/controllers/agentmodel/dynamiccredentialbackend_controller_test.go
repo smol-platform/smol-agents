@@ -60,6 +60,17 @@ func reconcileOnce(t *testing.T, r *DynamicCredentialBackendReconciler, name str
 	}
 }
 
+// reconcileOnceResult is reconcileOnce but returns the ctrl.Result so callers
+// can assert on RequeueAfter.
+func reconcileOnceResult(t *testing.T, r *DynamicCredentialBackendReconciler, name string) ctrl.Result {
+	t.Helper()
+	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "platform-secrets", Name: name}})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	return res
+}
+
 // M1.21: a missing root secret holds the backend Pending/SecretMissing; creating
 // the secret flips it Ready; grantCount tracks the spec.
 func TestDCBReconcile_SecretMissingThenReady(t *testing.T) {
@@ -97,6 +108,38 @@ func TestDCBReconcile_SecretWrongKey(t *testing.T) {
 	reconcileOnce(t, r, "github")
 	if got := get("github"); got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
 		t.Errorf("wrong key → want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+// knative-agents-5jy: the controller no longer Watches Secrets (that
+// required a cluster-wide Secret informer / list+watch RBAC). This is the
+// regression guard for removing it — both missing-secret status paths
+// (not-found and wrong-key) must requeue themselves so the backend still
+// converges once the secret appears/gains the key, instead of waiting for
+// the manager's hours-later default resync.
+func TestDCBReconcile_SecretMissingRequeues(t *testing.T) {
+	r, get := reconcileDCB(t, newDCB("github"))
+	res := reconcileOnceResult(t, r, "github")
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("want RequeueAfter > 0 on the missing-secret path, got %v", res.RequeueAfter)
+	}
+	if got := get("github"); got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
+		t.Fatalf("missing secret → want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+func TestDCBReconcile_SecretWrongKeyRequeues(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "github-app-key", Namespace: "platform-secrets"},
+		Data:       map[string][]byte{"wrong-key": []byte("x")},
+	}
+	r, get := reconcileDCB(t, newDCB("github"), secret)
+	res := reconcileOnceResult(t, r, "github")
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("want RequeueAfter > 0 on the wrong-key path, got %v", res.RequeueAfter)
+	}
+	if got := get("github"); got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
+		t.Fatalf("wrong key → want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
 	}
 }
 
