@@ -136,6 +136,15 @@ func (r *k8sGrantResolver) Resolve(ctx context.Context, ns, agent, subject strin
 		if g.Spec.AgentRef != agent || g.Spec.Subject != subject {
 			continue
 		}
+		// Fail-closed even when admission webhooks are disabled: a grant that
+		// wouldn't pass ValidateAttachGrant at admission time (bad role, no
+		// subject, cross-namespace agentRef, missing expiry) is never honored
+		// here either. This is the only place the pure validator is wired into
+		// a live authz path (knative-agents-md9).
+		if err := pure.ValidateAttachGrant(pure.AttachGrant{Name: g.Name, Spec: g.Spec}); err != nil {
+			r.log.Warn("agentterminal: skipping invalid attachgrant", "grant", g.Name, "namespace", ns, "err", err)
+			continue
+		}
 		if g.Spec.ExpiresAt == nil || !now.Before(g.Spec.ExpiresAt.Time) {
 			continue // missing/elapsed expiry → not live
 		}
