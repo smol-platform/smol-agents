@@ -14,10 +14,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
@@ -46,30 +44,16 @@ type ModelProviderReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// SetupWithManager wires the controller. Watching Secrets makes the
-// `Pending: SecretMissing → Ready` flip automatic when the key appears.
+// SetupWithManager wires the controller. There is deliberately no Watches
+// on Secrets (knative-agents-5jy: that would require a cluster-wide Secret
+// informer, which the manager's cache no longer holds — see main.go and
+// secretRequeueInterval in agentnetwork_controller.go); the
+// `Pending: SecretMissing → Ready` flip instead self-heals via the periodic
+// requeue set on that status path.
 func (r *ModelProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.ModelProvider{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.secretToProviders)).
 		Complete(r)
-}
-
-// secretToProviders maps a Secret event to the providers in the same
-// namespace whose secretRef points at it.
-func (r *ModelProviderReconciler) secretToProviders(ctx context.Context, obj client.Object) []reconcile.Request {
-	list := &amv1.ModelProviderList{}
-	if err := r.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
-		return nil
-	}
-	var reqs []reconcile.Request
-	for i := range list.Items {
-		p := &list.Items[i]
-		if p.Spec.SecretRef.SecretName == obj.GetName() {
-			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: p.Namespace, Name: p.Name}})
-		}
-	}
-	return reqs
 }
 
 // Reconcile is the per-provider entrypoint.
@@ -114,7 +98,7 @@ func (r *ModelProviderReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	err := r.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: ref.SecretName}, secret)
 	if apierrors.IsNotFound(err) {
 		r.setStatus(p, "Pending", "SecretMissing", fmt.Sprintf("secret %q not found", ref.SecretName))
-		return ctrl.Result{}, r.statusUpdateIfChanged(ctx, p, prev)
+		return ctrl.Result{RequeueAfter: secretRequeueInterval}, r.statusUpdateIfChanged(ctx, p, prev)
 	}
 	if err != nil {
 		return ctrl.Result{}, err
@@ -126,7 +110,7 @@ func (r *ModelProviderReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if ref.Key != "" {
 		if _, ok := secret.Data[ref.Key]; !ok {
 			r.setStatus(p, "Pending", "SecretMissing", fmt.Sprintf("secret %q has no key %q", ref.SecretName, ref.Key))
-			return ctrl.Result{}, r.statusUpdateIfChanged(ctx, p, prev)
+			return ctrl.Result{RequeueAfter: secretRequeueInterval}, r.statusUpdateIfChanged(ctx, p, prev)
 		}
 	} else if len(secret.Data) != 1 {
 		keys := make([]string, 0, len(secret.Data))
@@ -136,7 +120,7 @@ func (r *ModelProviderReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		sort.Strings(keys)
 		r.setStatus(p, "Pending", "SecretAmbiguous",
 			fmt.Sprintf("secret %q has no spec.secretRef.key set, so it must hold exactly one key; found %d: %v", ref.SecretName, len(keys), keys))
-		return ctrl.Result{}, r.statusUpdateIfChanged(ctx, p, prev)
+		return ctrl.Result{RequeueAfter: secretRequeueInterval}, r.statusUpdateIfChanged(ctx, p, prev)
 	}
 
 	r.setStatus(p, "Ready", "Reconciled", "")
