@@ -12,6 +12,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
@@ -80,6 +81,7 @@ func (g *Gateway) postEvent(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		name, status, derr := g.dispatch(r.Context(), b.Spec.Target, ns, ev)
+		g.recordDispatch(r.Context(), ns, b.Name, ev, derr)
 		entry := map[string]string{"binding": b.Name, "target": string(b.Spec.Target.Kind) + "/" + b.Spec.Target.Name, "status": status}
 		if name != "" {
 			entry["object"] = name
@@ -147,6 +149,48 @@ func (g *Gateway) dispatch(ctx context.Context, target pure.EventTarget, ns stri
 
 	default:
 		return "", "error", errors.New("unknown target kind " + string(target.Kind))
+	}
+}
+
+// recordDispatch folds one binding's dispatch outcome into its EventBinding
+// status (h0d/50p): Phase goes Ready on a successful dispatch and Degraded on
+// a failed one (dispatchErr is the same error dispatch() already returns —
+// wrapNotFound's "not found" is the common case, but any dispatch failure
+// counts as not having resolved), LastEventID/LastEventTime record the event
+// that fired, and Dispatched/Failed are cumulative counters bumped by one.
+//
+// This is observability only: a status-write failure is logged and swallowed,
+// never surfaced to the HTTP response or treated as a dispatch failure (cost/
+// status never gates, per the project's usage-accounting rule). Events for the
+// same binding can arrive concurrently, so the counters are updated via a
+// fresh Get inside retry.RetryOnConflict rather than a hand-rolled retry loop.
+func (g *Gateway) recordDispatch(ctx context.Context, ns, bindingName string, ev cloudEvent, dispatchErr error) {
+	phase := "Ready"
+	if dispatchErr != nil {
+		phase = "Degraded"
+	}
+	now := metav1.Now()
+	key := client.ObjectKey{Namespace: ns, Name: bindingName}
+	// DefaultRetry, not DefaultBackoff: this runs inside the event POST handler,
+	// and DefaultBackoff's factor-5 growth can add over a second of sleep to a
+	// request whose status write is optional anyway.
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var b amv1.EventBinding
+		if err := g.K8s.Get(ctx, key, &b); err != nil {
+			return err
+		}
+		b.Status.Phase = phase
+		b.Status.LastEventID = ev.ID
+		b.Status.LastEventTime = &now
+		if dispatchErr != nil {
+			b.Status.Failed++
+		} else {
+			b.Status.Dispatched++
+		}
+		return g.K8s.Status().Update(ctx, &b)
+	})
+	if err != nil && g.Logger != nil {
+		g.Logger.Error("agentgateway: record eventbinding dispatch status", "binding", ns+"/"+bindingName, "err", err)
 	}
 }
 

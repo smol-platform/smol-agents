@@ -24,7 +24,7 @@ func eventsTestServer(t *testing.T, objs ...client.Object) (*httptest.Server, cl
 	if err := amv1.AddToScheme(sch); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
-	kc := ctrlfake.NewClientBuilder().WithScheme(sch).WithObjects(objs...).Build()
+	kc := ctrlfake.NewClientBuilder().WithScheme(sch).WithStatusSubresource(&amv1.EventBinding{}).WithObjects(objs...).Build()
 	g := &Gateway{Queue: sessionqueue.NewMemQueue(), K8s: kc}
 	return httptest.NewServer(g.Handler()), kc
 }
@@ -216,6 +216,80 @@ func TestPostEvent_BindingRoutesToAgent(t *testing.T) {
 	}
 	if string(runs.Items[0].Spec.Input) != `{"text":"hi"}` {
 		t.Errorf("input = %s, want the event data", runs.Items[0].Spec.Input)
+	}
+}
+
+// A matched dispatch folds Ready + Dispatched++ + LastEventID/LastEventTime
+// into the binding's status (h0d/50p); a second event bumps the counter
+// instead of resetting it.
+func TestPostEvent_RecordsDispatchStatus(t *testing.T) {
+	srv, kc := eventsTestServer(t, makeTeam(),
+		makeBinding("incident-to-squad", "tenant-a", "com.acme.incident.opened", pure.EventTargetAgentTeam, "squad"))
+	defer srv.Close()
+
+	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-status-1", "com.acme.incident.opened", `{"sev":1}`)
+	resp.Body.Close()
+
+	var b amv1.EventBinding
+	key := client.ObjectKey{Namespace: "tenant-a", Name: "incident-to-squad"}
+	if err := kc.Get(t.Context(), key, &b); err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if b.Status.Phase != "Ready" {
+		t.Errorf("phase = %q, want Ready", b.Status.Phase)
+	}
+	if b.Status.LastEventID != "ev-status-1" {
+		t.Errorf("lastEventID = %q, want ev-status-1", b.Status.LastEventID)
+	}
+	if b.Status.LastEventTime == nil {
+		t.Error("lastEventTime not set")
+	}
+	if b.Status.Dispatched != 1 {
+		t.Errorf("dispatched = %d, want 1", b.Status.Dispatched)
+	}
+	if b.Status.Failed != 0 {
+		t.Errorf("failed = %d, want 0", b.Status.Failed)
+	}
+
+	resp2 := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-status-2", "com.acme.incident.opened", `{"sev":2}`)
+	resp2.Body.Close()
+	if err := kc.Get(t.Context(), key, &b); err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if b.Status.Dispatched != 2 {
+		t.Errorf("dispatched after 2nd event = %d, want 2 (cumulative, not reset)", b.Status.Dispatched)
+	}
+	if b.Status.LastEventID != "ev-status-2" {
+		t.Errorf("lastEventID after 2nd event = %q, want ev-status-2", b.Status.LastEventID)
+	}
+}
+
+// A dispatch to a missing target sets Phase=Degraded and increments Failed —
+// the HTTP response is unaffected (dispatch errors are per-entry in the 202
+// body, not a failed response; status is observability only).
+func TestPostEvent_RecordsDegradedOnMissingTarget(t *testing.T) {
+	srv, kc := eventsTestServer(t,
+		makeBinding("dangling", "tenant-a", "com.acme.incident.opened", pure.EventTargetAgentTeam, "ghost"))
+	defer srv.Close()
+
+	resp := postCE(t, srv.URL+"/v1/events/tenant-a", "ev-missing-1", "com.acme.incident.opened", `{}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (dispatch errors are per-entry, not a failed response)", resp.StatusCode)
+	}
+
+	var b amv1.EventBinding
+	if err := kc.Get(t.Context(), client.ObjectKey{Namespace: "tenant-a", Name: "dangling"}, &b); err != nil {
+		t.Fatalf("get binding: %v", err)
+	}
+	if b.Status.Phase != "Degraded" {
+		t.Errorf("phase = %q, want Degraded", b.Status.Phase)
+	}
+	if b.Status.Failed != 1 {
+		t.Errorf("failed = %d, want 1", b.Status.Failed)
+	}
+	if b.Status.Dispatched != 0 {
+		t.Errorf("dispatched = %d, want 0", b.Status.Dispatched)
 	}
 }
 
