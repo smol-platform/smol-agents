@@ -47,6 +47,7 @@ rules:
       - agentrunquotas/status
       - agentnetworks/status
       - dynamiccredentialbackends/status
+      - modelproviders/status
       - modelgateways/status
       - memoryretrievers/status
     verbs: [get, update, patch]

@@ -56,13 +56,16 @@ type ToolList struct {
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=mp
+// +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=`.spec.kind`
 // +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.spec.endpoint`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.phase`
 type ModelProvider struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec pure.ModelProviderSpec `json:"spec"`
+	Spec   pure.ModelProviderSpec   `json:"spec"`
+	Status pure.ModelProviderStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true

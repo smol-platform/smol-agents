@@ -14,6 +14,8 @@ spec:
     - name: v1
       served: true
       storage: true
+      subresources:
+        status: {}
       additionalPrinterColumns:
         - name: Kind
           type: string
@@ -21,6 +23,9 @@ spec:
         - name: Endpoint
           type: string
           jsonPath: .spec.endpoint
+        - name: Ready
+          type: string
+          jsonPath: .status.phase
       schema:
         openAPIV3Schema:
           type: object
@@ -53,3 +58,11 @@ spec:
                   properties:
                     secretName: { type: string, description: 'Secret holding the API key; leased by the broker at runtime, never embedded in the pod spec.' }
                     key: { type: string, description: 'Key within the Secret holding the API key (rv4.2). When empty and the Secret has exactly one key, that key is used.' }
+            status:
+              type: object
+              description: Observed provider state.
+              properties:
+                phase: { type: string, description: 'Ready | Pending | Failed.' }
+                observedGeneration: { type: integer }
+                reason: { type: string }
+                message: { type: string }

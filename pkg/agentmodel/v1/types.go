@@ -282,8 +282,9 @@ type Tool struct {
 
 // ModelProvider — credentials + endpoint. R-AM-API-3.
 type ModelProvider struct {
-	Name string            `json:"name"`
-	Spec ModelProviderSpec `json:"spec"`
+	Name   string              `json:"name"`
+	Spec   ModelProviderSpec   `json:"spec"`
+	Status ModelProviderStatus `json:"status,omitempty"`
 }
 
 // ModelProviderSpec holds the provider family + brokered credential. Kind drives
@@ -306,6 +307,19 @@ type ModelProviderSpec struct {
 	// SecretRef is the API-key Secret, leased by the broker at runtime — never
 	// embedded in the pod spec.
 	SecretRef AuthRef `json:"secretRef"`
+}
+
+// ModelProviderStatus is the observed provider state.
+type ModelProviderStatus struct {
+	// Phase: Ready | Pending | Failed.
+	// +optional
+	Phase string `json:"phase,omitempty"`
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // AgentRun — single bounded execution. R-AM-API-4.
