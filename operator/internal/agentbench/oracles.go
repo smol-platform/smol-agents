@@ -396,15 +396,11 @@ func scanText(status pure.RunStatus) string {
 
 // isCLIHarness reports whether a harness kind injects secrets into a subprocess
 // env (and is therefore NOT agent-blind). Hermes/generic-http are HTTP kinds
-// (blind); the rest are CLI kinds.
+// (blind); the rest are CLI kinds. Delegates to pure.HarnessKind.IsCLI so
+// there is one definition of the rule (redaction gating in
+// operator/internal/controllers/agentmodel uses the same method).
 func isCLIHarness(kind string) bool {
-	switch kind {
-	case "hermes", "generic-http", "":
-		return false
-	case "loop":
-		return false
-	}
-	return true
+	return pure.HarnessKind(kind).IsCLI()
 }
 
 // substituteNonce replaces {{NONCE}} with the run nonce.

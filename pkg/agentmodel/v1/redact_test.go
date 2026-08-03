@@ -143,6 +143,74 @@ func TestRedactSteps_MasksFourFieldsOnly(t *testing.T) {
 	}
 }
 
+func TestDefaultPatterns_MatchesKnownShapes(t *testing.T) {
+	cases := []struct {
+		name     string
+		positive string // realistic fake sample that must match
+		negative string // must NOT match
+	}{
+		{
+			name:     "openai/anthropic-style key",
+			positive: "sk-abcdEFGH12345678ijklMNOP",
+			negative: "sk-tooshort",
+		},
+		{
+			name:     "github token",
+			positive: "ghp_ABCDEFGHIJ0123456789klmn",
+			negative: "gh_no_infix_1234567890abcd",
+		},
+		{
+			name:     "aws access key id",
+			positive: "AKIAABCDEFGHIJ123456",
+			negative: "AKIA-not-a-key-shape",
+		},
+		{
+			name:     "slack token",
+			positive: "xoxb-1234567890-abcdefghij",
+			negative: "xoxq-1234567890-abcdefghij",
+		},
+		{
+			name:     "pem private key block",
+			positive: "-----BEGIN RSA PRIVATE KEY-----",
+			negative: "-----BEGIN CERTIFICATE-----",
+		},
+	}
+	pats := DefaultPatterns()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !anyMatch(tc.positive, pats) {
+				t.Errorf("positive sample %q did not match any default pattern", tc.positive)
+			}
+			if anyMatch(tc.negative, pats) {
+				t.Errorf("negative sample %q unexpectedly matched a default pattern", tc.negative)
+			}
+		})
+	}
+	if anyMatch("just some ordinary prose about keys and tokens", pats) {
+		t.Errorf("plain prose must not match any default pattern")
+	}
+}
+
+func TestRedactJSON_DefaultPatterns_MasksFakeKey(t *testing.T) {
+	pats := DefaultPatterns()
+	in := json.RawMessage(`{"apiKey":"sk-FAKEabcdEFGH12345678","note":"contact ops","retries":3}`)
+	out := RedactJSON(in, pats)
+
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("redacted output must be valid JSON: %v (%s)", err, out)
+	}
+	if m["apiKey"] != RedactionMask {
+		t.Errorf("fake key value not masked: %v", m["apiKey"])
+	}
+	if m["note"] != "contact ops" {
+		t.Errorf("non-secret string must survive untouched: %v", m["note"])
+	}
+	if m["retries"].(float64) != 3 {
+		t.Errorf("number must survive untouched: %v", m["retries"])
+	}
+}
+
 func TestValidateAgentPolicy_RejectsBadRegex(t *testing.T) {
 	err := ValidateAgentPolicy(AgentPolicy{Name: "p", Spec: AgentPolicySpec{Redaction: &RedactionPolicy{Patterns: []string{"("}}}})
 	if err == nil {

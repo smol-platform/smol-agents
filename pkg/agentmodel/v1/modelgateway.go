@@ -176,6 +176,23 @@ func (s ModelGatewaySpec) EffectivePort() int32 {
 	return 0
 }
 
+// firstSecretLine scans config line by line for the first line matching one of
+// DefaultPatterns() (the same well-known credential shapes redact.go uses),
+// returning its 1-based line number. It reuses DefaultPatterns() rather than a
+// second pattern list so the two checks can never drift apart.
+func firstSecretLine(config string) (int, bool) {
+	if config == "" {
+		return 0, false
+	}
+	pats := DefaultPatterns()
+	for i, line := range strings.Split(config, "\n") {
+		if anyMatch(line, pats) {
+			return i + 1, true
+		}
+	}
+	return 0, false
+}
+
 // ValidateModelGateway enforces the spec invariants: a known provider, an image,
 // a resolvable port, and well-formed env (a secretRef OR a literal, not both).
 func ValidateModelGateway(s ModelGatewaySpec) error {
@@ -192,6 +209,13 @@ func ValidateModelGateway(s ModelGatewaySpec) error {
 	}
 	if s.EffectivePort() <= 0 {
 		errs = append(errs, errors.New("modelGateway.port is required (no provider default)"))
+	}
+	if line, ok := firstSecretLine(s.Config); ok {
+		// Never include the matched value or the offending line's content here:
+		// this error lands verbatim in ModelGatewayStatus.Message (a plaintext,
+		// widely-readable object), so echoing the match would recreate the exact
+		// secret disclosure this validation exists to prevent.
+		errs = append(errs, fmt.Errorf("modelGateway.config line %d contains a secret-shaped value; provider credentials must come from spec.env[].secretRef, never inline", line))
 	}
 	for i, e := range s.Env {
 		if strings.TrimSpace(e.Name) == "" {

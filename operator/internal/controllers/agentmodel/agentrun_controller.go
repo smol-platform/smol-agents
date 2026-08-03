@@ -401,7 +401,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.markRunning(run)
 	case corev1.PodSucceeded:
 		r.markTerminal(run, pure.PhaseCompleted, "")
-		r.foldRunResult(ctx, run, pod)
+		r.foldRunResult(ctx, run, agent, pod)
 		r.foldArtifacts(run, pod)
 		// wbb: emit a result CloudEvent to the Agent's sink, once (the output is now
 		// folded). Best-effort + annotation-guarded so a re-reconcile of this
@@ -409,7 +409,7 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.emitResultOnce(ctx, run, agent)
 	case corev1.PodFailed:
 		r.markTerminal(run, pure.PhaseFailed, terminationReason(pod))
-		r.foldRunResult(ctx, run, pod)
+		r.foldRunResult(ctx, run, agent, pod)
 		r.foldArtifacts(run, pod)
 	}
 
@@ -905,15 +905,18 @@ func (r *AgentRunReconciler) resolveRunTools(ctx context.Context, agent *amv1.Ag
 // a budget cap, which still exits 0) — the phase itself. The runtime's own
 // reason (e.g. "budget:tokens") is the most specific signal we have and wins
 // over any pod-level reason markTerminal set; a runtime error wins outright.
-func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentRun, pod *corev1.Pod) {
+func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentRun, agent *amv1.Agent, pod *corev1.Pod) {
 	rr, ok := runResultFromPod(pod)
 	if !ok {
 		return
 	}
 	// Apply any namespace RedactionPolicy to the cluster-facing record. This is
 	// a disclosure control on Status only — the harness already observed the
-	// raw data, so it is never containment (agentpolicy R1). TerminationReason
-	// is a controlled signal and stays unredacted.
+	// raw data, so it is never containment (agentpolicy R1). rr.TerminationReason
+	// is a controlled runtime signal (e.g. "budget:tokens") and stays
+	// unredacted; rr.Error is the harness's own error text and is redacted when
+	// the harness kind is CLI (subprocess env holds the provider credential —
+	// not agent-blind — so an auth failure can echo it verbatim).
 	pats := compileNamespaceRedaction(ctx, r.Client, run.Namespace)
 	run.Status.Output = pure.RedactJSON(rr.Output, pats)
 	run.Status.Steps = pure.RedactSteps(rr.Steps, pats)
@@ -922,7 +925,13 @@ func (r *AgentRunReconciler) foldRunResult(ctx context.Context, run *amv1.AgentR
 	if rr.SessionID != "" {
 		run.Status.HarnessSessionID = rr.SessionID // M3.19: surface for run-to-run resume
 	}
+	var kind pure.HarnessKind
+	if agent != nil && agent.Spec.Harness != nil {
+		kind = pure.CanonicalHarnessKind(agent.Spec.Harness.Kind)
+	}
 	switch {
+	case rr.Error != "" && kind.IsCLI():
+		run.Status.TerminationReason = pure.RedactString(rr.Error, pats)
 	case rr.Error != "":
 		run.Status.TerminationReason = rr.Error
 	case rr.TerminationReason != "":

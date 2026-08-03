@@ -28,6 +28,25 @@ func TestHarnessKind_InflectionPiAlias(t *testing.T) {
 	}
 }
 
+// knative-agents-l3x: IsCLI gates TerminationReason redaction — CLI kinds run
+// the harness as a subprocess holding the provider credential (not
+// agent-blind); HTTP kinds and loop-mode keep the credential in the runtime.
+// This must mirror operator/internal/agentbench/oracles.go's isCLIHarness.
+func TestHarnessKind_IsCLI(t *testing.T) {
+	cli := []HarnessKind{HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessGoose, HarnessGenericCLI, HarnessPiMono, HarnessOpenClaw, HarnessInflectionPi, HarnessPi}
+	for _, k := range cli {
+		if !k.IsCLI() {
+			t.Errorf("%s.IsCLI() = false, want true", k)
+		}
+	}
+	blind := []HarnessKind{HarnessHermes, HarnessGenericHTTP, HarnessKind("loop"), ""}
+	for _, k := range blind {
+		if k.IsCLI() {
+			t.Errorf("%s.IsCLI() = true, want false", k)
+		}
+	}
+}
+
 func TestHarnessKind_Valid(t *testing.T) {
 	for _, k := range []HarnessKind{
 		HarnessClaudeCode, HarnessCodex, HarnessPi, HarnessPiMono, HarnessInflectionPi, HarnessAider, HarnessGoose,

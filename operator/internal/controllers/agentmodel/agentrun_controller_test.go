@@ -332,7 +332,7 @@ func TestAgentRunReconciler_FoldRunResult_RuntimeReasonWins(t *testing.T) {
 		TerminationReason: "budget:tokens",
 		Usage:             pure.Usage{Steps: 1, Tokens: 16102},
 	})
-	r.foldRunResult(context.Background(), run, pod)
+	r.foldRunResult(context.Background(), run, nil, pod)
 	if run.Status.State != pure.PhaseExpired {
 		t.Errorf("state should be refined to Expired, got %q", run.Status.State)
 	}
@@ -355,7 +355,7 @@ func TestAgentRunReconciler_FoldRunResult_ErrorWins(t *testing.T) {
 		TerminationReason: "harness:timeout",
 		Error:             "harness: http 502: upstream refused",
 	})
-	r.foldRunResult(context.Background(), run, pod)
+	r.foldRunResult(context.Background(), run, nil, pod)
 	if run.Status.TerminationReason != "harness: http 502: upstream refused" {
 		t.Errorf("error should win, got %q", run.Status.TerminationReason)
 	}
@@ -652,7 +652,7 @@ func TestAgentRunReconciler_FoldRunResult_Redaction(t *testing.T) {
 	// Policy present → secrets masked.
 	r := newRunReconcilerForTest(t, interceptor.Funcs{}, policy)
 	run := sampleRun()
-	r.foldRunResult(context.Background(), run, runPodWithTerminationMessage(rr))
+	r.foldRunResult(context.Background(), run, nil, runPodWithTerminationMessage(rr))
 	if got := string(run.Status.Output); got != `{"key":"[REDACTED]","n":1}` {
 		t.Errorf("Output not redacted: %s", got)
 	}
@@ -663,9 +663,69 @@ func TestAgentRunReconciler_FoldRunResult_Redaction(t *testing.T) {
 	// No policy → byte-identical fold.
 	r2 := newRunReconcilerForTest(t, interceptor.Funcs{})
 	run2 := sampleRun()
-	r2.foldRunResult(context.Background(), run2, runPodWithTerminationMessage(rr))
+	r2.foldRunResult(context.Background(), run2, nil, runPodWithTerminationMessage(rr))
 	if got := string(run2.Status.Output); got != `{"key":"sk-deadbeef","n":1}` {
 		t.Errorf("no-policy output must be byte-identical: %s", got)
+	}
+}
+
+// knative-agents-l3x: a CLI harness (claude-code) runs the provider
+// credential in its own subprocess env, so its Error can echo the credential
+// back verbatim on an auth failure (e.g. the CLI printing "invalid key
+// sk-..." to stderr). TerminationReason must be redacted the same way
+// Output/Steps already are.
+func TestAgentRunReconciler_FoldRunResult_TerminationReasonRedactedForCLI(t *testing.T) {
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "tenant-a"}}
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessClaudeCode}
+
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run := sampleRun()
+	rr := agentruntime.RunResult{
+		Phase: pure.PhaseFailed,
+		Error: "claude: authentication failed for key sk-deadbeefdeadbeef",
+	}
+	r.foldRunResult(context.Background(), run, agent, runPodWithTerminationMessage(rr))
+	if run.Status.TerminationReason != pure.RedactionMask {
+		t.Errorf("TerminationReason = %q, want %q", run.Status.TerminationReason, pure.RedactionMask)
+	}
+}
+
+// An ordinary CLI failure with no secret shape (e.g. a plain "exit status 1")
+// must NOT be masked — redaction only fires when a pattern actually matches,
+// so routine errors stay diagnostic.
+func TestAgentRunReconciler_FoldRunResult_CLIErrorWithoutSecretUnredacted(t *testing.T) {
+	agent := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "tenant-a"}}
+	agent.Spec.Mode = pure.ModeHarness
+	agent.Spec.Harness = &pure.HarnessSpec{Kind: pure.HarnessClaudeCode}
+
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run := sampleRun()
+	rr := agentruntime.RunResult{
+		Phase: pure.PhaseFailed,
+		Error: "exit status 1",
+	}
+	r.foldRunResult(context.Background(), run, agent, runPodWithTerminationMessage(rr))
+	if run.Status.TerminationReason != "exit status 1" {
+		t.Errorf("TerminationReason = %q, want verbatim %q", run.Status.TerminationReason, "exit status 1")
+	}
+}
+
+// A blind (HTTP) kind such as hermes never lets the harness subprocess touch
+// the credential, so its Error is left unredacted even when it happens to
+// contain a secret-shaped substring — proving the gate is keyed on kind, not
+// blanket-applied.
+func TestAgentRunReconciler_FoldRunResult_BlindKindErrorUnredacted(t *testing.T) {
+	agent := harnessAgent("alice", "tenant-a") // hermes kind
+	r := newRunReconcilerForTest(t, interceptor.Funcs{})
+	run := sampleRun()
+	rr := agentruntime.RunResult{
+		Phase: pure.PhaseFailed,
+		Error: "gateway rejected token sk-deadbeefdeadbeef",
+	}
+	r.foldRunResult(context.Background(), run, agent, runPodWithTerminationMessage(rr))
+	if run.Status.TerminationReason != "gateway rejected token sk-deadbeefdeadbeef" {
+		t.Errorf("blind-kind TerminationReason must stay verbatim, got %q", run.Status.TerminationReason)
 	}
 }
 
@@ -677,7 +737,7 @@ func TestAgentRunReconciler_FoldRunResult_Trace(t *testing.T) {
 		Phase: pure.PhaseCompleted,
 		Trace: &pure.TraceSummary{StepCount: 3, ToolCallCount: 5, Truncated: true},
 	})
-	r.foldRunResult(context.Background(), run, pod)
+	r.foldRunResult(context.Background(), run, nil, pod)
 	if run.Status.Trace == nil || run.Status.Trace.StepCount != 3 || run.Status.Trace.ToolCallCount != 5 || !run.Status.Trace.Truncated {
 		t.Fatalf("Status.Trace = %+v, want {3,5,truncated}", run.Status.Trace)
 	}
@@ -697,7 +757,7 @@ func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) 
 		Steps:  []pure.Step{{Index: 0, Kind: pure.StepFinal, TokensIn: 60, TokensOut: 40}},
 		Usage:  pure.Usage{Steps: 1, Tokens: 100},
 	})
-	r.foldRunResult(context.Background(), run, pod)
+	r.foldRunResult(context.Background(), run, nil, pod)
 	if run.Status.TerminationReason != "" {
 		t.Errorf("clean success should leave empty terminationReason, got %q", run.Status.TerminationReason)
 	}
