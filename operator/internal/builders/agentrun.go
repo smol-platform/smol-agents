@@ -113,6 +113,13 @@ func BuildAgentRunPod(run *amv1.AgentRun, agent *amv1.Agent) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			RestartPolicy:      corev1.RestartPolicyNever,
 			ServiceAccountName: AgentSAName(agent.Name),
+			// Secure default (D1): the pod's ServiceAccount exists for SPIFFE /
+			// workload identity, not apiserver access, so no kube-apiserver token is
+			// projected. The M1.18 egress floor deliberately allows the apiserver, so
+			// a mounted token would otherwise be a live, reachable credential for
+			// every run/session pod. The A2A path (AllowA2AToken) re-enables this
+			// explicitly for Agents whose in-pod invoker actually needs it.
+			AutomountServiceAccountToken: ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: ptr.To(true),
 				RunAsUser:    ptr.To(RunPodUID),
@@ -247,6 +254,20 @@ func a2aMaxDepth() string {
 		}
 	}
 	return "4"
+}
+
+// AllowA2AToken re-enables the ServiceAccount token projection on an A2A-capable
+// agent's pod: its in-pod invoker creates + observes CHILD AgentRuns through the
+// apiserver, which needs the token. Authority stays bounded by the namespaced
+// AgentA2ARole (own namespace, no delete) — the token is the transport, the Role
+// is the boundary.
+//
+// Deliberately does NOT hand-roll a projected serviceAccountToken volume: a
+// custom audience would not be accepted by the apiserver, and kubelet's own
+// projection is already bound, rotated, and audience-scoped — a manual one
+// would be strictly worse. Don't "improve" this into a projected volume.
+func AllowA2AToken(pod *corev1.Pod) {
+	pod.Spec.AutomountServiceAccountToken = ptr.To(true)
 }
 
 // fanoutMaxWidth is the operator's hard ceiling on children per kind=fanout call

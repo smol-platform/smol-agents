@@ -306,6 +306,17 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		// isolation boundary (default kata-fc), not the cluster-default runtime.
 		builders.ApplyRunSandbox(desired, sbClass)
 
+		// Re-enable the apiserver token only for an A2A-capable Agent (its A2A Role
+		// exists — the authoritative signal it declares a kind=agent tool). Every
+		// other run pod keeps AutomountServiceAccountToken=false (D1).
+		hasA2A, a2aErr := agentHasA2AGrant(ctx, r.Client, agent)
+		if a2aErr != nil {
+			return ctrl.Result{}, fmt.Errorf("check A2A grant: %w", a2aErr)
+		}
+		if hasA2A {
+			builders.AllowA2AToken(desired)
+		}
+
 		// M2.26: wire workspace-file egress onto the AgentFS serve sidecar (the
 		// only container with S3 creds; the harness/agent container gets none). The
 		// sidecar collects + uploads on shutdown and reports its manifest via its
