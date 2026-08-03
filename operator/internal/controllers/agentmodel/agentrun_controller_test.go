@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/smol-platform/smol-agents/operator/internal/builders"
 	"github.com/smol-platform/smol-agents/pkg/agentfs"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
+	"github.com/smol-platform/smol-agents/pkg/agentnet/plan"
 	"github.com/smol-platform/smol-agents/pkg/agentruntime"
 )
 
@@ -151,6 +153,13 @@ func newRunReconcilerForTest(t *testing.T, fns interceptor.Funcs, initial ...cli
 	}
 	if err := amv1.AddToScheme(sch); err != nil {
 		t.Fatalf("amv1 scheme: %v", err)
+	}
+	// knative-agents-1c5: the existing-Pod re-cage path exercises
+	// NetworkPolicy Get/Create/Update via the real Reconcile(), so the fake
+	// client needs the type registered (previously only sandboxReconciler's
+	// narrower scheme in run_sandbox_controller_test.go had it).
+	if err := networkingv1.AddToScheme(sch); err != nil {
+		t.Fatalf("networkingv1 scheme: %v", err)
 	}
 	c := fake.NewClientBuilder().
 		WithScheme(sch).
@@ -418,6 +427,148 @@ func getRun(t *testing.T, r *AgentRunReconciler, ns, name string) *amv1.AgentRun
 		t.Fatalf("get run: %v", err)
 	}
 	return got
+}
+
+// knative-agents-1c5: the AgentNetwork Watch's whole point is to re-cage a
+// LIVE (already-Pod'd) run, not just one still queued pre-Pod — this is the
+// bead's actual acceptance test. It drives a full Reconcile() (not just the
+// ensure-helpers directly, which only proves the helper itself is
+// update-in-place) against a run whose Pod already exists and is Running,
+// with stored NetworkPolicies whose Specs have drifted from what a fresh
+// computation would produce, and asserts Reconcile corrects both in place.
+func TestReconcile_ExistingPod_RecagesDrift(t *testing.T) {
+	agent := sampleAgent()
+	run := sampleRun()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name, Namespace: run.Namespace},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	// Stale egress: an allow-CIDR a fresh (bound-network-less) computation
+	// would never grant.
+	staleEgress := builders.BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+	staleEgress.Spec.Egress = append(staleEgress.Spec.Egress, networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "198.51.100.0/24"}}},
+	})
+	// Stale ingress: no PolicyTypes, as if from a broken prior write.
+	staleIngress := builders.BuildAgentRunIngressPolicy(run)
+	staleIngress.Spec.PolicyTypes = nil
+
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, run, pod, staleEgress, staleIngress)
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := getRun(t, r, run.Namespace, run.Name)
+	if got.Status.State != pure.PhaseRunning {
+		t.Fatalf("state = %s, want Running", got.Status.State)
+	}
+
+	var egress networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-egress"}, &egress); err != nil {
+		t.Fatalf("egress NetworkPolicy: %v", err)
+	}
+	wantEgress := builders.BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+	if !reflect.DeepEqual(egress.Spec, wantEgress.Spec) {
+		t.Errorf("egress Spec not corrected by Reconcile on the existing-Pod path:\ngot  %+v\nwant %+v", egress.Spec, wantEgress.Spec)
+	}
+
+	var ingress networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-ingress"}, &ingress); err != nil {
+		t.Fatalf("ingress NetworkPolicy: %v", err)
+	}
+	if len(ingress.Spec.PolicyTypes) != 1 || ingress.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("ingress policyTypes = %v, want [Ingress] (drift not corrected by Reconcile)", ingress.Spec.PolicyTypes)
+	}
+}
+
+// A terminal run's NetworkPolicy must NOT be rewritten: there is nothing left
+// to protect once the pod has exited, and rewriting it on every 5s poll of a
+// finished run would just be wasted Updates forever. Proves the
+// !run.Status.State.Terminal() gate actually gates.
+func TestReconcile_TerminalPod_DoesNotRewritePolicy(t *testing.T) {
+	agent := sampleAgent()
+	run := sampleRun()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name, Namespace: run.Namespace},
+		Status:     corev1.PodStatus{Phase: corev1.PodFailed},
+	}
+	staleEgress := builders.BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+	staleEgress.Spec.Egress = append(staleEgress.Spec.Egress, networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "198.51.100.0/24"}}},
+	})
+
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, run, pod, staleEgress)
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := getRun(t, r, run.Namespace, run.Name)
+	if !got.Status.State.Terminal() {
+		t.Fatalf("state = %s, want a terminal state", got.Status.State)
+	}
+
+	var egress networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-egress"}, &egress); err != nil {
+		t.Fatalf("egress NetworkPolicy: %v", err)
+	}
+	found := false
+	for _, rule := range egress.Spec.Egress {
+		for _, peer := range rule.To {
+			if peer.IPBlock != nil && peer.IPBlock.CIDR == "198.51.100.0/24" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("a terminal run's stale egress Spec was rewritten; it must be left untouched")
+	}
+}
+
+// A live run whose bound AgentNetwork has been edited into a conflicting
+// state must NOT be marked Pending or Failed over it — the pod is already
+// running (and billing) regardless of Status, so that would only lie about
+// the run's state without stopping anything. It stays Running, the conflict
+// is surfaced on the existing Reason field (no new status field / CRD edit),
+// and the NetworkPolicy it was admitted under is left exactly as it was.
+func TestReconcile_ExistingPod_NetworkConflict_StaysRunningKeepsExistingPolicy(t *testing.T) {
+	agent := sampleAgent()
+	agent.Labels = map[string]string{"team": "x"}
+	n1 := proxyNet("n1", agent.Namespace, map[string]string{"team": "x"}, 8080, "https://a")
+	n2 := proxyNet("n2", agent.Namespace, map[string]string{"team": "x"}, 8080, "https://b") // same port, different gateway → conflict
+	run := sampleRun()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: run.Name, Namespace: run.Namespace},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	// The cage the run was admitted under before the AgentNetwork edit made
+	// it conflict — any valid prior Spec works; the point is it must survive.
+	existingEgress := builders.BuildAgentRunEgressPolicyWithPlan(run, plan.NetworkPlan{})
+	existingIngress := builders.BuildAgentRunIngressPolicy(run)
+
+	r := newRunReconcilerForTest(t, interceptor.Funcs{}, agent, run, pod, n1, n2, existingEgress, existingIngress)
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got := getRun(t, r, run.Namespace, run.Name)
+	if got.Status.State != pure.PhaseRunning {
+		t.Errorf("state = %s, want Running (a bad AgentNetwork edit must not fail or pend a live run)", got.Status.State)
+	}
+	if got.Status.Reason != "NetworkConflict" {
+		t.Errorf("reason = %q, want NetworkConflict surfaced on the existing Reason field", got.Status.Reason)
+	}
+
+	var egress networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name + "-egress"}, &egress); err != nil {
+		t.Fatalf("egress NetworkPolicy: %v", err)
+	}
+	if !reflect.DeepEqual(egress.Spec, existingEgress.Spec) {
+		t.Errorf("egress Spec changed despite NetworkConflict:\ngot  %+v\nwant (unchanged) %+v", egress.Spec, existingEgress.Spec)
+	}
 }
 
 func runPodExists(r *AgentRunReconciler, ns, name string) bool {
