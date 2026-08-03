@@ -390,6 +390,12 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			return ctrl.Result{}, fmt.Errorf("ensure egress policy: %w", err)
 		}
 
+		// Cage ingress: same-namespace-only floor closes the cross-namespace
+		// tenant-boundary hole (knative-agents-8s1, D1) before the pod schedules.
+		if err := r.ensureRunIngressPolicy(ctx, run); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure ingress policy: %w", err)
+		}
+
 		if err := ctrl.SetControllerReference(run, desired, r.Scheme); err != nil {
 			return ctrl.Result{}, fmt.Errorf("set controller ref: %w", err)
 		}
@@ -804,6 +810,25 @@ func (r *AgentRunReconciler) ensureRunEgressPolicy(ctx context.Context, run *amv
 	}
 	var existing networkingv1.NetworkPolicy
 	err = r.Get(ctx, types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, &existing)
+	if apierrors.IsNotFound(err) {
+		return r.Create(ctx, np)
+	}
+	return err
+}
+
+// ensureRunIngressPolicy creates the run pod's same-namespace-only ingress
+// NetworkPolicy (idempotent, create-only like ensureRunEgressPolicy — see its
+// comment; a separate function so knative-agents-1c5's egress-policy
+// create-vs-update change stays a one-function diff), owned by the run so it
+// is GC'd with it (knative-agents-8s1: without this, a run pod is reachable
+// from any pod in any namespace, a tenant-boundary hole under D1).
+func (r *AgentRunReconciler) ensureRunIngressPolicy(ctx context.Context, run *amv1.AgentRun) error {
+	np := builders.BuildAgentRunIngressPolicy(run)
+	if err := ctrl.SetControllerReference(run, np, r.Scheme); err != nil {
+		return err
+	}
+	var existing networkingv1.NetworkPolicy
+	err := r.Get(ctx, types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, &existing)
 	if apierrors.IsNotFound(err) {
 		return r.Create(ctx, np)
 	}

@@ -152,6 +152,31 @@ func TestEgressEnforcementLabel(t *testing.T) {
 	}
 }
 
+// knative-agents-8s1: ensureRunIngressPolicy creates the run's same-namespace
+// ingress floor alongside (not instead of) the egress cage, owned by the run.
+func TestEnsureRunIngressPolicy(t *testing.T) {
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r1", Namespace: "tenant-a", UID: "uid-1"}}
+	r := sandboxReconciler(t, nil, run)
+
+	if err := r.ensureRunIngressPolicy(context.Background(), run); err != nil {
+		t.Fatalf("ensureRunIngressPolicy: %v", err)
+	}
+	var np networkingv1.NetworkPolicy
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: "r1-ingress"}, &np); err != nil {
+		t.Fatalf("ingress NetworkPolicy not created: %v", err)
+	}
+	if len(np.OwnerReferences) == 0 || np.OwnerReferences[0].Name != "r1" {
+		t.Errorf("ingress NP not owned by the run: %+v", np.OwnerReferences)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("policyTypes = %v, want [Ingress]", np.Spec.PolicyTypes)
+	}
+	// Idempotent (create-only, like ensureRunEgressPolicy).
+	if err := r.ensureRunIngressPolicy(context.Background(), run); err != nil {
+		t.Fatalf("second ensureRunIngressPolicy: %v", err)
+	}
+}
+
 // c5r.11: a session with a NATS URL reports the gateway transport; without one it
 // reports the degraded on-disk fallback rather than silently pretending delivery.
 func TestSessionTransportLabel(t *testing.T) {

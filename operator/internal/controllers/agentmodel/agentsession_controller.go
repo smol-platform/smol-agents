@@ -220,8 +220,18 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 	// Update-in-place (not create-only) so a changed AgentNetwork re-cages the
 	// live worker (M1.16).
-	if err := r.ensureEgressPolicy(ctx, session, np); err != nil {
+	if err := r.ensureNetworkPolicy(ctx, session, np); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure session egress: %w", err)
+	}
+
+	// Ingress cage: same-namespace-only floor closes the cross-namespace
+	// tenant-boundary hole (knative-agents-8s1, D1) — the worker pulls turns by
+	// subscribing to NATS (outbound), so it is never dialed on the current
+	// datapath and this cannot break it.
+	ingressNP := builders.BuildAgentSessionIngressPolicy(synthetic.Name, session.Namespace,
+		map[string]string{"agents.smol-agents.ai/run": synthetic.Name})
+	if err := r.ensureNetworkPolicy(ctx, session, ingressNP); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure session ingress: %w", err)
 	}
 
 	// Build the run pod (security + AgentFS + run-spec volume), then turn it into
@@ -395,11 +405,13 @@ func (r *AgentSessionReconciler) ensureOwned(ctx context.Context, session *amv1.
 	return nil
 }
 
-// ensureEgressPolicy creates or UPDATES the session worker's egress NetworkPolicy
-// (unlike ensureOwned, which is create-only for the stable run-spec/broker
-// objects). Update-in-place lets a changed AgentNetwork re-cage a live session
-// worker without recreating it (M1.16).
-func (r *AgentSessionReconciler) ensureEgressPolicy(ctx context.Context, session *amv1.AgentSession, np *networkingv1.NetworkPolicy) error {
+// ensureNetworkPolicy creates or UPDATES a session worker's NetworkPolicy —
+// egress (unlike ensureOwned, which is create-only for the stable
+// run-spec/broker objects) or ingress (knative-agents-8s1). Update-in-place
+// lets a changed AgentNetwork re-cage a live session worker's egress without
+// recreating it (M1.16); the same helper is reused for the ingress floor since
+// both are just "the NetworkPolicy the session owns", not update-order-sensitive.
+func (r *AgentSessionReconciler) ensureNetworkPolicy(ctx context.Context, session *amv1.AgentSession, np *networkingv1.NetworkPolicy) error {
 	if err := ctrl.SetControllerReference(session, np, r.Scheme); err != nil {
 		return err
 	}

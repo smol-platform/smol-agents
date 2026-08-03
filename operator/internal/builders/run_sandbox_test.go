@@ -148,3 +148,67 @@ func TestBuildAgentRunEgressPolicy(t *testing.T) {
 		t.Errorf("public egress must be limited to 2 ports (443,80), got %d", len(pub.Ports))
 	}
 }
+
+// knative-agents-8s1: the ingress floor is same-namespace-only — Ingress-only
+// PolicyTypes, a pod selector matching the run/session labels, and a single
+// From peer that is a NamespaceSelector on the object's own namespace (no
+// ipBlock/0.0.0.0 peer, i.e. cross-namespace traffic is never allowed).
+func TestBuildAgentRunIngressPolicy(t *testing.T) {
+	run := &amv1.AgentRun{}
+	run.Name = "r1"
+	run.Namespace = "tenant-a"
+
+	np := BuildAgentRunIngressPolicy(run)
+
+	if np.Name != "r1-ingress" || np.Namespace != "tenant-a" {
+		t.Fatalf("name/ns = %s/%s, want r1-ingress/tenant-a", np.Name, np.Namespace)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("policyTypes = %v, want [Ingress] only", np.Spec.PolicyTypes)
+	}
+	if np.Spec.PodSelector.MatchLabels["agents.smol-agents.ai/run"] != "r1" {
+		t.Errorf("podSelector must target the run pod, got %v", np.Spec.PodSelector.MatchLabels)
+	}
+	assertSameNamespaceOnlyIngress(t, np, "tenant-a")
+}
+
+func TestBuildAgentSessionIngressPolicy(t *testing.T) {
+	sel := map[string]string{"agents.smol-agents.ai/run": "s1-session"}
+	np := BuildAgentSessionIngressPolicy("s1-session", "tenant-b", sel)
+
+	if np.Name != "s1-session-ingress" || np.Namespace != "tenant-b" {
+		t.Fatalf("name/ns = %s/%s, want s1-session-ingress/tenant-b", np.Name, np.Namespace)
+	}
+	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("policyTypes = %v, want [Ingress] only", np.Spec.PolicyTypes)
+	}
+	if np.Spec.PodSelector.MatchLabels["agents.smol-agents.ai/run"] != "s1-session" {
+		t.Errorf("podSelector must target the session worker pod, got %v", np.Spec.PodSelector.MatchLabels)
+	}
+	assertSameNamespaceOnlyIngress(t, np, "tenant-b")
+}
+
+// assertSameNamespaceOnlyIngress asserts the rendered policy has exactly one
+// ingress rule with exactly one From peer: a NamespaceSelector matching ns via
+// kubernetes.io/metadata.name, and nothing else (no ipBlock/CIDR peer, no
+// ports restriction beyond that single peer).
+func assertSameNamespaceOnlyIngress(t *testing.T, np *networkingv1.NetworkPolicy, ns string) {
+	t.Helper()
+	if len(np.Spec.Ingress) != 1 {
+		t.Fatalf("want exactly 1 ingress rule, got %d", len(np.Spec.Ingress))
+	}
+	rule := np.Spec.Ingress[0]
+	if len(rule.From) != 1 {
+		t.Fatalf("want exactly 1 From peer (same-namespace only), got %d: %+v", len(rule.From), rule.From)
+	}
+	peer := rule.From[0]
+	if peer.IPBlock != nil {
+		t.Errorf("From peer must not be an ipBlock (would allow cross-namespace/external traffic): %+v", peer.IPBlock)
+	}
+	if peer.NamespaceSelector == nil {
+		t.Fatalf("From peer must be a NamespaceSelector, got %+v", peer)
+	}
+	if got := peer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"]; got != ns {
+		t.Errorf("NamespaceSelector must match the object's own namespace %q, got %q", ns, got)
+	}
+}

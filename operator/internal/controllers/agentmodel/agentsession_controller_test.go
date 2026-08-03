@@ -86,6 +86,19 @@ func TestAgentSessionReconcile_LaunchesDurableWorker(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s1-session-egress"}, &np); err != nil {
 		t.Errorf("egress NetworkPolicy not created: %v", err)
 	}
+	// knative-agents-8s1: the same-namespace-only ingress floor, owned by the
+	// session alongside the egress cage — closes the cross-namespace
+	// tenant-boundary hole under D1.
+	var ingressNP networkingv1.NetworkPolicy
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "t", Name: "s1-session-ingress"}, &ingressNP); err != nil {
+		t.Errorf("ingress NetworkPolicy not created: %v", err)
+	}
+	if len(ingressNP.OwnerReferences) == 0 || ingressNP.OwnerReferences[0].Name != "s1" {
+		t.Errorf("ingress NP not owned by the session: %+v", ingressNP.OwnerReferences)
+	}
+	if len(ingressNP.Spec.PolicyTypes) != 1 || ingressNP.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Errorf("ingress policyTypes = %v, want [Ingress]", ingressNP.Spec.PolicyTypes)
+	}
 
 	// Status reflects Pending (Deployment has no available replicas in the fake).
 	var got amv1.AgentSession

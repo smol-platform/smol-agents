@@ -1,7 +1,8 @@
 // Package builders — run_sandbox.go
 //
-// Containment for the AgentRun datapath (the pod that executes untrusted
-// harnesses/CLIs). Two controls the run pod previously lacked:
+// Containment for the AgentRun and AgentSession datapaths (the pods that
+// execute untrusted harnesses/CLIs). Controls the run/session pod previously
+// lacked:
 //
 //   - ApplyRunSandbox pins the resolved sandbox RuntimeClass (default kata-fc)
 //     so a run executes inside a real isolation boundary instead of the
@@ -12,9 +13,14 @@
 //     compromised harness cannot reach the cloud instance-metadata endpoint
 //     (the canonical SSRF / credential-theft target) or open arbitrary outbound
 //     channels. It allows DNS, in-cluster traffic, and public HTTP(S) only.
+//   - BuildIngressPolicy (knative-agents-8s1) renders a same-namespace-only
+//     ingress floor: these pods expose no ports today, but with no ingress
+//     policy at all they are dialable from ANY pod in ANY namespace — a
+//     tenant-boundary hole under D1.
 //
-// Together these make the documented "microVM + egress cage" containment
-// actually hold on the run path, not just the long-lived serving path.
+// Together these make the documented "microVM + network cage" containment
+// actually hold on the run/session path — the only agent datapath left since
+// the legacy SmolAgent serving platform was removed.
 package builders
 
 import (
@@ -116,6 +122,53 @@ func BuildAgentSessionEgressPolicy(name, namespace string, podSelector map[strin
 // worker's egress cage.
 func BuildAgentSessionEgressPolicyWithPlan(name, namespace string, podSelector map[string]string, p plan.NetworkPlan) *networkingv1.NetworkPolicy {
 	return BuildEgressPolicyWithPlan(name+"-egress", namespace, "agent-session", podSelector, p)
+}
+
+// BuildAgentRunIngressPolicy renders the same-namespace-only ingress floor for
+// a run pod.
+func BuildAgentRunIngressPolicy(run *amv1.AgentRun) *networkingv1.NetworkPolicy {
+	return BuildIngressPolicy(run.Name+"-ingress", run.Namespace, "agent-run",
+		map[string]string{"agents.smol-agents.ai/run": run.Name})
+}
+
+// BuildAgentSessionIngressPolicy is the same same-namespace-only ingress floor
+// for a long-running AgentSession worker pod.
+func BuildAgentSessionIngressPolicy(name, namespace string, podSelector map[string]string) *networkingv1.NetworkPolicy {
+	return BuildIngressPolicy(name+"-ingress", namespace, "agent-session", podSelector)
+}
+
+// BuildIngressPolicy renders the same-namespace-only ingress floor: run and
+// session worker pods declare no ContainerPorts and are never dialed on the
+// current datapath (runs are a fire-and-forget executor; session workers pull
+// turns by subscribing to NATS), but with NO ingress NetworkPolicy at all they
+// are reachable from ANY pod in ANY namespace — a tenant-boundary hole under
+// D1 (multi-tenant/untrusted). An empty Ingress rule list would be a total
+// default-deny and is tempting since these pods expose nothing today, but
+// same-namespace is the conservative floor: it closes the cross-namespace hole
+// without pre-breaking in-namespace sidecars/tooling that might one day probe
+// or attach to the pod. A stricter full-deny is available later precisely
+// because these pods declare no ports (knative-agents-8s1).
+func BuildIngressPolicy(name, namespace, component string, podSelector map[string]string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "smol-agents",
+				"app.kubernetes.io/component": component,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: podSelector},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": namespace}},
+				}},
+			}},
+		},
+	}
 }
 
 // AttachAgentNetwork is the Tier-2 datapath seam for a bound NetworkPlan: where
