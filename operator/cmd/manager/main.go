@@ -47,6 +47,7 @@ func main() {
 	var defaultRunRuntimeClass string
 	var allowHostRuntime bool
 	var cniEnforcesNetworkPolicy bool
+	var requireEgressEnforcement bool
 	var sessionNATSURL string
 	var teamNATSURL string
 	var natsAccountSeedFile string
@@ -70,6 +71,8 @@ func main() {
 		"permit runc (shared host kernel) for AgentRun pods on clusters with no sandbox runtime; otherwise runc is a fail-closed R-SBX-1 violation")
 	flag.BoolVar(&cniEnforcesNetworkPolicy, "cni-enforces-networkpolicy", false,
 		"declare that the cluster CNI enforces NetworkPolicy (Cilium/Calico/eBPF); default false reports the egress floor as 'unenforced' on AgentRun/AgentSession status since CNIs like kindnet silently no-op it (rv1.2)")
+	flag.BoolVar(&requireEgressEnforcement, "require-egress-enforcement", false,
+		"fail closed instead of just reporting: hold a run/session Pending/EgressUnenforced rather than scheduling it when it has a bound AgentNetwork and --cni-enforces-networkpolicy is false (the CNI cannot actually enforce its egress restriction); default false is strictly opt-in so existing kind/CI clusters are unaffected (knative-agents-7p3)")
 	flag.StringVar(&sessionNATSURL, "session-nats-url", os.Getenv("SESSION_NATS_URL"),
 		"NATS JetStream URL for AgentSession turn delivery (the gateway path); empty leaves session workers on the on-disk inbox")
 	flag.StringVar(&teamNATSURL, "team-nats-url", os.Getenv("TEAM_NATS_URL"),
@@ -201,6 +204,7 @@ func main() {
 		DefaultRunRuntimeClass:         defaultRunRuntimeClass,
 		AllowHostRuntime:               allowHostRuntime,
 		CNIEnforcesNetworkPolicy:       cniEnforcesNetworkPolicy,
+		RequireEgressEnforcement:       requireEgressEnforcement,
 		MaxConcurrentReconciles:        maxConcurrentReconciles,
 		RunDeadlineMultiplier:          runDeadlineMultiplier,
 		DefaultApprovalTimeout:         defaultApprovalTimeout,
@@ -217,6 +221,7 @@ func main() {
 		DefaultRunRuntimeClass:   defaultRunRuntimeClass,
 		AllowHostRuntime:         allowHostRuntime,
 		CNIEnforcesNetworkPolicy: cniEnforcesNetworkPolicy,
+		RequireEgressEnforcement: requireEgressEnforcement,
 		NATSURL:                  sessionNATSURL,
 		NATSAccountSeed:          natsAccountSeed,
 		MaxConcurrentReconciles:  maxConcurrentReconciles,

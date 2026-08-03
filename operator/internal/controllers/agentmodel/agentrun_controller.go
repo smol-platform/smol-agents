@@ -106,6 +106,17 @@ type AgentRunReconciler struct {
 	// "unenforced" on status (rv1.2) since CNIs like kindnet silently no-op it.
 	// Set true (--cni-enforces-networkpolicy) on Cilium/Calico/eBPF clusters.
 	CNIEnforcesNetworkPolicy bool
+	// RequireEgressEnforcement fails closed (D3, knative-agents-7p3) instead of
+	// only reporting: when true, a run with a BOUND AgentNetwork on a CNI that
+	// cannot enforce NetworkPolicy (CNIEnforcesNetworkPolicy false) is held
+	// Pending/EgressUnenforced rather than scheduled uncaged. The bare default
+	// egress floor with no bound AgentNetwork is never gated — see the
+	// Reconcile gate's comment. Default false (strictly opt-in) so existing
+	// kind/CI clusters keep working unchanged. Set from
+	// --require-egress-enforcement. Admission-time only: it does not
+	// retroactively stall an already-running pod — see Reconcile's post-phase-
+	// switch comment (knative-agents-1c5) for why.
+	RequireEgressEnforcement bool
 	// MaxConcurrentReconciles bounds parallel run reconciles (default 1).
 	MaxConcurrentReconciles int
 	// RunDeadlineMultiplier scales the run's wall-clock budget into the pod's
@@ -272,6 +283,32 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if reason := dangerFlagViolation(agent, sbClass); reason != "" {
 			r.markTerminal(run, pure.PhaseFailed, "sandbox:"+reason)
 			return r.updateRunStatus(ctx, run, ctrl.Result{})
+		}
+
+		// Fail-closed egress-enforcement gate (knative-agents-7p3, D3), opt-in via
+		// --require-egress-enforcement. Without it, a run bound to an
+		// AgentNetwork on a non-enforcing CNI (CNIEnforcesNetworkPolicy false)
+		// still gets scheduled — the egress NetworkPolicy is created but the CNI
+		// silently no-ops it, so the run executes uncaged with the gap visible
+		// only as status.EgressEnforcement="unenforced". With the flag on, hold
+		// the run Pending instead. The trigger is "a bound AgentNetwork exists"
+		// (netPlan.Networks, the same field resolveBoundNetworks/
+		// egressEnforcementLabel already populate for status) — NOT the presence
+		// of allow rules: a wireguardMesh (or nil-proxy) bound network
+		// contributes no AllowRules to the plan (see plan.BuildNetworkPlan) but
+		// is still a real binding the author intended to restrict egress with,
+		// so gating only on AllowRules would silently miss it. The bare default
+		// floor with NO bound AgentNetwork is deliberately NOT gated — it is
+		// defense-in-depth applied to every run, and blocking every run on every
+		// non-enforcing cluster would make the flag unusable. A NetworkPlan
+		// compose error is left for ensureRunEgressPolicy below to classify
+		// (NetworkConflict/NetworkDatapathUnwired) rather than duplicated here.
+		if r.RequireEgressEnforcement && !r.CNIEnforcesNetworkPolicy {
+			if netPlan, nerr := resolveBoundNetworks(ctx, r.Client, agent); nerr == nil && len(netPlan.Networks) > 0 {
+				r.markPending(run, "EgressUnenforced",
+					fmt.Sprintf("bound AgentNetwork(s) %v need egress enforcement the CNI cannot provide (--require-egress-enforcement)", netPlan.Networks))
+				return r.updateRunStatus(ctx, run, ctrl.Result{RequeueAfter: 30 * time.Second})
+			}
 		}
 
 		// Resolve node placement for the sandbox class. A KVM class with no
@@ -464,10 +501,29 @@ func (r *AgentRunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			} else {
 				return ctrl.Result{}, fmt.Errorf("re-cage egress policy: %w", err)
 			}
-		} else if run.Status.Reason == "NetworkConflict" || run.Status.Reason == "NetworkDatapathUnwired" {
-			// Resolves cleanly again — clear the marker, which markRunning only
-			// does on a Pending→Running edge, not on a steady-state reconcile.
-			run.Status.Reason = ""
+		} else {
+			if run.Status.Reason == "NetworkConflict" || run.Status.Reason == "NetworkDatapathUnwired" {
+				// Resolves cleanly again — clear the marker, which markRunning only
+				// does on a Pending→Running edge, not on a steady-state reconcile.
+				run.Status.Reason = ""
+			}
+			// RequireEgressEnforcement (knative-agents-7p3) is an ADMISSION-time
+			// control only — see the pre-Pod gate above. It never retroactively
+			// stalls or kills an already-running pod: the pod is already running
+			// and billing, so flipping it Pending/Failed here would stop nothing,
+			// exactly the ErrNetworkConflict carve-out's reasoning above. Instead
+			// this mirrors that carve-out's shape: when a live run's bound-network
+			// egress is (still, or newly) unenforceable, surface it on Reason,
+			// observability-only, never on State — set/cleared each reconcile as
+			// the condition comes and goes, without disturbing any more specific
+			// Reason (e.g. "PodPending") already occupying the field.
+			egressUnenforced := r.RequireEgressEnforcement && !r.CNIEnforcesNetworkPolicy && len(run.Status.Networks) > 0
+			switch {
+			case egressUnenforced && run.Status.Reason == "":
+				run.Status.Reason = "EgressUnenforced"
+			case !egressUnenforced && run.Status.Reason == "EgressUnenforced":
+				run.Status.Reason = ""
+			}
 		}
 		// The ingress floor has no AgentNetwork dependency, so it re-applies
 		// regardless of the egress sentinel handling above.

@@ -63,6 +63,14 @@ type AgentSessionReconciler struct {
 	// CNIEnforcesNetworkPolicy declares the cluster CNI enforces NetworkPolicy;
 	// default false reports the session egress floor as "unenforced" (rv1.2).
 	CNIEnforcesNetworkPolicy bool
+	// RequireEgressEnforcement fails closed (D3, knative-agents-7p3) instead of
+	// only reporting: when true, a session with a BOUND AgentNetwork on a CNI
+	// that cannot enforce NetworkPolicy (CNIEnforcesNetworkPolicy false) is
+	// held Pending/EgressUnenforced rather than getting a worker Deployment.
+	// See the sibling field's doc on AgentRunReconciler for the full rationale
+	// (bound-network presence, not AllowRules presence, is the trigger).
+	// Default false (strictly opt-in). Set from --require-egress-enforcement.
+	RequireEgressEnforcement bool
 
 	// NATSURL, when set, routes a session's turns through NATS (the gateway
 	// path) by injecting AGENTSESSION_NATS_URL/_KEY into the worker; empty
@@ -205,6 +213,23 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// the operator has no session NATS URL, so gateway /turns never reach the
 	// worker — a silent no-op made visible.
 	session.Status.Transport = sessionTransportLabel(r.NATSURL)
+	// Fail-closed egress-enforcement gate (knative-agents-7p3, D3), opt-in via
+	// --require-egress-enforcement — the session-side counterpart of
+	// AgentRunReconciler's pre-Pod gate (see its Reconcile comment for the
+	// full rationale on why "bound AgentNetwork exists" (netPlan.Networks) is
+	// the trigger, not AllowRules presence). Unlike AgentRun, this reconciler
+	// has no pre-pod/already-running-pod branch — every reconcile rebuilds and
+	// re-applies the worker Deployment/NetworkPolicy in place (ensureOwned/
+	// ensureDeployment are update-in-place), and the NetworkConflict/
+	// NoKVMCapacity gates above already re-evaluate (and can re-Pending) an
+	// already-Running session on the same unconditional basis. This gate
+	// follows that same established shape rather than inventing an
+	// AgentRun-style live-pod carve-out this reconciler doesn't otherwise have.
+	if r.RequireEgressEnforcement && !r.CNIEnforcesNetworkPolicy && len(netPlan.Networks) > 0 {
+		return r.writeStatus(ctx, session, pure.PhasePending, "EgressUnenforced",
+			fmt.Sprintf("bound AgentNetwork(s) %v need egress enforcement the CNI cannot provide (--require-egress-enforcement)", netPlan.Networks),
+			30*time.Second)
+	}
 	// Wire-or-gate the Tier-2 seam (c5r.20): a bound network needing the unwired
 	// proxy/eBPF datapath fails closed rather than scheduling a worker whose
 	// requested enforcement AttachAgentNetwork would silently drop.
