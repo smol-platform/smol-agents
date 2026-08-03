@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	nodev1 "k8s.io/api/node/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -253,6 +254,8 @@ func sessionSchemeWithRunc(t *testing.T) *runtime.Scheme {
 	sch := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
 		corev1.AddToScheme, amv1.AddToScheme, appsv1.AddToScheme, networkingv1.AddToScheme, nodev1.AddToScheme,
+		// A2A grant check (knative-agents-pwm) Gets an rbacv1.Role.
+		rbacv1.AddToScheme,
 	} {
 		if err := add(sch); err != nil {
 			t.Fatalf("scheme: %v", err)

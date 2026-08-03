@@ -161,6 +161,11 @@ func newRunReconcilerForTest(t *testing.T, fns interceptor.Funcs, initial ...cli
 	if err := networkingv1.AddToScheme(sch); err != nil {
 		t.Fatalf("networkingv1 scheme: %v", err)
 	}
+	// Reconcile's A2A grant check (knative-agents-pwm) Gets an rbacv1.Role, so
+	// any test driving the full Reconcile past pod creation needs it registered.
+	if err := rbacv1.AddToScheme(sch); err != nil {
+		t.Fatalf("rbacv1 scheme: %v", err)
+	}
 	c := fake.NewClientBuilder().
 		WithScheme(sch).
 		WithObjects(initial...).
