@@ -27,6 +27,10 @@ kind: Secret
 metadata:
   name: openai-key
   namespace: tenant-a
+  labels:
+    # Tenant-boundary opt-in (5vr): the operator refuses to read/project a
+    # CR-referenced Secret without this label.
+    agents.smol-agents.ai/tenant-secret: "true"
 type: Opaque
 stringData:
   # Replace with a real key, or point the ModelProvider.endpoint below at any

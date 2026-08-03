@@ -23,6 +23,11 @@ import (
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
+// tenantSecretLabels marks a Secret as tenant-owned per the operator's
+// tenant-boundary check (5vr) — required or the operator refuses to
+// read/project the Secret.
+var tenantSecretLabels = map[string]string{pure.TenantSecretLabel: "true"}
+
 // Fleet deploys a plan's CR fleet into a per-run namespace and tears it down.
 type Fleet struct {
 	client    client.Client
@@ -84,10 +89,12 @@ func (f *Fleet) Deploy(ctx context.Context, plan *BenchPlan) error {
 	owner.BlockOwnerDeletion = nil
 	f.nsOwner = owner
 
-	// Secrets first (the broker/harness env references them).
+	// Secrets first (the broker/harness env references them). Tenant-boundary
+	// opt-in (5vr): the operator refuses to read a CR-referenced Secret unless
+	// it carries agents.smol-agents.ai/tenant-secret=true.
 	for _, s := range plan.Fleet.Secrets {
 		sec := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: s.Name, Namespace: f.namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: s.Name, Namespace: f.namespace, Labels: tenantSecretLabels},
 			StringData: f.substituteMap(s.StringData),
 		}
 		if err := f.client.Create(ctx, sec); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -97,14 +104,17 @@ func (f *Fleet) Deploy(ctx context.Context, plan *BenchPlan) error {
 
 	// Copy real provider secrets from the source namespace (values never committed
 	// to the repo). The operator bakes these values into the per-run broker config,
-	// so they must exist in the run namespace before the Agents reconcile.
+	// so they must exist in the run namespace before the Agents reconcile. The
+	// copy is stamped with the tenant-boundary label regardless of whether the
+	// source secret carries it — the destination secret is what the operator
+	// reads.
 	for _, name := range plan.Fleet.CopySecrets {
 		src := &corev1.Secret{}
 		if err := f.client.Get(ctx, client.ObjectKey{Namespace: plan.Fleet.SecretSourceNamespace, Name: name}, src); err != nil {
 			return fmt.Errorf("fleet: copy secret %s/%s: %w", plan.Fleet.SecretSourceNamespace, name, err)
 		}
 		dst := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: f.namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: f.namespace, Labels: tenantSecretLabels},
 			Type:       src.Type,
 			Data:       src.Data,
 		}

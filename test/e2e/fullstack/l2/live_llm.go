@@ -96,10 +96,13 @@ func injectLiveKeyViaS3(ctx context.Context, e *l2Env, bucket, region, s3key, va
 		return fmt.Errorf("s3 cp to %s: %w: %s", s3key, err, string(out))
 	}
 
+	// Tenant-boundary opt-in (5vr): the operator refuses to read a
+	// CR-referenced Secret unless it carries agents.smol-agents.ai/tenant-secret=true.
 	script := fmt.Sprintf(`set -euo pipefail
 V=$(aws s3 cp s3://%s/%s - --region %s)
-k0s kubectl -n %s create secret generic %s --from-literal=%s="$V" --dry-run=client -o yaml | k0s kubectl apply -f -`,
-		bucket, s3key, region, ns, secretName, dataKey)
+k0s kubectl -n %s create secret generic %s --from-literal=%s="$V" --dry-run=client -o yaml | k0s kubectl apply -f -
+k0s kubectl -n %s label secret %s agents.smol-agents.ai/tenant-secret=true --overwrite`,
+		bucket, s3key, region, ns, secretName, dataKey, ns, secretName)
 	if out, err := e.runSSM(ctx, script, 60*time.Second); err != nil {
 		return fmt.Errorf("on-node fetch+create secret %s/%s: %w: %s", ns, secretName, err, string(out))
 	}

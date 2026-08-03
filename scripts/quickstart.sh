@@ -59,6 +59,9 @@ step "create the demo ModelProvider + Agent"
 # fake-llm ignores the key — a single-key dummy satisfies it.
 $KCTL -n "$NS" create secret generic demo-llm-key \
   --from-literal=api-key=quickstart-demo --dry-run=client -o yaml | $KCTL apply -f -
+# Tenant boundary (5vr): the operator refuses to read a CR-referenced Secret
+# without this label.
+$KCTL -n "$NS" label secret demo-llm-key agents.smol-agents.ai/tenant-secret=true --overwrite
 cat <<EOF | $KCTL apply -f -
 apiVersion: runtime.agents.smol-agents.ai/v1
 kind: ModelProvider

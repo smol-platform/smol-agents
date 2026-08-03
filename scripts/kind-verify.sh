@@ -63,6 +63,9 @@ $KCTL -n tenant-a create secret generic openai-key \
 # openai-key: a dummy single-key value is enough for the pod-CREATED chain check.
 $KCTL -n tenant-a create secret generic tavily-key \
   --from-literal=token=dummy-kind-e2e --dry-run=client -o yaml | $KCTL apply -f -
+# Tenant boundary (5vr): the operator refuses to read a CR-referenced Secret
+# without this label — both dummies need it or the run stays Pending/RunPrepPending.
+$KCTL -n tenant-a label secret openai-key tavily-key agents.smol-agents.ai/tenant-secret=true --overwrite
 $KCTL apply -f operator/config/samples/agent_full.yaml
 
 step "apply control-plane samples (Platform + SmolAgent)"

@@ -61,6 +61,12 @@ func (r *ModelGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.writeStatus(ctx, gw, prev, "Failed", "InvalidSpec", err.Error())
 	}
 
+	// Tenant boundary (5vr): every Secret the spec references must carry
+	// TenantSecretLabel, or the operator refuses to render the gateway.
+	if err := verifyGatewaySecrets(ctx, r.Client, gw); err != nil {
+		return r.writeStatus(ctx, gw, prev, "Failed", "SecretMissing", err.Error())
+	}
+
 	// Resolve the sandbox fail-closed (same policy as run pods): the RCE gateway
 	// must not schedule unisolated. failed = runc without --allow-host-runtime;
 	// pending = the hardened RuntimeClass isn't registered yet.
@@ -139,6 +145,36 @@ func (r *ModelGatewayReconciler) ownAndApply(ctx context.Context, gw *amv1.Model
 		return controllerutil.SetControllerReference(gw, live, r.Scheme)
 	})
 	return err
+}
+
+// verifyGatewaySecrets enforces the tenant boundary (5vr) on every Secret the
+// gateway spec references — the env secretRefs (modelGatewayUserEnv) and the
+// UI shared-secret / OIDC auth secretRefs — all resolved in the gateway's own
+// namespace. A nil/empty ref is skipped (that auth surface isn't configured).
+func verifyGatewaySecrets(ctx context.Context, c client.Client, gw *amv1.ModelGateway) error {
+	for _, e := range gw.Spec.Env {
+		if e.SecretRef == nil || e.SecretRef.SecretName == "" {
+			continue
+		}
+		if err := verifyTenantSecret(ctx, c, gw.Namespace, e.SecretRef.SecretName); err != nil {
+			return err
+		}
+	}
+	if gw.Spec.UI == nil {
+		return nil
+	}
+	auth := gw.Spec.UI.Auth
+	if auth.SecretRef != nil && auth.SecretRef.SecretName != "" {
+		if err := verifyTenantSecret(ctx, c, gw.Namespace, auth.SecretRef.SecretName); err != nil {
+			return err
+		}
+	}
+	if auth.OIDC != nil && auth.OIDC.SecretRef != nil && auth.OIDC.SecretRef.SecretName != "" {
+		if err := verifyTenantSecret(ctx, c, gw.Namespace, auth.OIDC.SecretRef.SecretName); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *ModelGatewayReconciler) writeStatus(ctx context.Context, gw *amv1.ModelGateway, prev pure.ModelGatewayStatus, phase, reason, msg string) (ctrl.Result, error) {

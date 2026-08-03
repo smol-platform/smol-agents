@@ -43,7 +43,9 @@ config/settings) were verified live on `kind-smol-agents-kind`. Recipe:
    + `SMOL_AGENTS_IMAGE_TAG=0.2.1`. (kindnet does NOT enforce NetworkPolicy — the egress floor
    is a no-op locally; it's real on policy-enforcing CNIs / eBPF, proven at L2.)
 2. **z.ai key** (1Password `stigenai` → vault "Personal Agents" → `zai-agent-token`/`ZAI_API_KEY`):
-   `kubectl -n <ns> create secret generic zai-key --from-literal=ZAI_API_KEY=<key>` (single key).
+   `kubectl -n <ns> create secret generic zai-key --from-literal=ZAI_API_KEY=<key>` (single key), then
+   `kubectl -n <ns> label secret zai-key agents.smol-agents.ai/tenant-secret=true` — the operator refuses
+   to read a CR-referenced Secret without this label (tenant boundary, 5vr).
 3. **z.ai is a Coding Plan, not pay-as-you-go.** The pay-as-you-go OpenAI endpoint
    `https://api.z.ai/api/paas/v4/chat/completions` returns **429 code 1113 "insufficient
    balance"**. Use the Coding-Plan endpoints: `https://api.z.ai/api/coding/paas/v4/...`
