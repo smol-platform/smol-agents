@@ -364,6 +364,8 @@ spec:
 # Deploy AFTER the hermes-gateway from .claude/hermes-e2e.yaml is Ready.
 # Secrets created imperatively (never on disk):
 #   kubectl -n bench create secret generic hermes-gw-auth --from-literal=authorization="Bearer <rand>"
+#   kubectl -n bench label secret hermes-gw-auth agents.smol-agents.ai/tenant-secret=true
+#   (tenant boundary, 5vr — the operator refuses to read an unlabeled CR-referenced Secret)
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
 kind: AgentNetwork                      # secretless egress (runbook-wired broker; declarative form BLOCKED)
@@ -478,9 +480,11 @@ KC=~/.kube/cftest.yaml                       # cftest kubeconfig
 # 0. Sanity: gateway + hermes reachable, minio up (Caps probe does this too).
 kubectl --kubeconfig $KC -n hermes-e2e get deploy hermes-gateway
 
-# 1. Create throwaway test-key Secret (imperative — never on disk).
+# 1. Create throwaway test-key Secret (imperative — never on disk), then label it
+#    (tenant boundary, 5vr — the operator refuses to read an unlabeled CR-referenced Secret).
 kubectl --kubeconfig $KC -n $NS_BASE create secret generic hermes-gw-auth \
   --from-literal=authorization="Bearer $(openssl rand -hex 24)"
+kubectl --kubeconfig $KC -n $NS_BASE label secret hermes-gw-auth agents.smol-agents.ai/tenant-secret=true
 
 # 2. cftest suite (everything except kata isolation).
 make bench-l1                                # → go run ./cmd/agentbench run --plan bench/plans/core --tier perf

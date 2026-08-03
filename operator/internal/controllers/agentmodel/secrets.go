@@ -14,12 +14,41 @@ import (
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
 
+// TenantSecretLabel is the tenant-boundary opt-in marker enforced below; it is
+// defined in the pure package so fixtures that must stamp it share one source
+// of truth. Re-exported here because this package is the enforcement point.
+const TenantSecretLabel = pure.TenantSecretLabel
+
+// checkTenantSecret enforces the tenant boundary on sec: it must carry
+// TenantSecretLabel: "true", or the operator refuses to use it.
+func checkTenantSecret(sec *corev1.Secret) error {
+	if sec.Labels[TenantSecretLabel] != "true" {
+		return fmt.Errorf("secret %q: missing required label %s=%q (tenant boundary)", sec.Name, TenantSecretLabel, "true")
+	}
+	return nil
+}
+
+// verifyTenantSecret Gets the named Secret and enforces the tenant boundary,
+// for paths where the operator projects a Secret into a pod via secretKeyRef
+// without ever reading its value itself (AgentFS S3 credentials, ModelGateway
+// env/UI auth) — readSecretKey below covers the read-the-value paths.
+func verifyTenantSecret(ctx context.Context, c client.Client, ns, name string) error {
+	sec := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, sec); err != nil {
+		return fmt.Errorf("get secret %q: %w", name, err)
+	}
+	return checkTenantSecret(sec)
+}
+
 // readSecretKey fetches one key from a k8s Secret (the sole key when key is
 // empty). Shared by the AgentRun and AgentSession reconcilers.
 func readSecretKey(ctx context.Context, c client.Client, ns, name, key string) ([]byte, error) {
 	sec := &corev1.Secret{}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, sec); err != nil {
 		return nil, fmt.Errorf("get secret %q: %w", name, err)
+	}
+	if err := checkTenantSecret(sec); err != nil {
+		return nil, err
 	}
 	if key != "" {
 		v, ok := sec.Data[key]
@@ -41,7 +70,16 @@ func readSecretKey(ctx context.Context, c client.Client, ns, name, key string) (
 // secretRef value plus the provider API key, keyed by lease name. Harness mode
 // returns a nil provider; agents with no secrets return an empty map. Shared by
 // the AgentRun and AgentSession reconcilers.
+//
+// It also enforces the tenant boundary on the AgentFS S3 backup credentials
+// Secret (Agent.Spec.Storage.AgentFS.Backup.S3.CredentialsRef), if declared:
+// the operator never reads that Secret's value (storage_mount.go projects it
+// straight into the pod via secretKeyRef), so this is a label-only check.
 func gatherRunSecrets(ctx context.Context, c client.Client, agent *amv1.Agent, namespace string, inputs []pure.RunInputFile) (*builders.RunProvider, map[string][]byte, error) {
+	if err := verifyStorageSecret(ctx, c, agent); err != nil {
+		return nil, nil, err
+	}
+
 	values := map[string][]byte{}
 
 	for _, in := range inputs {
@@ -125,4 +163,18 @@ func gatherRunSecrets(ctx context.Context, c client.Client, agent *amv1.Agent, n
 		}
 	}
 	return provider, values, nil
+}
+
+// verifyStorageSecret enforces the tenant boundary on the AgentFS S3 backup
+// credentials Secret, in the Agent's own namespace. No-op when the Agent has
+// no durable AgentFS storage or no S3 credentialsRef declared.
+func verifyStorageSecret(ctx context.Context, c client.Client, agent *amv1.Agent) error {
+	if agent.Spec.Storage == nil || agent.Spec.Storage.AgentFS == nil {
+		return nil
+	}
+	afs := agent.Spec.Storage.AgentFS
+	if afs.Backup == nil || afs.Backup.S3 == nil || afs.Backup.S3.CredentialsRef == nil || afs.Backup.S3.CredentialsRef.SecretName == "" {
+		return nil
+	}
+	return verifyTenantSecret(ctx, c, agent.Namespace, afs.Backup.S3.CredentialsRef.SecretName)
 }

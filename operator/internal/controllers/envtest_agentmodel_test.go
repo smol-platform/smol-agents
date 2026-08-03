@@ -120,7 +120,7 @@ func makeProvider(t *testing.T, e *agentmodelEnv, ns, name string) {
 	// The run-prep broker path resolves the provider's source Secret before any
 	// pod exists; without it the run is held Pending/RunPrepPending.
 	sec := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "openai-key", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "openai-key", Namespace: ns, Labels: map[string]string{agentmodel.TenantSecretLabel: "true"}},
 		Data:       map[string][]byte{"OPENAI_API_KEY": []byte("test-key")},
 	}
 	if err := e.cli.Create(e.ctx, sec); err != nil && !apierrors.IsAlreadyExists(err) {

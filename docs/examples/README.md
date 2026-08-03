@@ -259,7 +259,9 @@ These were exercised end-to-end on real **z.ai glm-4.6** on a local kind cluster
 config/settings injection). Things you'll hit when pointing them at z.ai:
 
 - **Provider secret.** Create `zai-key` with a **single** key `ZAI_API_KEY`
-  (`kubectl -n <ns> create secret generic zai-key --from-literal=ZAI_API_KEY=<key>`).
+  (`kubectl -n <ns> create secret generic zai-key --from-literal=ZAI_API_KEY=<key>`), then label it
+  (`kubectl -n <ns> label secret zai-key agents.smol-agents.ai/tenant-secret=true`) — the operator
+  refuses to read a CR-referenced Secret without this label (tenant boundary, 5vr).
   The `ModelProvider.spec.secretRef` reads the secret's *sole* key — its CRD has no
   `key` field today, so don't add a second key.
 - **z.ai Coding Plan vs pay-as-you-go.** The pay-as-you-go OpenAI endpoint

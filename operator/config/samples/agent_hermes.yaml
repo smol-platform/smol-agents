@@ -14,7 +14,11 @@
 ---
 apiVersion: v1
 kind: Secret
-metadata: { name: hermes-gateway, namespace: tenant-a }
+metadata:
+  name: hermes-gateway
+  namespace: tenant-a
+  # Tenant-boundary opt-in (5vr): required or the operator refuses to read it.
+  labels: { agents.smol-agents.ai/tenant-secret: "true" }
 stringData:
   # Must match the gateway's API_SERVER_KEY; stored as a full header value.
   authorization: "Bearer change-me-to-API_SERVER_KEY"

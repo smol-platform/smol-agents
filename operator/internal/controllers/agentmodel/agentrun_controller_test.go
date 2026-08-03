@@ -8,6 +8,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -767,4 +769,73 @@ func TestAgentRunReconciler_FoldRunResult_CleanSuccessLeavesEmpty(t *testing.T) 
 	if len(run.Status.Steps) != 1 || run.Status.Steps[0].Kind != pure.StepFinal {
 		t.Errorf("steps not folded into status: %+v", run.Status.Steps)
 	}
+}
+
+// newA2ARunReconcilerForTest builds a reconciler whose scheme also carries
+// networkingv1 (egress NetworkPolicy) and rbacv1 (A2A Role lookup), and that
+// permits the runc runtime class (AllowHostRuntime) so Reconcile runs all the
+// way to pod creation without needing a registered kata RuntimeClass /
+// AgentNodePool.
+func newA2ARunReconcilerForTest(t *testing.T, objs ...client.Object) *AgentRunReconciler {
+	t.Helper()
+	sch := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme, amv1.AddToScheme, networkingv1.AddToScheme, rbacv1.AddToScheme,
+	} {
+		if err := add(sch); err != nil {
+			t.Fatalf("scheme: %v", err)
+		}
+	}
+	c := fake.NewClientBuilder().WithScheme(sch).WithObjects(objs...).
+		WithStatusSubresource(&amv1.AgentRun{}).Build()
+	return &AgentRunReconciler{Client: c, Scheme: sch, AllowHostRuntime: true}
+}
+
+// knative-agents-qzy: the run pod's apiserver token (AutomountServiceAccountToken)
+// must default to off, and flip on only for an Agent whose A2A Role exists (the
+// authoritative signal it declares a kind=agent tool) — never based on any other
+// heuristic.
+func TestAgentRunReconciler_A2AGrant_ControlsAutomountToken(t *testing.T) {
+	t.Run("no A2A Role keeps automount false", func(t *testing.T) {
+		agent := harnessAgent("alice", "tenant-a")
+		agent.Spec.Sandbox.RuntimeClass = "runc"
+		run := sampleRun()
+		r := newA2ARunReconcilerForTest(t, agent, run)
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+		if _, err := r.Reconcile(context.Background(), req); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		pod := &corev1.Pod{}
+		if err := r.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod); err != nil {
+			t.Fatalf("get pod: %v", err)
+		}
+		if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
+			t.Errorf("automount = %v, want false (no A2A Role)", pod.Spec.AutomountServiceAccountToken)
+		}
+	})
+
+	t.Run("A2A Role present flips automount true", func(t *testing.T) {
+		agent := harnessAgent("bob", "tenant-a")
+		agent.Spec.Sandbox.RuntimeClass = "runc"
+		role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{
+			Name: builders.AgentA2ARoleName("bob"), Namespace: "tenant-a",
+		}}
+		run := sampleRun()
+		run.Name = "run-a2a"
+		run.Spec.AgentRef = "bob"
+		r := newA2ARunReconcilerForTest(t, agent, role, run)
+
+		req := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+		if _, err := r.Reconcile(context.Background(), req); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		pod := &corev1.Pod{}
+		if err := r.Get(context.Background(), types.NamespacedName{Namespace: run.Namespace, Name: run.Name}, pod); err != nil {
+			t.Fatalf("get pod: %v", err)
+		}
+		if pod.Spec.AutomountServiceAccountToken == nil || !*pod.Spec.AutomountServiceAccountToken {
+			t.Errorf("automount = %v, want true (A2A Role present)", pod.Spec.AutomountServiceAccountToken)
+		}
+	})
 }

@@ -228,6 +228,16 @@ func (r *AgentSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// a long-running session worker: serve-session command, microVM class, broker.
 	pod := builders.BuildAgentRunPod(synthetic, agent)
 	builders.ApplyRunSandbox(pod, sbClass)
+	// Re-enable the apiserver token only for an A2A-capable Agent (its A2A Role
+	// exists — the authoritative signal it declares a kind=agent tool). Every
+	// other session worker keeps AutomountServiceAccountToken=false (D1).
+	hasA2A, a2aErr := agentHasA2AGrant(ctx, r.Client, agent)
+	if a2aErr != nil {
+		return ctrl.Result{}, fmt.Errorf("check A2A grant: %w", a2aErr)
+	}
+	if hasA2A {
+		builders.AllowA2AToken(pod)
+	}
 	// Bind the resident session worker to its kata node pool (M1.11). A KVM class
 	// with no matching AgentNodePool holds the session Pending (fail-closed)
 	// rather than scheduling a pod that can never run. No deadline — the idle

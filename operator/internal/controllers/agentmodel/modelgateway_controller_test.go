@@ -117,3 +117,47 @@ func TestModelGatewayReconcile_SandboxFailClosed(t *testing.T) {
 		t.Errorf("unregistered kata: phase=%s/%s, want Pending/SandboxPending", got.Status.Phase, got.Status.Reason)
 	}
 }
+
+// A gateway env secretRef pointing at a Secret missing the tenant-boundary
+// label fails closed instead of rendering (5vr).
+func TestModelGatewayReconcile_EnvSecretUnlabeled(t *testing.T) {
+	sch := mgwScheme()
+	kata := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+	gw := newGateway()
+	gw.Spec.Env = []pure.HarnessEnvVar{{Name: "OPENROUTER_API_KEY", SecretRef: &pure.AuthRef{SecretName: "gw-key"}}}
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "gw-key", Namespace: "tenant-a"}} // no label
+	c := fake.NewClientBuilder().WithScheme(sch).WithStatusSubresource(&amv1.ModelGateway{}).WithObjects(gw, kata, sec).Build()
+	r := &ModelGatewayReconciler{Client: c, Scheme: sch, DefaultRunRuntimeClass: "kata-fc"}
+
+	got := reconcileGateway(t, r, c)
+	if got.Status.Phase != "Failed" || got.Status.Reason != "SecretMissing" {
+		t.Errorf("phase=%s/%s, want Failed/SecretMissing", got.Status.Phase, got.Status.Reason)
+	}
+	var dep appsv1.Deployment
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: builders.ModelGatewayName(gw)}, &dep); err == nil {
+		t.Errorf("deployment must not render when the env secretRef is unlabeled")
+	}
+}
+
+// The same env secretRef succeeds once the Secret carries the tenant-boundary
+// label — proves the gate isn't just rejecting everything.
+func TestModelGatewayReconcile_EnvSecretLabeled(t *testing.T) {
+	sch := mgwScheme()
+	kata := &nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "kata-fc"}, Handler: "kata-fc"}
+	gw := newGateway()
+	gw.Spec.Env = []pure.HarnessEnvVar{{Name: "OPENROUTER_API_KEY", SecretRef: &pure.AuthRef{SecretName: "gw-key"}}}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw-key", Namespace: "tenant-a", Labels: map[string]string{TenantSecretLabel: "true"}},
+	}
+	c := fake.NewClientBuilder().WithScheme(sch).WithStatusSubresource(&amv1.ModelGateway{}).WithObjects(gw, kata, sec).Build()
+	r := &ModelGatewayReconciler{Client: c, Scheme: sch, DefaultRunRuntimeClass: "kata-fc"}
+
+	got := reconcileGateway(t, r, c)
+	if got.Status.Reason == "SecretMissing" {
+		t.Fatalf("phase=%s/%s, labeled secretRef must not be rejected", got.Status.Phase, got.Status.Reason)
+	}
+	var dep appsv1.Deployment
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "tenant-a", Name: builders.ModelGatewayName(gw)}, &dep); err != nil {
+		t.Fatalf("deployment not rendered: %v", err)
+	}
+}

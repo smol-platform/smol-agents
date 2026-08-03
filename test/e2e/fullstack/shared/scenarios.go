@@ -1412,7 +1412,7 @@ handler: kata-fc
 	// when the secret has exactly one data key (gatherRunSecrets/readSecretKey).
 	setup := []byte(`apiVersion: v1
 kind: Secret
-metadata: { name: e2e-sess-key, namespace: tenant-a }
+metadata: { name: e2e-sess-key, namespace: tenant-a, labels: { agents.smol-agents.ai/tenant-secret: "true" } }
 stringData: { apiKey: "dummy-unused-pre-placement" }
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
@@ -1520,7 +1520,7 @@ spec:
 	// 2. Minimal loop Agent: ephemeral AgentFS workspace + provider/secret.
 	if err := env.Apply(ctx, []byte(`apiVersion: v1
 kind: Secret
-metadata: { name: e2e-sessr-key, namespace: tenant-a }
+metadata: { name: e2e-sessr-key, namespace: tenant-a, labels: { agents.smol-agents.ai/tenant-secret: "true" } }
 stringData: { apiKey: "dummy-session-running" }
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
@@ -1686,7 +1686,7 @@ spec:
 	// Provider + secret + child Agent + delegate Tool + parent Agent.
 	setup := fmt.Sprintf(`apiVersion: v1
 kind: Secret
-metadata: { name: a2a-key, namespace: tenant-a }
+metadata: { name: a2a-key, namespace: tenant-a, labels: { agents.smol-agents.ai/tenant-secret: "true" } }
 stringData: { apiKey: "dummy" }
 ---
 apiVersion: runtime.agents.smol-agents.ai/v1
