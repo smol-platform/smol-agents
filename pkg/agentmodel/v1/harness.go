@@ -85,6 +85,23 @@ func (k HarnessKind) Valid() bool {
 	return false
 }
 
+// IsCLI reports whether k is a subprocess-based ("CLI") harness kind, as
+// opposed to an HTTP-based kind. CLI kind = secrets reach a subprocess env
+// (the harness binary itself holds the provider credential), so the harness
+// is NOT agent-blind — a CLI auth failure can echo the credential into its
+// stderr/exit message. HTTP kinds (hermes/generic-http) and loop-mode keep
+// the credential in the runtime, never the subprocess, so they stay blind.
+// This is the single definition of the CLI/HTTP split; operator/internal/
+// agentbench/oracles.go's isCLIHarness delegates here so the rule has one
+// source of truth.
+func (k HarnessKind) IsCLI() bool {
+	switch k {
+	case "", HarnessHermes, HarnessGenericHTTP, HarnessKind("loop"):
+		return false
+	}
+	return true
+}
+
 // CanonicalHarnessKind resolves a deprecated kind alias to its canonical kind
 // ("pi" → "inflection-pi"); all other kinds pass through unchanged. The harness
 // registry resolves through this so a deprecated alias still finds its impl.

@@ -117,6 +117,15 @@ func redactValue(v any, pats []*regexp.Regexp) any {
 	}
 }
 
+// RedactString returns RedactionMask if s matches any pattern, s unchanged
+// otherwise. An empty pattern set is the identity.
+func RedactString(s string, pats []*regexp.Regexp) string {
+	if anyMatch(s, pats) {
+		return RedactionMask
+	}
+	return s
+}
+
 func anyMatch(s string, pats []*regexp.Regexp) bool {
 	for _, p := range pats {
 		if p != nil && p.MatchString(s) {
@@ -136,17 +145,13 @@ func RedactSteps(steps []Step, pats []*regexp.Regexp) []Step {
 	}
 	out := make([]Step, len(steps))
 	for i, s := range steps {
-		if anyMatch(s.Error, pats) {
-			s.Error = RedactionMask
-		}
+		s.Error = RedactString(s.Error, pats)
 		if len(s.ToolCalls) > 0 {
 			tcs := make([]ToolCallRecord, len(s.ToolCalls))
 			for j, tc := range s.ToolCalls {
 				tc.Arguments = RedactJSON(tc.Arguments, pats)
 				tc.Result = RedactJSON(tc.Result, pats)
-				if anyMatch(tc.Error, pats) {
-					tc.Error = RedactionMask
-				}
+				tc.Error = RedactString(tc.Error, pats)
 				tcs[j] = tc
 			}
 			s.ToolCalls = tcs
