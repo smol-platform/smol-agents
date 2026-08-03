@@ -39,6 +39,44 @@ func TestValidateModelGateway(t *testing.T) {
 	}
 }
 
+func TestValidateModelGateway_RejectsSecretShapedConfig(t *testing.T) {
+	const fakeKey = "sk-FAKEabcdEFGH12345678"
+	s := ModelGatewaySpec{Provider: "hermes", Image: "x", Config: "model: glm-4.6\nport: 8642\napi_key: " + fakeKey + "\n"}
+	err := ValidateModelGateway(s)
+	if err == nil {
+		t.Fatalf("secret-shaped config accepted, want rejection")
+	}
+	// The point of this test: the error must never echo the matched secret
+	// value, since it is written verbatim into ModelGatewayStatus.Message.
+	if strings.Contains(err.Error(), fakeKey) {
+		t.Fatalf("validation error leaks the secret value: %v", err)
+	}
+	if !strings.Contains(err.Error(), "config line 3") {
+		t.Errorf("error does not name the offending line: %v", err)
+	}
+}
+
+func TestValidateModelGateway_ConfigNoFalsePositives(t *testing.T) {
+	s := ModelGatewaySpec{Provider: "hermes", Image: "x", Config: `model: glm-4.6
+server:
+  host: 0.0.0.0
+  port: 8642
+dashboard:
+  enabled: true
+  url: https://hermes.example.com
+`}
+	if err := ValidateModelGateway(s); err != nil {
+		t.Errorf("ordinary config rejected: %v", err)
+	}
+}
+
+func TestValidateModelGateway_EmptyConfigPasses(t *testing.T) {
+	s := ModelGatewaySpec{Provider: "hermes", Image: "x", Config: ""}
+	if err := ValidateModelGateway(s); err != nil {
+		t.Errorf("empty config rejected: %v", err)
+	}
+}
+
 func TestModelGatewaySpec_EffectivePort(t *testing.T) {
 	if got := (ModelGatewaySpec{Provider: "hermes"}).EffectivePort(); got != HermesDefaultPort {
 		t.Errorf("hermes default port = %d, want %d", got, HermesDefaultPort)
