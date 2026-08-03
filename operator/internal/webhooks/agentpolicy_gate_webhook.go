@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -26,8 +27,11 @@ var (
 // AgentRun that enforce the namespace AgentPolicy allow-lists + budget caps at
 // admission (the ValidatingWebhookConfiguration runs failurePolicy: Fail, D3).
 // The Agent/AgentRun reconcilers run the same checks as a reconcile-time
-// backstop. It fails open only on a transient list error or an empty effective
-// policy — never wrongly denies on an apiserver hiccup. defaultRunClass is the
+// backstop. It fails open only on an empty effective policy (no constraining
+// AgentPolicy in the namespace) — a transient AgentPolicy list error is fail
+// CLOSED: the validator returns a retryable apierrors.NewInternalError so the
+// apiserver denies the request instead of silently admitting past a namespace
+// policy it couldn't read (knative-agents-2mi). defaultRunClass is the
 // operator's --default-run-runtime-class, used to resolve an Agent that leaves
 // spec.sandbox.runtimeClass empty for the claude-write warning.
 func SetupAgentPolicyGateWebhook(mgr ctrl.Manager, defaultRunClass string) error {
@@ -44,22 +48,31 @@ type agentPolicyGate struct {
 }
 
 // effective lists + composes the namespace policies. ok=false ⇒ fail open
-// (transient list error or no constraining policy).
-func (g *agentPolicyGate) effective(ctx context.Context, ns string) (eff pure.EffectivePolicy, ok bool) {
+// because there is no constraining policy (an empty AgentPolicyList). A List
+// error is NOT fail-open: it is returned separately so callers can deny the
+// request instead of silently admitting past a policy they couldn't read.
+func (g *agentPolicyGate) effective(ctx context.Context, ns string) (eff pure.EffectivePolicy, ok bool, err error) {
 	var list amv1.AgentPolicyList
 	if err := g.client.List(ctx, &list, client.InNamespace(ns)); err != nil {
-		return pure.EffectivePolicy{}, false
+		return pure.EffectivePolicy{}, false, err
 	}
 	pol := make([]pure.AgentPolicy, 0, len(list.Items))
 	for i := range list.Items {
 		pol = append(pol, pure.AgentPolicy{Name: list.Items[i].Name, Spec: list.Items[i].Spec})
 	}
 	eff = pure.ComposePolicies(pol)
-	return eff, !eff.Empty
+	return eff, !eff.Empty, nil
 }
 
 func (g *agentPolicyGate) checkAgent(ctx context.Context, a *amv1.Agent) error {
-	eff, ok := g.effective(ctx, a.Namespace)
+	eff, ok, err := g.effective(ctx, a.Namespace)
+	if err != nil {
+		// Fail closed (knative-agents-2mi): a List error must not silently admit
+		// an Agent the namespace policy would have rejected. NewInternalError is
+		// not an apierrors.IsInvalid — the caller (kubectl/controller) sees a
+		// retryable 500, distinct from a genuine policy-violation Invalid.
+		return apierrors.NewInternalError(fmt.Errorf("list AgentPolicy in namespace %q: %w", a.Namespace, err))
+	}
 	if !ok {
 		return nil
 	}
@@ -156,7 +169,11 @@ func (g *agentPolicyGate) checkClaudeWriteRuntime(a *amv1.Agent) admission.Warni
 }
 
 func (g *agentPolicyGate) checkRun(ctx context.Context, run *amv1.AgentRun) error {
-	eff, ok := g.effective(ctx, run.Namespace)
+	eff, ok, err := g.effective(ctx, run.Namespace)
+	if err != nil {
+		// See checkAgent: fail closed on a List error, not open.
+		return apierrors.NewInternalError(fmt.Errorf("list AgentPolicy in namespace %q: %w", run.Namespace, err))
+	}
 	if !ok || eff.Budget == nil {
 		return nil
 	}

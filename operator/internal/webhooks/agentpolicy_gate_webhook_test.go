@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -9,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
@@ -40,6 +42,55 @@ func TestAgentPolicyGate_AgentProvider(t *testing.T) {
 	good.Spec.Model = pure.ModelRef{ProviderRef: "openai", Name: "m"}
 	if err := g.checkAgent(context.Background(), good); err != nil {
 		t.Fatalf("conforming provider must pass: %v", err)
+	}
+}
+
+// gateWithListError builds an agentPolicyGate whose client.List always fails,
+// simulating an apiserver hiccup while reading AgentPolicy.
+func gateWithListError(t *testing.T) *agentPolicyGate {
+	t.Helper()
+	sch := runtime.NewScheme()
+	if err := amv1.AddToScheme(sch); err != nil {
+		t.Fatalf("scheme: %v", err)
+	}
+	base := fake.NewClientBuilder().WithScheme(sch).Build()
+	ic := interceptor.NewClient(base, interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			return fmt.Errorf("simulated apiserver hiccup")
+		},
+	})
+	return &agentPolicyGate{client: ic}
+}
+
+// knative-agents-2mi: a List error reading AgentPolicy must fail CLOSED — the
+// validator denies with a retryable (non-Invalid) error rather than silently
+// admitting an Agent/AgentRun the namespace policy might have rejected.
+func TestAgentPolicyGate_ListError_Agent_DeniesNotInvalid(t *testing.T) {
+	g := gateWithListError(t)
+	a := &amv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "t"}}
+	a.Spec.Model = pure.ModelRef{ProviderRef: "anything", Name: "m"}
+
+	err := g.checkAgent(context.Background(), a)
+	if err == nil {
+		t.Fatal("List error must deny the Agent, got nil (fail-open)")
+	}
+	if apierrors.IsInvalid(err) {
+		t.Fatalf("List error must not surface as a policy-violation Invalid, got %v", err)
+	}
+}
+
+func TestAgentPolicyGate_ListError_Run_DeniesNotInvalid(t *testing.T) {
+	g := gateWithListError(t)
+	run := &amv1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "t"}}
+	run.Spec.AgentRef = "a"
+	run.Spec.BudgetOverride = &pure.Budget{MaxTokens: 500, MaxSteps: 10, MaxWallClockSeconds: 60, MaxToolCalls: 5}
+
+	err := g.checkRun(context.Background(), run)
+	if err == nil {
+		t.Fatal("List error must deny the AgentRun, got nil (fail-open)")
+	}
+	if apierrors.IsInvalid(err) {
+		t.Fatalf("List error must not surface as a policy-violation Invalid, got %v", err)
 	}
 }
 
