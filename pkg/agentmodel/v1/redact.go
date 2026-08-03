@@ -4,12 +4,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sync"
 )
 
 // RedactionMask replaces any string value (or opaque blob) that matches a
 // redaction pattern. It is a fixed sentinel so downstream consumers can detect
 // that redaction occurred.
 const RedactionMask = "[REDACTED]"
+
+// DefaultSecretPatterns are always-on redaction patterns for well-known
+// credential shapes, applied even when no namespace AgentPolicy declares any
+// redaction.Patterns. Kept narrow and shape-based (no generic "secret"/"key"
+// keyword matching) to avoid mass false positives.
+var DefaultSecretPatterns = []string{
+	`sk-[A-Za-z0-9_-]{16,}`,              // OpenAI/Anthropic-style API keys
+	`gh[pousr]_[A-Za-z0-9]{16,}`,         // GitHub PAT/OAuth/server/refresh tokens
+	`AKIA[0-9A-Z]{16}`,                   // AWS access key id
+	`xox[baprs]-[A-Za-z0-9-]{10,}`,       // Slack tokens
+	`-----BEGIN [A-Z ]*PRIVATE KEY-----`, // PEM private key block
+}
+
+// defaultPats compiles DefaultSecretPatterns once. These are our own constant
+// patterns, so a compile failure would be a programming error caught by
+// TestDefaultPatterns_MatchesKnownShapes (a dropped pattern fails its positive
+// sample); ignoring CompilePatterns' per-pattern errs here is deliberate.
+var defaultPats = sync.OnceValue(func() []*regexp.Regexp {
+	pats, _ := CompilePatterns(DefaultSecretPatterns)
+	return pats
+})
+
+// DefaultPatterns returns the compiled DefaultSecretPatterns set. This is a
+// *disclosure* control on the cluster-facing record, NOT containment: the
+// harness already observed the unredacted data and can exfil it over the
+// egress floor. This must never be documented as DLP
+// (agentpolicy-enforcement R1).
+func DefaultPatterns() []*regexp.Regexp {
+	return defaultPats()
+}
 
 // CompilePatterns compiles a set of redaction pattern strings, skipping (and
 // reporting) any that fail to compile so one bad pattern never disables
