@@ -26,11 +26,6 @@ type AgentNodePoolReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	// PlatformName is the singleton SmolAgentPlatform whose
-	// nodeProvisioning block supplies cluster-level defaults. Defaults to
-	// "default".
-	PlatformName string
-
 	// Namespace is where ClusterAutoscaler node-group ConfigMaps are
 	// written. Defaults to "smol-agents-system".
 	Namespace string
@@ -43,9 +38,6 @@ type AgentNodePoolReconciler struct {
 // Cascade deletion is handled by ownerReferences instead; reconcile is
 // triggered by changes to the AgentNodePool itself.
 func (r *AgentNodePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if r.PlatformName == "" {
-		r.PlatformName = "default"
-	}
 	if r.Namespace == "" {
 		r.Namespace = "smol-agents-system"
 	}
@@ -60,7 +52,7 @@ func (r *AgentNodePoolReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, anp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	defaults := r.resolveDefaults(ctx)
+	defaults := resolveDefaults(anp)
 	if anp.Spec.Provider == "ClusterAutoscaler" {
 		return r.reconcileClusterAutoscaler(ctx, anp, defaults)
 	}
@@ -142,31 +134,19 @@ func (r *AgentNodePoolReconciler) reconcileClusterAutoscaler(ctx context.Context
 	return ctrl.Result{}, r.statusUpdate(ctx, anp)
 }
 
-// resolveDefaults sources cluster-level provisioning defaults from the
-// singleton SmolAgentPlatform's nodeProvisioning block (subnet/SG
-// discovery tags, node IAM role, the existing join snippet / base AMI).
-// If the Platform is absent we return minimal defaults; the resulting
-// EC2NodeClass will lack selectors and Karpenter will reject it, surfaced
-// as ApplyFailed on the AgentNodePool.
-func (r *AgentNodePoolReconciler) resolveDefaults(ctx context.Context) builders.KarpenterDefaults {
+// resolveDefaults sources cluster-level provisioning defaults directly
+// from the AgentNodePool's own spec (subnet/SG discovery tags, node IAM
+// role, the existing join snippet / base AMI).
+func resolveDefaults(anp *v1.AgentNodePool) builders.KarpenterDefaults {
 	d := builders.KarpenterDefaults{AMIFamily: "Custom"}
-	name := r.PlatformName
-	if name == "" {
-		name = "default"
+	if anp.Spec.AMIFamily != "" {
+		d.AMIFamily = anp.Spec.AMIFamily
 	}
-	p := &v1.SmolAgentPlatform{}
-	if err := r.Get(ctx, client.ObjectKey{Name: name}, p); err != nil {
-		return d
-	}
-	np := p.Spec.NodeProvisioning
-	if np.AMIFamily != "" {
-		d.AMIFamily = np.AMIFamily
-	}
-	d.Role = np.Role
-	d.SubnetSelectorTags = np.SubnetSelectorTags
-	d.SecurityGroupSelectorTags = np.SecurityGroupSelectorTags
-	d.BaseAMISelector = np.BaseAMISelector
-	d.JoinUserData = np.JoinUserData
+	d.Role = anp.Spec.Role
+	d.SubnetSelectorTags = anp.Spec.SubnetSelectorTags
+	d.SecurityGroupSelectorTags = anp.Spec.SecurityGroupSelectorTags
+	d.BaseAMISelector = anp.Spec.BaseAMISelector
+	d.JoinUserData = anp.Spec.JoinUserData
 	return d
 }
 

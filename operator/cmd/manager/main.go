@@ -155,22 +155,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	r := &controllers.SmolAgentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-	if err := r.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register SmolAgent controller")
-		os.Exit(1)
-	}
-	pr := &controllers.SmolAgentPlatformReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-	if err := pr.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to register SmolAgentPlatform controller")
-		os.Exit(1)
-	}
 	if err := (&controllers.AgentNodePoolReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
@@ -258,14 +242,6 @@ func main() {
 
 	// Admission webhooks. R-OP-WH-1, R-OP-WH-2, R-AN-API-1.
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhooks.SetupAgentWebhook(mgr, "default"); err != nil {
-			setupLog.Error(err, "unable to register SmolAgent webhook")
-			os.Exit(1)
-		}
-		if err := webhooks.SetupPlatformWebhook(mgr, "default"); err != nil {
-			setupLog.Error(err, "unable to register SmolAgentPlatform webhook")
-			os.Exit(1)
-		}
 		if err := webhooks.SetupAgentNetworkWebhook(mgr); err != nil {
 			setupLog.Error(err, "unable to register AgentNetwork webhook")
 			os.Exit(1)

@@ -13,7 +13,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -82,13 +81,6 @@ func setupEnv(t *testing.T) *envContext {
 		t.Fatalf("NewManager: %v", err)
 	}
 
-	r := &controllers.SmolAgentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-	if err := r.SetupWithManager(mgr); err != nil {
-		t.Fatalf("SetupWithManager: %v", err)
-	}
 	if err := (&controllers.AgentNodePoolReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
@@ -131,66 +123,12 @@ func projectRoot(t *testing.T) string {
 	}
 }
 
-// applyPlatform creates a default singleton Platform CR.
-func applyPlatform(t *testing.T, e *envContext) {
-	t.Helper()
-	p := &v1.SmolAgentPlatform{
-		ObjectMeta: metav1.ObjectMeta{Name: "default"},
-		Spec:       v1.SmolAgentPlatformSpec{DefaultTrustDomain: "smol-agents.ai"},
-	}
-	if err := e.cli.Create(e.ctx, p); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create platform: %v", err)
-	}
-}
-
 func makeNamespace(t *testing.T, e *envContext, name string) {
 	t.Helper()
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	if err := e.cli.Create(e.ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-}
-
-// makeAgent applies a minimal SmolAgent and waits for it to exist.
-func makeAgent(t *testing.T, e *envContext, ns, name string) *v1.SmolAgent {
-	t.Helper()
-	cr := &v1.SmolAgent{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: v1.SmolAgentSpec{
-			TrustDomain: "smol-agents.ai",
-			Mode:        "strict",
-			Features: v1.Features{
-				Identity: v1.IdentityFeature{FeatureBase: v1.FeatureBase{Enabled: true}, Mode: "strict"},
-				Sandbox:  v1.SandboxFeature{FeatureBase: v1.FeatureBase{Enabled: true}, RuntimeClass: "kata-fc"},
-				Secrets:  v1.SecretsFeature{FeatureBase: v1.FeatureBase{Enabled: true}, MaxLeaseTTLSeconds: 60},
-				Transport: v1.TransportFeature{
-					Private: v1.TransportPrivateFeature{FeatureBase: v1.FeatureBase{Enabled: true}, Addr: "0.0.0.0:8443"},
-				},
-				EBPF:          v1.EBPFFeature{FeatureBase: v1.FeatureBase{Enabled: false}},
-				Knative:       v1.KnativeFeature{FeatureBase: v1.FeatureBase{Enabled: true}},
-				Observability: v1.ObservabilityFeature{FeatureBase: v1.FeatureBase{Enabled: true}, ServiceName: "test"},
-			},
-		},
-	}
-	if err := e.cli.Create(e.ctx, cr); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-	return cr
-}
-
-// waitFor polls the predicate until it returns true or the test
-// timeout fires.
-func waitFor(t *testing.T, e *envContext, key types.NamespacedName, pred func(*v1.SmolAgent) bool) {
-	t.Helper()
-	deadline := 30
-	for i := 0; i < deadline; i++ {
-		got := &v1.SmolAgent{}
-		if err := e.cli.Get(e.ctx, key, got); err == nil && pred(got) {
-			return
-		}
-		<-roundtrip()
-	}
-	t.Fatalf("timeout waiting for predicate on %s", key)
 }
 
 // roundtrip yields after the api-server's reconcile cycle (1s tick).

@@ -16,16 +16,15 @@ field or kind) has not yet been ported into the hand-edited CRD.
   `description:` blocks, inline `{ type: ..., description: ... }` formatting, and
   curated validation that controller-gen does not emit. Cosmetic + intentional.
 
-- **SmolAgent / SmolAgentPlatform group name.** The committed CRDs use group
-  `smolagents.smol-agents.ai` (`smolagents.smol-agents.ai_smolagents.yaml`,
-  `smolagents.smol-agents.ai_smolagentplatforms.yaml`) while the Go markers emit
-  group `agents.smol-agents.ai`. The drift check therefore reports the generated
-  `agents.smol-agents.ai_smolagent*.yaml` as "new" and the committed
-  `smolagents.smol-agents.ai_*` as "orphan". This is a **pre-existing,
-  unresolved group mismatch** (tracked separately) — do not "fix" it by applying
-  generated output; reconciling the group is a deliberate API decision.
-
 ## Resolved
+
+- **SmolAgent / SmolAgentPlatform removed.** The legacy serving CRDs
+  (`smolagents.smol-agents.ai_smolagents.yaml`,
+  `smolagents.smol-agents.ai_smolagentplatforms.yaml`) and their group-name
+  drift note above are gone — the SmolAgent serving spine was deleted in favor
+  of the agent-model CRD family (Agent/AgentRun/AgentSession/...) plus
+  AgentNodePool, which now carries its own node-provisioning config directly
+  (rehomed off the deleted SmolAgentPlatform singleton).
 
 - **`ModelProvider.spec.secretRef.key`** (rv4.2). The hand-edited schema was
   missing the `key` property that Go's `AuthRef` has, so the apiserver pruned

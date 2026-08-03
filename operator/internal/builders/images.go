@@ -67,6 +67,11 @@ func ImageVersioned(component, version string) string {
 	return imageRegistry() + "/" + component + ":" + version
 }
 
+// SecretProxyImage is the image for the broker sidecar.
+func SecretProxyImage() string {
+	return Image("secret-proxy")
+}
+
 // componentEnvSuffix maps a kebab-case component name to an UPPER_SNAKE_CASE
 // env-var suffix. "secret-proxy" -> "SECRET_PROXY".
 func componentEnvSuffix(component string) string {

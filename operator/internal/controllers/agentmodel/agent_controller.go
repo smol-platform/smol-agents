@@ -79,11 +79,8 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.Status().Update(ctx, agent)
 	}
 
-	// Ensure the per-Agent ServiceAccount that AgentRun pods execute as. The
-	// platform SmolAgent controller creates a similarly-named SA for its
-	// long-lived workload; the runtime-only path (Agent + AgentRun without a
-	// SmolAgent) needs this so pod-create doesn't fail with "service account
-	// not found".
+	// Ensure the per-Agent ServiceAccount that AgentRun pods execute as, so
+	// pod-create doesn't fail with "service account not found".
 	if err := r.ensureServiceAccount(ctx, agent); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure ServiceAccount: %w", err)
 	}
@@ -192,8 +189,8 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 }
 
 // ensureServiceAccount creates (once) the SA AgentRun pods execute as. Owned
-// by the Agent so it's GC'd when the Agent is deleted; existing SAs (e.g.
-// pre-existing or also-owned by a SmolAgent) are left untouched.
+// by the Agent so it's GC'd when the Agent is deleted; a pre-existing SA is
+// left untouched.
 func (r *AgentReconciler) ensureServiceAccount(ctx context.Context, agent *amv1.Agent) error {
 	sa := builders.AgentServiceAccount(agent)
 	if err := ctrl.SetControllerReference(agent, sa, r.Scheme); err != nil {

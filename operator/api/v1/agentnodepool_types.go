@@ -61,6 +61,27 @@ type AgentNodePoolSpec struct {
 
 	// Disruption maps to the Karpenter NodePool disruption policy.
 	Disruption DisruptionConfig `json:"disruption,omitempty"`
+
+	// AMIFamily for the generated EC2NodeClass. "Custom" on k0s (we own all
+	// userData).
+	// +kubebuilder:default:=Custom
+	AMIFamily string `json:"amiFamily,omitempty"`
+
+	// Role is the node IAM role name set on the generated EC2NodeClass.
+	Role string `json:"role,omitempty"`
+
+	// SubnetSelectorTags / SecurityGroupSelectorTags drive Karpenter's
+	// subnet + security-group discovery.
+	SubnetSelectorTags        map[string]string `json:"subnetSelectorTags,omitempty"`
+	SecurityGroupSelectorTags map[string]string `json:"securityGroupSelectorTags,omitempty"`
+
+	// BaseAMISelector is the existing join-capable image, used for the
+	// UserData bootstrap mode (kata appended at boot).
+	BaseAMISelector []AMISelectorTerm `json:"baseAMISelector,omitempty"`
+
+	// JoinUserData is the existing deployment's node-join snippet (k0s
+	// worker-join + providerID) the kata layer is appended to.
+	JoinUserData string `json:"joinUserData,omitempty"`
 }
 
 // NodeBootstrap selects the kata-layer delivery mechanism. Both ride on
@@ -171,8 +192,7 @@ type AgentNodePoolList struct {
 	Items           []AgentNodePool `json:"items"`
 }
 
-// Hand-rolled DeepCopy — follows the SmolAgentPlatform precedent in
-// this package (these cluster-scoped types are not in zz_generated).
+// Hand-rolled DeepCopy — this cluster-scoped type is not in zz_generated.
 
 func (in *AgentNodePool) DeepCopyInto(out *AgentNodePool) {
 	*out = *in
@@ -224,6 +244,24 @@ func (in *AgentNodePoolSpec) DeepCopyInto(out *AgentNodePoolSpec) {
 	in.Bootstrap.DeepCopyInto(&out.Bootstrap)
 	out.ThinPool = in.ThinPool
 	out.Disruption = in.Disruption
+	if in.SubnetSelectorTags != nil {
+		out.SubnetSelectorTags = make(map[string]string, len(in.SubnetSelectorTags))
+		for k, v := range in.SubnetSelectorTags {
+			out.SubnetSelectorTags[k] = v
+		}
+	}
+	if in.SecurityGroupSelectorTags != nil {
+		out.SecurityGroupSelectorTags = make(map[string]string, len(in.SecurityGroupSelectorTags))
+		for k, v := range in.SecurityGroupSelectorTags {
+			out.SecurityGroupSelectorTags[k] = v
+		}
+	}
+	if in.BaseAMISelector != nil {
+		out.BaseAMISelector = make([]AMISelectorTerm, len(in.BaseAMISelector))
+		for i := range in.BaseAMISelector {
+			in.BaseAMISelector[i].DeepCopyInto(&out.BaseAMISelector[i])
+		}
+	}
 }
 
 func (in *NodeBootstrap) DeepCopyInto(out *NodeBootstrap) {

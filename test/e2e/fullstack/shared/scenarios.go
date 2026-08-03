@@ -48,14 +48,12 @@ func All() []Scenario {
 		approvalGate,
 		approvalReject,
 		approvalTimeout,
-		egressFloor,
 		policyGate,
 		policyReconcileGate,
 		toolKindGuard,
 		stdioMCPGate,
 		webhook,
 		kataIsolation,
-		smolAgentPhase,
 		secretlessEgress,
 		memoryAccess,
 		agentSession,
@@ -823,40 +821,6 @@ spec:
 	t.Log("M5 gate: un-decided run expired to terminal Expired (approval:timeout) with no pod")
 }
 
-var egressFloor = Scenario{
-	ID:       "R-E2E-SCN-EGRESS-FLOOR",
-	Name:     "serving-pod-egress-floor",
-	Requires: CapKubernetes,
-	Run:      runEgressFloor,
-}
-
-// runEgressFloor exercises the M1.17 default-ON serving egress floor: the
-// operator's EgressFloorReconciler must have created an egress NetworkPolicy
-// selecting the served pods of the SmolAgent kind-verify.sh already applied
-// (tenant-a/hello → hello-serving-egress).
-func runEgressFloor(t *testing.T, env Env) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	const np = "hello-serving-egress"
-	if err := env.WaitFor(ctx, "serving-egress-floor", 60*time.Second, func(ctx context.Context) bool {
-		out, err := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.metadata.name}")
-		return err == nil && strings.TrimSpace(string(out)) == np
-	}); err != nil {
-		t.Fatalf("default-ON serving egress NetworkPolicy %q not created: %v", np, err)
-	}
-	pt, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.spec.policyTypes}")
-	if !strings.Contains(string(pt), "Egress") {
-		t.Errorf("policyTypes=%s, want it to include Egress", pt)
-	}
-	sel, _ := env.Exec(ctx, ExecTarget{}, "get", "-n", "tenant-a", "networkpolicy", np, "-o", "jsonpath={.spec.podSelector.matchLabels}")
-	if !strings.Contains(string(sel), "hello") {
-		t.Errorf("podSelector=%s, want it to select the served (hello) pods", sel)
-	}
-	t.Log("M1.17: default-ON serving egress floor present + selects the served pods")
-}
-
 var policyGate = Scenario{
 	ID:       "R-E2E-SCN-POLICY-WEBHOOK",
 	Name:     "agentpolicy-webhook-denies-provider",
@@ -1134,11 +1098,9 @@ var webhook = Scenario{
 	Run:      runWebhook,
 }
 
-// runWebhook exercises both validating webhooks the operator ships:
+// runWebhook exercises the validating webhooks the operator ships:
 //
-//  1. SmolAgent: mode=insecure without the allow-insecure
-//     annotation must be rejected (R-OP-WH-1).
-//  2. AgentNetwork: setting both `identityProxy` and `wireguardMesh`
+//  1. AgentNetwork: setting both `identityProxy` and `wireguardMesh`
 //     simultaneously must be rejected by the transport-mutex
 //     validation (R-AN-API-1).
 //
@@ -1156,18 +1118,6 @@ func runWebhook(t *testing.T, env Env) {
 		matches []string
 		cleanup []string
 	}{
-		{
-			name: "smolagent-insecure-no-annotation",
-			yaml: `apiVersion: agents.smol-agents.ai/v1
-kind: SmolAgent
-metadata: {name: webhook-bad-mode, namespace: tenant-a}
-spec:
-  trustDomain: smol-agents.ai
-  mode: insecure
-`,
-			matches: []string{"denied", "allow-insecure"},
-			cleanup: []string{"delete", "smolagent", "webhook-bad-mode", "-n", "tenant-a"},
-		},
 		{
 			name: "agentnetwork-both-transports",
 			yaml: `apiVersion: runtime.agents.smol-agents.ai/v1
@@ -1324,43 +1274,6 @@ spec:
 	t.Logf("kata-fc isolation OK: host=%q pod=%q", hostKernel, podKernel)
 }
 
-var smolAgentPhase = Scenario{
-	ID:       "R-E2E-SCN-KA-PHASE",
-	Name:     "smolagent-status-phase-ready",
-	Requires: CapKubernetes,
-	Run:      runSmolAgentPhase,
-}
-
-// runSmolAgentPhase asserts that a SmolAgent CR reconciled by
-// the operator reaches phase=Ready in-cluster. Uses the existing
-// `tenant-a/hello` CR brought up by scripts/kind-verify.sh — the
-// L1 driver hooks into that path. Doesn't apply a new CR; the point
-// is to verify the operator's status reconciliation path works
-// end-to-end against a live apiserver.
-func runSmolAgentPhase(t *testing.T, env Env) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	err := env.WaitFor(ctx, "smolagent-phase-ready", 60*time.Second, func(ctx context.Context) bool {
-		out, err := env.Exec(ctx, ExecTarget{},
-			"get", "-n", "tenant-a", "smolagent", "hello",
-			"-o", "jsonpath={.status.phase}")
-		if err != nil {
-			return false
-		}
-		return strings.TrimSpace(string(out)) == "Ready"
-	})
-	if err != nil {
-		// Fetch the current state for the failure log.
-		out, _ := env.Exec(ctx, ExecTarget{},
-			"get", "-n", "tenant-a", "smolagent", "hello",
-			"-o", "jsonpath={.status}")
-		t.Fatalf("SmolAgent hello never reached phase=Ready: %v\nstatus: %s", err, out)
-	}
-	t.Log("SmolAgent tenant-a/hello reconciled to phase=Ready")
-}
-
 var secretlessEgress = Scenario{
 	ID:       "R-E2E-SCN-SECRETLESS",
 	Name:     "secretless-egress-github",
@@ -1463,10 +1376,10 @@ func runAgentSession(t *testing.T, env Env) {
 
 	// The session defaults to the kata-fc runtimeClass (the operator's
 	// fail-closed default; the L1 webhook overlay carries no runc override). On
-	// a kataless kind cluster the operator never registers the kata-fc
-	// RuntimeClass — the SmolAgent sandbox feature only provisions it alongside a
-	// matching AgentNodePool, and without a pool it returns NoKVMCapacity / falls
-	// back to gVisor. So without this fixture the session stops at the earlier
+	// a kataless kind cluster nothing registers the kata-fc RuntimeClass — it
+	// is expected to pre-exist alongside a matching AgentNodePool, and without
+	// a pool it returns NoKVMCapacity / falls back to gVisor. So without this
+	// fixture the session stops at the earlier
 	// SandboxNotReady gate and never reaches the placement gate this scenario
 	// asserts. Register a bare kata-fc RuntimeClass so sandbox resolution passes;
 	// placement then fails closed with NoKVMCapacity (no AgentNodePool).

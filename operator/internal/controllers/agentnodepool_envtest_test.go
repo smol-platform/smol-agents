@@ -19,7 +19,6 @@ import (
 // Degraded / KarpenterMissing (rather than hot-looping or going Ready).
 func TestAgentNodePool_Reconcile_KarpenterMissingDegraded(t *testing.T) {
 	e := setupEnv(t)
-	applyPlatform(t, e)
 
 	anp := &v1.AgentNodePool{
 		ObjectMeta: metav1.ObjectMeta{Name: "kata-arm64"},
@@ -65,7 +64,6 @@ func condReason(a *v1.AgentNodePool, condType string) string {
 // a deterministic happy-path reconcile through envtest.
 func TestAgentNodePool_Reconcile_ClusterAutoscalerReady(t *testing.T) {
 	e := setupEnv(t)
-	applyPlatform(t, e)
 	makeNamespace(t, e, "smol-agents-system")
 
 	anp := &v1.AgentNodePool{

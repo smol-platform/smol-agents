@@ -4,11 +4,6 @@
 // BuildAgentRunPod hardcodes the pod's serviceAccountName to "<agent>-agent";
 // without this SA in the namespace, pod creation fails with "error looking up
 // service account ... not found".
-//
-// The platform SmolAgent controller has its own (similarly-named) SA via
-// BuildServiceAccount(*v1.SmolAgent). This builder is the runtime-only path's
-// counterpart, so an `Agent`+`AgentRun` flow that doesn't also have a
-// SmolAgent still works end-to-end.
 package builders
 
 import (

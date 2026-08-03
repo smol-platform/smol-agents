@@ -44,8 +44,8 @@ $KCTL apply -f operator/config/samples/agentnetwork_wg_client.yaml
 
 step "apply runtime CR chain (Provider → Tool → Agent → AgentRun)"
 # BuildAgentRunPod sets ServiceAccountName to "<agent>-agent". On a real
-# cluster the SmolAgent reconciler creates that SA via the identity
-# feature. For the kind-only chain check we pre-create it so the
+# cluster the Agent reconciler creates that SA (ensureServiceAccount) when
+# the Agent goes Ready. For the kind-only chain check we pre-create it so the
 # AgentRun Pod admits.
 $KCTL -n tenant-a create serviceaccount researcher-agent \
   --dry-run=client -o yaml | $KCTL apply -f -
@@ -64,10 +64,6 @@ $KCTL -n tenant-a create secret generic openai-key \
 $KCTL -n tenant-a create secret generic tavily-key \
   --from-literal=token=dummy-kind-e2e --dry-run=client -o yaml | $KCTL apply -f -
 $KCTL apply -f operator/config/samples/agent_full.yaml
-
-step "apply control-plane samples (Platform + SmolAgent)"
-$KCTL apply -f operator/config/samples/smolagentplatform.yaml
-$KCTL apply -f operator/config/samples/smolagent_minimal.yaml
 
 step "wait for reconcilers to populate status"
 deadline=$((SECONDS + 90))
