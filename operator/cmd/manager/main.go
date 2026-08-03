@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -177,6 +179,15 @@ func main() {
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "smol-agents-operator.smol-agents.ai",
 		LeaderElectionNamespace: "smol-agents-system",
+		// knative-agents-5jy: Secrets are resolved by name only (no SecretList
+		// anywhere in the operator), so there is no reason to hold every Secret
+		// in the cluster in the manager's informer cache. Reading Secrets
+		// straight through to the apiserver (instead of via the cache) means
+		// the operator never opens a cluster-wide Secret watch, so RBAC only
+		// needs `get` on secrets (see operator/config/rbac/role.yaml).
+		Client: client.Options{
+			Cache: &client.CacheOptions{DisableFor: []client.Object{&corev1.Secret{}}},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

@@ -52,6 +52,17 @@ func reconcileMPOnce(t *testing.T, r *ModelProviderReconciler, name string) {
 	}
 }
 
+// reconcileMPOnceResult is reconcileMPOnce but returns the ctrl.Result so
+// callers can assert on RequeueAfter.
+func reconcileMPOnceResult(t *testing.T, r *ModelProviderReconciler, name string) ctrl.Result {
+	t.Helper()
+	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: name}})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	return res
+}
+
 // A valid provider with a single-key secret goes Ready.
 func TestMPReconcile_ReadyWithSingleKeySecret(t *testing.T) {
 	secret := &corev1.Secret{
@@ -125,6 +136,55 @@ func TestMPReconcile_ExplicitKeyMissing(t *testing.T) {
 	got := get("zai")
 	if got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
 		t.Errorf("want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+// knative-agents-5jy: the controller no longer Watches Secrets (that
+// required a cluster-wide Secret informer / list+watch RBAC). This is the
+// regression guard for removing it — every missing-secret-class status path
+// (not-found, explicit key missing, ambiguous multi-key secret) must requeue
+// itself so the provider still converges once the secret appears/changes,
+// instead of waiting for the manager's hours-later default resync.
+func TestMPReconcile_SecretMissingRequeues(t *testing.T) {
+	r, get := reconcileMP(t, newMP("zai"))
+	res := reconcileMPOnceResult(t, r, "zai")
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("want RequeueAfter > 0 on the missing-secret path, got %v", res.RequeueAfter)
+	}
+	if got := get("zai"); got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
+		t.Fatalf("missing secret → want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+func TestMPReconcile_ExplicitKeyMissingRequeues(t *testing.T) {
+	mp := newMP("zai")
+	mp.Spec.SecretRef.Key = "missing"
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "provider-key", Namespace: "default"},
+		Data:       map[string][]byte{"a": []byte("1")},
+	}
+	r, get := reconcileMP(t, mp, secret)
+	res := reconcileMPOnceResult(t, r, "zai")
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("want RequeueAfter > 0 on the explicit-key-missing path, got %v", res.RequeueAfter)
+	}
+	if got := get("zai"); got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
+		t.Fatalf("explicit key missing → want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+func TestMPReconcile_SecretAmbiguousRequeues(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "provider-key", Namespace: "default"},
+		Data:       map[string][]byte{"a": []byte("1"), "b": []byte("2")},
+	}
+	r, get := reconcileMP(t, newMP("zai"), secret)
+	res := reconcileMPOnceResult(t, r, "zai")
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("want RequeueAfter > 0 on the ambiguous-secret path, got %v", res.RequeueAfter)
+	}
+	if got := get("zai"); got.Status.Phase != "Pending" || got.Status.Reason != "SecretAmbiguous" {
+		t.Fatalf("ambiguous secret → want Pending/SecretAmbiguous, got %s/%s", got.Status.Phase, got.Status.Reason)
 	}
 }
 

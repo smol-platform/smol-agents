@@ -168,6 +168,54 @@ func TestAgentNetworkBackendToAgentNetworks_RequeuesConsumers(t *testing.T) {
 	}
 }
 
+// knative-agents-5jy: the controller no longer Watches Secrets (that
+// required a cluster-wide Secret informer / list+watch RBAC). This is the
+// regression guard for removing it — the missing-secret status path must
+// requeue itself so the CR still converges once the Secret is created,
+// instead of waiting for the manager's hours-later default resync.
+func TestAgentNetworkReconcile_WireGuardSecretMissingRequeues(t *testing.T) {
+	sch := runtime.NewScheme()
+	_ = corev1.AddToScheme(sch)
+	_ = amv1.AddToScheme(sch)
+	an := &amv1.AgentNetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: "corp-vpn", Namespace: "tenant-wg", Generation: 1},
+		Spec: pure.AgentNetworkSpec{
+			Kind: pure.NetworkWireGuardMesh,
+			WireGuardMesh: &pure.WireGuardSpec{
+				Mode:          "client",
+				PrivateKeyRef: pure.AuthRef{SecretName: "wg-priv"},
+				Peers: []pure.WGPeer{{
+					Name:       "hub",
+					PublicKey:  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+					AllowedIPs: []string{"10.0.0.0/16"},
+				}},
+			},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(sch).
+		WithStatusSubresource(&amv1.AgentNetwork{}).
+		WithObjects(an).Build()
+	r := &AgentNetworkReconciler{Client: c, Scheme: sch}
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Namespace: "tenant-wg", Name: "corp-vpn"},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("want RequeueAfter > 0 on the missing-secret path, got %v", res.RequeueAfter)
+	}
+
+	var got amv1.AgentNetwork
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "tenant-wg", Name: "corp-vpn"}, &got); err != nil {
+		t.Fatalf("get agentnetwork: %v", err)
+	}
+	if got.Status.Phase != "Pending" || got.Status.Reason != "SecretMissing" {
+		t.Fatalf("want Pending/SecretMissing, got %s/%s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
 func TestAgentNetworkDeepCopy_WireGuardBranch(t *testing.T) {
 	an := &amv1.AgentNetwork{}
 	an.Spec.Kind = pure.NetworkWireGuardMesh

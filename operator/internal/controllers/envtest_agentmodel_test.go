@@ -333,7 +333,10 @@ func TestEnvtest_AgentNetwork_ProxyHappyPath(t *testing.T) {
 }
 
 // TestEnvtest_AgentNetwork_WireGuardSecretMissing: Pending/SecretMissing
-// flips to Ready when the broker secret appears (Watches drives the requeue).
+// flips to Ready when the broker secret appears. knative-agents-5jy: the
+// reconciler no longer Watches Secrets (that required a cluster-wide Secret
+// informer); convergence instead comes from the periodic
+// secretRequeueInterval requeue set on the SecretMissing status path.
 func TestEnvtest_AgentNetwork_WireGuardSecretMissing(t *testing.T) {
 	e := setupAgentmodelEnv(t)
 	makeNamespaceAM(t, e, "tenant-wg")
@@ -374,8 +377,9 @@ func TestEnvtest_AgentNetwork_WireGuardSecretMissing(t *testing.T) {
 		t.Fatalf("create secret: %v", err)
 	}
 
-	// Reconciler watches Secrets, so the create event drives the
-	// transition automatically — no spec bump needed.
+	// No Secret watch (knative-agents-5jy) — the pending reconcile's
+	// secretRequeueInterval (10s) picks up the newly-created secret well
+	// within this helper's 30s deadline.
 	waitForAgentNetwork(t, e,
 		types.NamespacedName{Namespace: "tenant-wg", Name: "corp-vpn"},
 		func(g *amv1.AgentNetwork) bool {

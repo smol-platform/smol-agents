@@ -12,10 +12,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
@@ -32,30 +30,16 @@ type DynamicCredentialBackendReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// SetupWithManager wires the controller. Watching Secrets makes the
-// `Pending: SecretMissing → Ready` flip automatic when the root key appears.
+// SetupWithManager wires the controller. There is deliberately no Watches on
+// Secrets (knative-agents-5jy: that would require a cluster-wide Secret
+// informer, which the manager's cache no longer holds — see main.go and
+// secretRequeueInterval in agentnetwork_controller.go); the
+// `Pending: SecretMissing → Ready` flip instead self-heals via the periodic
+// requeue set on that status path.
 func (r *DynamicCredentialBackendReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.DynamicCredentialBackend{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.secretToBackends)).
 		Complete(r)
-}
-
-// secretToBackends maps a Secret event to the backends in the same namespace
-// whose root-key reference points at it.
-func (r *DynamicCredentialBackendReconciler) secretToBackends(ctx context.Context, obj client.Object) []reconcile.Request {
-	list := &amv1.DynamicCredentialBackendList{}
-	if err := r.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
-		return nil
-	}
-	var reqs []reconcile.Request
-	for i := range list.Items {
-		b := &list.Items[i]
-		if b.Spec.GitHubApp != nil && b.Spec.GitHubApp.PrivateKeyRef.SecretName == obj.GetName() {
-			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: b.Namespace, Name: b.Name}})
-		}
-	}
-	return reqs
 }
 
 // Reconcile is the per-backend entrypoint.
@@ -82,7 +66,7 @@ func (r *DynamicCredentialBackendReconciler) Reconcile(ctx context.Context, req 
 		err := r.Get(ctx, types.NamespacedName{Namespace: b.Namespace, Name: ref.SecretName}, secret)
 		if apierrors.IsNotFound(err) {
 			r.setStatus(b, "Pending", "SecretMissing", fmt.Sprintf("root secret %q not found", ref.SecretName))
-			return ctrl.Result{}, r.statusUpdateIfChanged(ctx, b, prev)
+			return ctrl.Result{RequeueAfter: secretRequeueInterval}, r.statusUpdateIfChanged(ctx, b, prev)
 		}
 		if err != nil {
 			return ctrl.Result{}, err
@@ -90,7 +74,7 @@ func (r *DynamicCredentialBackendReconciler) Reconcile(ctx context.Context, req 
 		if ref.Key != "" {
 			if _, ok := secret.Data[ref.Key]; !ok {
 				r.setStatus(b, "Pending", "SecretMissing", fmt.Sprintf("root secret %q has no key %q", ref.SecretName, ref.Key))
-				return ctrl.Result{}, r.statusUpdateIfChanged(ctx, b, prev)
+				return ctrl.Result{RequeueAfter: secretRequeueInterval}, r.statusUpdateIfChanged(ctx, b, prev)
 			}
 		}
 	}

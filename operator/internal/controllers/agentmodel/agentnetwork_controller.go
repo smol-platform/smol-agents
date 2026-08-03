@@ -3,6 +3,7 @@ package agentmodel
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -21,6 +22,16 @@ import (
 	amv1 "github.com/smol-platform/smol-agents/operator/api/agentmodel/v1"
 	pure "github.com/smol-platform/smol-agents/pkg/agentmodel/v1"
 )
+
+// secretRequeueInterval replaces the Secret informer watch removed by
+// knative-agents-5jy (the manager no longer caches/watches Secrets
+// cluster-wide — RBAC only grants `get`, see operator/config/rbac/role.yaml).
+// A CR parked in a missing-secret status requeues itself on this cadence
+// instead of hours-later default-resync, so it still self-heals shortly
+// after the referenced Secret is created. Matches the existing
+// "SecretMissing" requeue interval used by AgentSessionReconciler
+// (agentsession_controller.go writeStatus(..., "SecretMissing", ..., 10*time.Second)).
+const secretRequeueInterval = 10 * time.Second
 
 // AgentNetworkReconciler validates an AgentNetwork CR, resolves the
 // secrets it references (so callers fail fast if a key is missing),
@@ -41,38 +52,20 @@ type AgentNetworkReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// SetupWithManager wires the controller. Watching Secrets makes the
-// `Pending: SecretMissing → Ready` transition automatic — no spec
-// bump required when the broker secret appears. Watching
-// DynamicCredentialBackends does the same for the cross-object credential
-// alignment check (knative-agents-13s): when a referenced backend appears or
-// gains a scope mapping, the consuming AgentNetwork re-reconciles and flips
-// Pending/BackendMissing → Ready.
+// SetupWithManager wires the controller. There is deliberately no Watches
+// on Secrets (knative-agents-5jy: that would require a cluster-wide Secret
+// informer, which the manager's cache no longer holds — see main.go and
+// secretRequeueInterval); the `Pending: SecretMissing → Ready` transition
+// instead self-heals via the periodic requeue set on that status path.
+// Watching DynamicCredentialBackends does the equivalent job for the
+// cross-object credential alignment check (knative-agents-13s): when a
+// referenced backend appears or gains a scope mapping, the consuming
+// AgentNetwork re-reconciles and flips Pending/BackendMissing → Ready.
 func (r *AgentNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&amv1.AgentNetwork{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.secretToAgentNetworks)).
 		Watches(&amv1.DynamicCredentialBackend{}, handler.EnqueueRequestsFromMapFunc(r.backendToAgentNetworks)).
 		Complete(r)
-}
-
-// secretToAgentNetworks maps a Secret event to the AgentNetworks in
-// the same namespace whose WireGuardMesh.PrivateKeyRef points at it.
-func (r *AgentNetworkReconciler) secretToAgentNetworks(ctx context.Context, obj client.Object) []reconcile.Request {
-	list := &amv1.AgentNetworkList{}
-	if err := r.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
-		return nil
-	}
-	var reqs []reconcile.Request
-	for i := range list.Items {
-		an := &list.Items[i]
-		if an.Spec.WireGuardMesh != nil && an.Spec.WireGuardMesh.PrivateKeyRef.SecretName == obj.GetName() {
-			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
-				Namespace: an.Namespace, Name: an.Name,
-			}})
-		}
-	}
-	return reqs
 }
 
 // backendToAgentNetworks maps a DynamicCredentialBackend event to the
@@ -143,7 +136,7 @@ func (r *AgentNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if apierrors.IsNotFound(err) {
 			r.setStatus(an, "Pending", "SecretMissing",
 				fmt.Sprintf("secret %q not found", an.Spec.WireGuardMesh.PrivateKeyRef.SecretName))
-			return ctrl.Result{}, r.statusUpdateIfChanged(ctx, an, prev)
+			return ctrl.Result{RequeueAfter: secretRequeueInterval}, r.statusUpdateIfChanged(ctx, an, prev)
 		}
 		if err != nil {
 			return ctrl.Result{}, err
